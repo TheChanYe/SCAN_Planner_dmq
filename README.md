@@ -6,18 +6,18 @@ This local planner can support various upper-level tasks, such as autonomous exp
 
 ## Demos
 
-### 🏠 CLUTTERED ROOM
+### 🏠 Cluttered room
 
 <video src="assets/video/maze_compress.mp4" controls width="100%"></video>
 
-### 🌀 S-SHAPED BEND
+### 🌀 S-shaped bend
 
 <video src="assets/video/sshape_compress.mp4" controls width="100%"></video>
 
-### 🚧 DYNAMIC OBSTACLE
+### 🚧 Dynamic obstacle
 
 <video src="assets/video/dynamic_compress.mp4" controls width="100%"></video>
 
-### 🌈 CROSS-FLOOR LONG-RANGE NAVIGATION
+### 🌈 Cross-floor long-range navigation
 
 <video src="assets/video/cross_compress.mp4" controls width="100%"></video>
