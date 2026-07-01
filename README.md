@@ -20,7 +20,7 @@
 </p>
 
 <p align="justify">
-  SCAN-Planner is a spatial collision-aware local planner, providing a <strong>robust low-level planning foundation</strong> for various upper-level tasks, such as autonomous exploration and vision-language navigation. For a VLN-related work, please refer to <a href="https://github.com/wuyi2121/TravExplorer" target="_blank">TravExplorer</a>.
+  SCAN-Planner is a spatial collision-aware local planner, providing a <strong>robust low-level planning foundation</strong> for various upper-level tasks, such as autonomous exploration and vision-language navigation.
 </p>
 
 ## System Overview
@@ -52,6 +52,12 @@
 
 More videos and interactive demonstrations are available on the
 <a href="https://wuyi2121.github.io/SCAN-Planner/" target="_blank">project page</a>.
+
+## Acknowledgements
+
+Our localization module is based on [Elevator-LIO](https://github.com/xiaofan4122/Elevator-LIO), a robust multi-floor extension of [FAST-LIO2](https://github.com/hku-mars/FAST_LIO).
+
+Our planner supports various high-level tasks, such as a cross-floor embodied exploration project [TravExplorer](https://github.com/wuyi2121/TravExplorer).
 
 ## Citation
 
