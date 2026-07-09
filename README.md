@@ -1,6 +1,6 @@
 <div align="center">
   <h1>SCAN-Planner</h1>
-  <h2>Spatial Collision-Aware Local Planning for Route-Guided Long-Range Quadruped Navigation</h2>
+  <h2>Spatial Collision-Aware Local Planning for Route-Guided<br/>Long-Range Quadruped Navigation</h2>
   <p align="center">
     Han Zheng,
     Zhe Chen,
@@ -12,24 +12,27 @@
   <a href="https://www.bilibili.com/video/BV15a7P6UEXb/" target="_blank"><img alt="Video" src="https://img.shields.io/badge/Video-Bilibili-FB7299?logo=bilibili&logoColor=white"/></a>
   <a href="https://wuyi2121.github.io/SCAN-Planner/" target="_blank"><img alt="Project Page" src="https://img.shields.io/badge/Project_Page-Website-4A90E2?logo=googlechrome&logoColor=white"/></a>
   <br/>
-  <p><em>Code will be updated soon！</em></p>
 </div>
 
 <p align="center">
-  <img src="assets/images/abstract_real.jpg" width="70%"/>
+  <img src="assets/images/abstract_real.jpg" width="100%"/>
 </p>
 
 <p align="justify">
   SCAN-Planner is a spatial collision-aware local planner, providing a <strong>robust low-level planning foundation</strong> for various upper-level tasks, such as autonomous exploration and vision-language navigation.
 </p>
 
-## System Overview
+## 🧭 System Overview
 
 <p align="center">
   <img src="assets/images/framework.jpg" width="90%"/>
 </p>
 
-## Demonstrations
+## 📢 News
+
+- **[Jul. 9, 2026]**:  Release the main algorithm of **SCAN-Planner**.
+
+## 🤖 Demonstrations
 
 <table>
   <tr>
@@ -53,13 +56,78 @@
 More videos and interactive demonstrations are available on the
 <a href="https://wuyi2121.github.io/SCAN-Planner/" target="_blank">project page</a>.
 
-## Acknowledgements
+## 🛠️ Installation
 
-Our localization module is based on [Elevator-LIO](https://github.com/xiaofan4122/Elevator-LIO), a robust multi-floor extension of [FAST-LIO2](https://github.com/hku-mars/FAST_LIO).
+> Tested on Ubuntu 20.04 with ROS Noetic
 
-Our planner supports various high-level tasks, such as a cross-floor embodied exploration project [TravExplorer](https://github.com/wuyi2121/TravExplorer).
+**Step 1**. Install [Armadillo](http://arma.sourceforge.net/), which is required by **simulator**.
+```
+sudo apt-get install libarmadillo-dev
+``` 
 
-## Citation
+**Step 2**. Clone our repository and compile. 
+```
+git clone https://github.com/wuyi2121/SCAN-Planner.git
+cd SCAN-Planner
+catkin_make
+```
+
+## 🚀 Quick Start
+
+Launch RViz in one terminal:
+```
+source devel/setup.bash && roslaunch scan_planner rviz.launch
+```
+
+Launch the algorithm in another terminal:
+```
+source devel/setup.bash && roslaunch scan_planner run.launch
+```
+
+## 🔧 Important Functions
+
+The main launch options are defined in [`run.launch`](src/planner/plan_manage/launch/run.launch):
+
+- `is_real_world`: set to `true` when running with real robot topics, and `false` when testing with the simulator.
+- `navi_mode`: selects the navigation interface:
+  - `1`: interactive 2D Nav Goal mode
+  - `2`: keypoint-based multi-floor navigation; see [`tools/README.md`](tools/README.md)
+  - `3`: reference-path tracking with local obstacle avoidance; see [`TravExplorer`](https://github.com/wuyi2121/TravExplorer)
+- `sensor_type`: select the sensing input. Use `lidar` for point-cloud sensors such as MID360, and `depth` for depth cameras such as RealSense D435.
+
+Other algorithm-related parameters are listed in [`advanced_param.xml`](src/planner/plan_manage/launch/advanced_param.xml). The default settings are tuned for Unitree Go2 and should be adjusted when using a different robot platform.
+
+## ⚙️ Optional
+**local_sensing** provides CPU and GPU implementations: `pcl_render_node` and `opengl_render_node`.
+The CPU version is built by default for better compatibility. To build the GPU backend, first install the dependencies:
+
+```bash
+sudo apt-get install libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+```
+
+Then enable the GPU build option and compile:
+
+```bash
+catkin_make -DUSE_GPU=ON
+```
+
+The `use_gpu` option in [`simulator.xml`](src/planner/plan_manage/launch/simulator.xml) selects which sensing node to launch.
+
+## 🤓 Acknowledgements
+We would like to express our gratitude to the following projects, which have provided significant support and inspiration for our work:
+
+- Our planner supports various high-level tasks, such as a cross-floor embodied exploration project [TravExplorer](https://github.com/wuyi2121/TravExplorer).
+
+- Our localization module is based on [Elevator-LIO](https://github.com/xiaofan4122/Elevator-LIO), a robust multi-floor extension of [FAST-LIO2](https://github.com/hku-mars/FAST_LIO).
+
+- Our framework builds on [EGO-Planner](https://github.com/ZJU-FAST-Lab/ego-planner), which achieves impressive performance in quadrotor local planning.
+
+- Our map representation is inspired by [ROG-Map](https://github.com/hku-mars/ROG-Map), a high-performance robot-centric mapping framework.
+
+- Our simulator is adapted from [MARSIM](https://github.com/hku-mars/MARSIM), with map generation from [Mockamap](https://github.com/HKUST-Aerial-Robotics/mockamap) and trotting motion from [Leg-KILO](https://github.com/ouguangjun/Leg-KILO).
+
+
+## 📚 Citation
 
 ```bibtex
 @article{zheng2026scan,
@@ -70,6 +138,6 @@ Our planner supports various high-level tasks, such as a cross-floor embodied ex
 }
 ```
 
-## License
+## ⚖️ License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
