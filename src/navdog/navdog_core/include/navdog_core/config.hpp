@@ -32,8 +32,13 @@ struct StartAlignConfig
 {
   double enter_deg{15.0};
   double exit_deg{5.0};
+
   double max_hold_sec{2.0};
+
+  double kp_yaw{1.2};
   double max_yaw_rate{0.3};
+
+  double target_min_dist_m{0.20};
 };
 
 // =============================================================================

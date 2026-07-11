@@ -59,6 +59,14 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - PLANNING → FAILED
 - 规划超时保护
 - 规划失败后保持任务锁
+- 独立 StartAlignController
+- 路线起始方向解析
+- 角度误差最短路径归一化
+- START_ALIGN 进入/退出迟滞
+- 原地旋转角速度控制
+- START_ALIGN → TRACKING
+- START_ALIGN 超时保护
+- 非有限 SET_ROUTE 时间保护
 
 尚未实现：
 - MQTT 接入
@@ -67,13 +75,10 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - SCAN 路线发布
 - 暂停继续
 - RouteManager
-- 起步和终点控制
+- 终点控制
 - 安全层
-- 真实机器人速度输出
-- 真实 SCAN PlannerFeedback ROS 适配
-- START_ALIGN 实际旋转控制
-- START_ALIGN → TRACKING
-- TRACKING 阶段 planner_cmd
+- 速度和加速度统一限制
+- TRACKING planner_cmd 输出
 
 注意：
 
@@ -109,6 +114,17 @@ PLANNING
     ├── FAILED           → FAILED
     ├── 超时             → FAILED
     └── 无效或旧反馈      → 忽略
+
+START_ALIGN
+    ├── 初始误差 ≤ enter_deg → TRACKING
+    ├── 开始旋转后误差 ≤ exit_deg → TRACKING
+    ├── 超时 → FAILED
+    └── 无有效方向 → FAILED
+
+注意：
+START_ALIGN 仅输出 yaw_rate。
+vx 和 vy 始终为 0。
+TRACKING 当前仍然输出 TRACKING_STOP。
 
 CANCEL_TASK
     ↓

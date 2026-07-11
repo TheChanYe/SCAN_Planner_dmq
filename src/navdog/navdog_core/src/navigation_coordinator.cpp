@@ -13,7 +13,8 @@ NavigationCoordinator::NavigationCoordinator(
     const NavdogConfig& config)
     : config_(config),
       state_(NavState::IDLE),
-      task_manager_(config.task)
+      task_manager_(config.task),
+      start_align_controller_(config.start_align)
 {
 }
 
@@ -27,6 +28,7 @@ void NavigationCoordinator::reset()
   task_manager_.reset();
   pending_planner_actions_.clear();
   clearPlanningContext();
+  start_align_controller_.reset();
 }
 
 // =============================================================================
@@ -83,19 +85,32 @@ void NavigationCoordinator::clearPlanningContext() noexcept
 // startPlanningContext
 // =============================================================================
 
-void NavigationCoordinator::startPlanningContext(
+bool NavigationCoordinator::startPlanningContext(
     const PlannerAction& set_route_action,
     double now_sec) noexcept
 {
-  if (set_route_action.type != PlannerActionType::SET_ROUTE)
+  if (set_route_action.type !=
+      PlannerActionType::SET_ROUTE)
   {
-    return;
+    return false;
+  }
+
+  if (!std::isfinite(now_sec))
+  {
+    return false;
+  }
+
+  if (set_route_action.task.sequence == 0)
+  {
+    return false;
   }
 
   planning_request_sent_ = true;
   planning_started_sec_ = now_sec;
   expected_trajectory_id_ =
       set_route_action.task.sequence;
+
+  return true;
 }
 
 // =============================================================================
@@ -163,12 +178,11 @@ void NavigationCoordinator::updatePlanningState(
       case PlannerState::EXECUTING:
         state_ = NavState::START_ALIGN;
         clearPlanningContext();
+        start_align_controller_.reset();
         return;
 
       case PlannerState::FAILED:
-        state_ = NavState::FAILED;
-        pending_planner_actions_.clear();
-        clearPlanningContext();
+        enterFailedState();
         return;
 
       case PlannerState::UNAVAILABLE:
@@ -196,10 +210,53 @@ void NavigationCoordinator::updatePlanningState(
   if ((now_sec - planning_started_sec_) >
       timeout_sec)
   {
-    state_ = NavState::FAILED;
-    pending_planner_actions_.clear();
-    clearPlanningContext();
+    enterFailedState();
   }
+}
+
+// =============================================================================
+// enterFailedState
+// =============================================================================
+
+void NavigationCoordinator::enterFailedState() noexcept
+{
+  state_ = NavState::FAILED;
+
+  pending_planner_actions_.clear();
+
+  clearPlanningContext();
+  start_align_controller_.reset();
+}
+
+// =============================================================================
+// resetStartAlign
+// =============================================================================
+
+void NavigationCoordinator::resetStartAlign() noexcept
+{
+  start_align_controller_.reset();
+}
+
+// =============================================================================
+// makeZeroCommand
+// =============================================================================
+
+VelocityCommand NavigationCoordinator::makeZeroCommand(
+    CommandSource source,
+    double now_sec) const noexcept
+{
+  VelocityCommand command{};
+
+  command.vx = 0.0;
+  command.vy = 0.0;
+  command.yaw_rate = 0.0;
+
+  command.valid = true;
+  command.source = source;
+  command.stamp_sec =
+      std::isfinite(now_sec) ? now_sec : 0.0;
+
+  return command;
 }
 
 // =============================================================================
@@ -216,12 +273,14 @@ TaskHandleResult NavigationCoordinator::handleEvent(
   {
     case TaskHandleResult::STARTED:
       clearPlanningContext();
+      start_align_controller_.reset();
       state_ = NavState::PLANNING;
       enqueuePlannerAction(task_output.planner_action);
       break;
 
     case TaskHandleResult::CANCELLED:
       clearPlanningContext();
+      start_align_controller_.reset();
       state_ = NavState::IDLE;
       enqueuePlannerAction(task_output.planner_action);
       break;
@@ -278,6 +337,7 @@ CoreOutput NavigationCoordinator::update(
 {
   CoreOutput output{};
 
+  // --- Planning feedback and action emission ---
   if (state_ == NavState::PLANNING &&
       !planning_request_sent_)
   {
@@ -287,9 +347,13 @@ CoreOutput NavigationCoordinator::update(
     if (output.planner_action.type ==
         PlannerActionType::SET_ROUTE)
     {
-      startPlanningContext(
-          output.planner_action,
-          now_sec);
+      if (!startPlanningContext(
+              output.planner_action,
+              now_sec))
+      {
+        output.planner_action = PlannerAction{};
+        enterFailedState();
+      }
     }
   }
   else
@@ -305,52 +369,125 @@ CoreOutput NavigationCoordinator::update(
         takeNextPlannerAction();
   }
 
-  output.state = state_;
-  output.task_sequence =
-      task_manager_.activeSequence();
+  // --- Build final_cmd ---
+  VelocityCommand final_cmd =
+      makeZeroCommand(
+          CommandSource::IDLE_STOP,
+          now_sec);
 
-  output.final_cmd.vx = 0.0;
-  output.final_cmd.vy = 0.0;
-  output.final_cmd.yaw_rate = 0.0;
-  output.final_cmd.valid = true;
-  output.final_cmd.stamp_sec = now_sec;
-
-  if (output.planner_action.type ==
-      PlannerActionType::CANCEL)
+  // --- START_ALIGN processing ---
+  if (state_ == NavState::START_ALIGN)
   {
-    output.final_cmd.source =
-        CommandSource::CANCEL_STOP;
+    NavigationTask active_task{};
+
+    if (!task_manager_.copyActiveTask(active_task))
+    {
+      enterFailedState();
+
+      final_cmd =
+          makeZeroCommand(
+              CommandSource::FAILED_STOP,
+              now_sec);
+    }
+    else
+    {
+      const StartAlignOutput align_output =
+          start_align_controller_.update(
+              active_task,
+              input.robot,
+              now_sec);
+
+      switch (align_output.result)
+      {
+        case StartAlignResult::WAITING_FOR_ROBOT:
+        case StartAlignResult::ALIGNING:
+          final_cmd = align_output.command;
+          break;
+
+        case StartAlignResult::ALIGNED:
+          state_ = NavState::TRACKING;
+          start_align_controller_.reset();
+
+          final_cmd =
+              makeZeroCommand(
+                  CommandSource::TRACKING_STOP,
+                  now_sec);
+          break;
+
+        case StartAlignResult::TIMED_OUT:
+        case StartAlignResult::INVALID_TASK:
+        case StartAlignResult::INVALID_TIME:
+        case StartAlignResult::INVALID_CONFIG:
+          enterFailedState();
+
+          final_cmd =
+              makeZeroCommand(
+                  CommandSource::FAILED_STOP,
+                  now_sec);
+          break;
+
+        case StartAlignResult::IDLE:
+          final_cmd =
+              makeZeroCommand(
+                  CommandSource::START_ALIGN,
+                  now_sec);
+          break;
+      }
+    }
+  }
+  else if (output.planner_action.type ==
+           PlannerActionType::CANCEL)
+  {
+    final_cmd =
+        makeZeroCommand(
+            CommandSource::CANCEL_STOP,
+            now_sec);
   }
   else
   {
     switch (state_)
     {
       case NavState::IDLE:
-        output.final_cmd.source =
-            CommandSource::IDLE_STOP;
+        final_cmd =
+            makeZeroCommand(
+                CommandSource::IDLE_STOP,
+                now_sec);
         break;
 
       case NavState::PLANNING:
-        output.final_cmd.source =
-            CommandSource::PLANNING_STOP;
+        final_cmd =
+            makeZeroCommand(
+                CommandSource::PLANNING_STOP,
+                now_sec);
         break;
 
-      case NavState::START_ALIGN:
-        output.final_cmd.source =
-            CommandSource::START_ALIGN;
+      case NavState::TRACKING:
+        final_cmd =
+            makeZeroCommand(
+                CommandSource::TRACKING_STOP,
+                now_sec);
         break;
 
       case NavState::FAILED:
-        output.final_cmd.source =
-            CommandSource::FAILED_STOP;
+        final_cmd =
+            makeZeroCommand(
+                CommandSource::FAILED_STOP,
+                now_sec);
         break;
 
       default:
-        output.final_cmd.source =
-            CommandSource::SAFETY_STOP;
+        final_cmd =
+            makeZeroCommand(
+                CommandSource::SAFETY_STOP,
+                now_sec);
         break;
     }
   }
+
+  output.state = state_;
+  output.task_sequence =
+      task_manager_.activeSequence();
+  output.final_cmd = final_cmd;
 
   return output;
 }

@@ -60,6 +60,7 @@ enum class CommandSource : std::uint8_t
   IDLE_STOP,
   PLANNING_STOP,
   FAILED_STOP,
+  TRACKING_STOP,
   PLANNER,
   START_ALIGN,
   GOAL_ALIGN,
