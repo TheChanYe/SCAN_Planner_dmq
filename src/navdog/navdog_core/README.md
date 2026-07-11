@@ -52,18 +52,33 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 一次性 PlannerAction 队列
 - CANCEL 清除尚未执行的旧规划动作
 - PLANNING 阶段安全零速度输出
+- 抽象 PlannerFeedback 状态处理
+- PlannerFeedback 与活动任务 sequence 关联校验
+- 旧规划反馈过滤
+- PLANNING → START_ALIGN
+- PLANNING → FAILED
+- 规划超时保护
+- 规划失败后保持任务锁
 
 尚未实现：
 - MQTT 接入
 - ROS1 适配
 - ROS2 适配
 - SCAN 路线发布
-- SCAN PlannerFeedback 状态转换
 - 暂停继续
 - RouteManager
 - 起步和终点控制
 - 安全层
 - 真实机器人速度输出
+- 真实 SCAN PlannerFeedback ROS 适配
+- START_ALIGN 实际旋转控制
+- START_ALIGN → TRACKING
+- TRACKING 阶段 planner_cmd
+
+注意：
+
+PlannerFeedback.trajectory_id 必须等于活动 NavigationTask.sequence。
+PlannerFeedback.stamp_sec 必须与 update(now_sec) 使用同一时间基准。
 
 ## 任务生命周期
 
@@ -88,6 +103,12 @@ NavigationCoordinator 进入 PLANNING
 update() 输出一次 SET_ROUTE
     ↓
 等待规划适配层反馈
+
+PLANNING
+    ├── READY / EXECUTING → START_ALIGN
+    ├── FAILED           → FAILED
+    ├── 超时             → FAILED
+    └── 无效或旧反馈      → 忽略
 
 CANCEL_TASK
     ↓

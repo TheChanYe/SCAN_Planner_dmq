@@ -59,6 +59,7 @@ enum class CommandSource : std::uint8_t
   NONE = 0,
   IDLE_STOP,
   PLANNING_STOP,
+  FAILED_STOP,
   PLANNER,
   START_ALIGN,
   GOAL_ALIGN,
@@ -180,8 +181,14 @@ struct VelocityCommand
 struct PlannerFeedback
 {
   PlannerState state{PlannerState::UNAVAILABLE};
+
+  // Core correlation id. The ROS adapter must set this to the
+  // NavigationTask::sequence associated with the planner request.
   std::uint64_t trajectory_id{0};
+
+  // Must use the same time domain as NavigationCoordinator::update(now_sec).
   double stamp_sec{0.0};
+
   bool valid{false};
 };
 
