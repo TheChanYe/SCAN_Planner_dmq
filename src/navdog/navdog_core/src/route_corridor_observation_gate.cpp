@@ -234,7 +234,17 @@ RouteCorridorObservationGate::evaluate(
   const double map_age_sec =
       now_sec - observation.map_stamp_sec;
 
-  if (map_age_sec > config_.map_timeout_sec)
+  // Floating-point subtraction can make an exact timeout boundary
+  // slightly larger than the configured value, for example:
+  // 10.0 - 9.7 == 0.3000000000000007.
+  //
+  // Preserve the intended rule:
+  // age == timeout is valid;
+  // age meaningfully greater than timeout is stale.
+  constexpr double kTimeComparisonEpsilonSec = 1e-9;
+
+  if (map_age_sec - config_.map_timeout_sec >
+      kTimeComparisonEpsilonSec)
   {
     output.result =
         RouteCorridorObservationResult::STALE_MAP;
