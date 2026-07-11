@@ -59,6 +59,20 @@ struct RouteProgressConfig
 };
 
 // =============================================================================
+// 5.4b RouteCorridorConfig
+// =============================================================================
+
+struct RouteCorridorConfig
+{
+  // 从当前路线进度向前检查的最大路线距离。
+  double lookahead_distance_m{3.0};
+
+  // 普通导航路线走廊的机器人半径。
+  // 当前其他导航逻辑仍使用 0.30m 半径模型。
+  double corridor_radius_m{0.30};
+};
+
+// =============================================================================
 // 5.5 GoalConfig
 // =============================================================================
 
@@ -118,6 +132,7 @@ struct NavdogConfig
   PlannerConfig planner{};
   StartAlignConfig start_align{};
   RouteProgressConfig route_progress{};
+  RouteCorridorConfig route_corridor{};
   GoalConfig goal{};
   SafetyConfig safety{};
   LimitConfig limits{};

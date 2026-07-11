@@ -15,7 +15,11 @@ NavigationCoordinator::NavigationCoordinator(
       state_(NavState::IDLE),
       task_manager_(config.task),
       start_align_controller_(config.start_align),
-      route_progress_tracker_(config.route_progress)
+      route_progress_tracker_(config.route_progress),
+      route_corridor_evaluator_(
+          config.route_corridor,
+          config.route_progress,
+          config.safety)
 {
 }
 
@@ -490,14 +494,58 @@ CoreOutput NavigationCoordinator::update(
           switch (progress_output.result)
           {
             case RouteProgressResult::VALID:
+            {
               output.route_progress =
                   progress_output.progress;
 
-              final_cmd =
-                  makeZeroCommand(
-                      CommandSource::TRACKING_STOP,
+              const RouteCorridorOutput corridor_output =
+                  route_corridor_evaluator_.evaluate(
+                      active_task,
+                      progress_output.progress,
+                      input.robot,
+                      input.obstacle_field,
                       now_sec);
+
+              switch (corridor_output.result)
+              {
+                case RouteCorridorResult::CLEAR:
+                case RouteCorridorResult::BLOCKED:
+                  output.route_corridor =
+                      corridor_output.assessment;
+
+                  final_cmd =
+                      makeZeroCommand(
+                          CommandSource::TRACKING_STOP,
+                          now_sec);
+                  break;
+
+                case RouteCorridorResult::WAITING_FOR_OBSTACLES:
+                case RouteCorridorResult::STALE_OBSTACLES:
+                case RouteCorridorResult::FUTURE_OBSTACLES:
+                case RouteCorridorResult::INVALID_OBSTACLES:
+                case RouteCorridorResult::IDLE:
+                  final_cmd =
+                      makeZeroCommand(
+                          CommandSource::TRACKING_STOP,
+                          now_sec);
+                  break;
+
+                case RouteCorridorResult::INVALID_TIME:
+                case RouteCorridorResult::INVALID_CONFIG:
+                case RouteCorridorResult::INVALID_TASK:
+                case RouteCorridorResult::INVALID_PROGRESS:
+                case RouteCorridorResult::INVALID_ROBOT:
+                  enterFailedState();
+
+                  final_cmd =
+                      makeZeroCommand(
+                          CommandSource::FAILED_STOP,
+                          now_sec);
+                  break;
+              }
+
               break;
+            }
 
             case RouteProgressResult::WAITING_FOR_ROBOT:
             case RouteProgressResult::IDLE:

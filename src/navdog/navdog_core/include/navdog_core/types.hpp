@@ -193,6 +193,40 @@ struct RobotState
 };
 
 // =============================================================================
+// 4.9b 二维障碍物
+// =============================================================================
+
+struct ObstacleCircle
+{
+  // 必须与 NavigationTask 路点、RobotState
+  // 使用相同的世界坐标系。
+  double x{0.0};
+  double y{0.0};
+
+  // 障碍物当前已经具备的有效半径。
+  //
+  // 原始点障碍可使用 0。
+  // 聚类障碍可以使用聚类本体半径。
+  // 已膨胀障碍可以使用膨胀后的有效半径。
+  //
+  // 适配层和核心层不得对同一膨胀量重复计算。
+  double effective_radius_m{0.0};
+};
+
+struct ObstacleField
+{
+  // 此集合应由适配层完成必要的降采样或聚类。
+  // 不建议直接把完整高密度点云逐点传入核心。
+  std::vector<ObstacleCircle> obstacles;
+
+  // 与 NavigationCoordinator::update(now_sec)
+  // 使用同一时间基准。
+  double stamp_sec{0.0};
+
+  bool valid{false};
+};
+
+// =============================================================================
 // 4.10 障碍物摘要
 // =============================================================================
 
@@ -202,6 +236,55 @@ struct ObstacleSummary
   double left_min{std::numeric_limits<double>::infinity()};
   double right_min{std::numeric_limits<double>::infinity()};
   double rear_min{std::numeric_limits<double>::infinity()};
+
+  double stamp_sec{0.0};
+  bool valid{false};
+};
+
+// =============================================================================
+// 4.10b 路线走廊评估结果
+// =============================================================================
+
+struct RouteCorridorAssessment
+{
+  std::uint64_t task_sequence{0};
+
+  // true 表示前方被检查的路线走廊中存在碰撞。
+  bool blocked{false};
+
+  // 本周期实际检查的前方路线长度。
+  // 路线剩余距离不足 lookahead 时可以小于配置值。
+  double checked_distance_m{0.0};
+
+  // 最早碰撞点距离当前路线进度多远。
+  // CLEAR 时保持 infinity。
+  double first_blocked_distance_ahead_m{
+      std::numeric_limits<double>::infinity()};
+
+  // 最早碰撞点在原始路线上的累计长度。
+  // CLEAR 时保持 infinity。
+  double first_blocked_arc_length_m{
+      std::numeric_limits<double>::infinity()};
+
+  // 所有已检查路线段与所有障碍物之间的最小有符号间隙。
+  //
+  // clearance =
+  // 障碍物中心到路线段距离
+  // - corridor_radius
+  // - obstacle.effective_radius
+  //
+  // > 0：仍有安全间隙
+  // = 0：刚好接触边界
+  // < 0：发生重叠
+  //
+  // 没有障碍物时保持 infinity。
+  double minimum_clearance_m{
+      std::numeric_limits<double>::infinity()};
+
+  // 造成最早阻塞的 ObstacleField::obstacles 索引。
+  // CLEAR 时使用 size_t 最大值。
+  std::size_t obstacle_index{
+      std::numeric_limits<std::size_t>::max()};
 
   double stamp_sec{0.0};
   bool valid{false};
@@ -270,6 +353,7 @@ struct CoreInput
 {
   RobotState robot{};
   ObstacleSummary obstacles{};
+  ObstacleField obstacle_field{};
   PlannerFeedback planner{};
   VelocityCommand planner_cmd{};
 };
@@ -285,6 +369,7 @@ struct CoreOutput
   PlannerAction planner_action{};
   std::uint64_t task_sequence{0};
   RouteProgress route_progress{};
+  RouteCorridorAssessment route_corridor{};
 };
 
 }  // namespace navdog

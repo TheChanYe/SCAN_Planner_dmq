@@ -76,19 +76,28 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 单调不回退的路线进度
 - 受限前向搜索
 - 重复路点和单点路线支持
+- 独立 RouteCorridorEvaluator
+- 世界坐标系二维障碍物输入
+- 原始路线前向走廊检查
+- 路线走廊半径模型
+- 障碍物有效半径/膨胀半径支持
+- 最早阻塞距离
+- 最早阻塞路线累计位置
+- 最小有符号安全间隙
+- 障碍物时间戳和超时检查
+- 已走路线障碍物忽略
+- 单点路线走廊检查
 
 尚未实现：
-- RouteCorridorEvaluator
-- ROUTE_FOLLOW / LOCAL_AVOID / ROUTE_REJOIN
 - NavigationModeManager
-- MQTT 接入
-- ROS1 适配
-- ROS2 适配
-- SCAN 路线发布
-- 暂停继续
+- ROUTE_FOLLOW / LOCAL_AVOID / ROUTE_REJOIN
+- 绕障触发迟滞
+- SCAN 局部绕障轨迹
 - TRACKING planner_cmd 输出
 - 障碍物安全层
 - 终点控制
+- ROS1/ROS2 适配
+- MQTT 接入
 
 注意：
 
@@ -133,22 +142,31 @@ START_ALIGN
 
 TRACKING
     ├── 调用 RouteProgressTracker 计算路线进度
-    ├── VALID → 输出 TRACKING_STOP + route_progress
-    ├── WAITING_FOR_ROBOT → 输出 TRACKING_STOP
+    ├── 路线进度有效后调用 RouteCorridorEvaluator
+    ├── CLEAR / BLOCKED → 输出 TRACKING_STOP + route_progress + route_corridor
+    ├── 障碍物缺失/过期/非法 → 输出 TRACKING_STOP（route_corridor 无效）
     └── INVALID_* → FAILED
 
 RouteProgressTracker 只回答：
 “机器人沿原始路线走到哪里了？”
 
-它不回答：
-“路线是否被障碍物阻挡？”
-“现在应该沿路线还是绕障？”
+RouteCorridorEvaluator 只回答：
+“当前原始路线前方是否被障碍物有效范围占用？”
+
+它不负责：
+“什么时候正式进入绕障？”
+“应该向左绕还是向右绕？”
+“什么时候重新接回路线？”
 “应该输出什么速度？”
+
+ObstacleCircle::effective_radius_m 已包含适配层赋予的有效半径。
+不要在适配层和核心层重复增加同一膨胀距离。
 
 注意：
 START_ALIGN 仅输出 yaw_rate。
 vx 和 vy 始终为 0。
 TRACKING 当前仍然输出 TRACKING_STOP。
+无论路线 CLEAR 还是 BLOCKED，TRACKING 都不输出非零速度。
 
 CANCEL_TASK
     ↓

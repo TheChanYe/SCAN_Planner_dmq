@@ -1568,8 +1568,516 @@ TEST(NavigationCoordinatorTest, SinglePointTaskDoesNotFailInTracking)
 }
 
 // =============================================================================
-// Helper: make robot state (moved to top of file)
+// 28.1 FirstTrackingCycleDoesNotPublishCorridor
 // =============================================================================
+
+TEST(NavigationCoordinatorTest, FirstTrackingCycleDoesNotPublishCorridor)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  // Small error → directly ALIGNED → TRACKING (same cycle)
+  CoreInput robot = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreOutput output = coordinator.update(robot, 1.2);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+}
+
+// =============================================================================
+// 28.2 TrackingPublishesClearCorridor
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingPublishesClearCorridor)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: robot at (3,0), valid empty obstacle field
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_TRUE(output.route_corridor.valid);
+  EXPECT_FALSE(output.route_corridor.blocked);
+}
+
+// =============================================================================
+// 28.3 TrackingPublishesBlockedCorridor
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingPublishesBlockedCorridor)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: obstacle on route at (5,0)
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  ObstacleCircle obs;
+  obs.x = 5.0;
+  obs.y = 0.0;
+  obs.effective_radius_m = 0.0;
+  input.obstacle_field.obstacles.push_back(obs);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_corridor.valid);
+  EXPECT_TRUE(output.route_corridor.blocked);
+}
+
+// =============================================================================
+// 28.4 TrackingStillOutputsSafeZeroWhenClear
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStillOutputsSafeZeroWhenClear)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.5 TrackingStillOutputsSafeZeroWhenBlocked
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStillOutputsSafeZeroWhenBlocked)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  ObstacleCircle obs;
+  obs.x = 4.0;
+  obs.y = 0.0;
+  obs.effective_radius_m = 0.0;
+  input.obstacle_field.obstacles.push_back(obs);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_corridor.blocked);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.6 TrackingWaitsForObstacleFieldWithoutFailure
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingWaitsForObstacleFieldWithoutFailure)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // obstacle_field not valid
+  CoreInput input = makeRobotInput(3, 0, 0);
+  // obstacle_field.valid defaults to false
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.7 TrackingKeepsProgressWhenObstacleFieldMissing
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingKeepsProgressWhenObstacleFieldMissing)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // First cycle: valid obstacle field → progress valid
+  CoreInput input1 = makeRobotInput(3, 0, 0);
+  input1.obstacle_field.valid = true;
+  input1.obstacle_field.stamp_sec = 1.3;
+  CoreOutput out1 = coordinator.update(input1, 1.3);
+  EXPECT_TRUE(out1.route_progress.valid);
+
+  // Second cycle: obstacle field missing → progress still valid
+  CoreInput input2 = makeRobotInput(4, 0, 0);
+  CoreOutput out2 = coordinator.update(input2, 1.4);
+  EXPECT_EQ(out2.state, NavState::TRACKING);
+  EXPECT_TRUE(out2.route_progress.valid);
+  EXPECT_FALSE(out2.route_corridor.valid);
+}
+
+// =============================================================================
+// 28.8 TrackingStopsForStaleObstacleFieldWithoutFailure
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStopsForStaleObstacleFieldWithoutFailure)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Stale obstacle field (timeout = 0.5)
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3 - 0.6;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.9 TrackingStopsForFutureObstacleFieldWithoutFailure
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStopsForFutureObstacleFieldWithoutFailure)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Future obstacle field
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3 + 0.1;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.10 TrackingStopsForInvalidObstacleNumericWithoutFailure
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStopsForInvalidObstacleNumericWithoutFailure)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Invalid obstacle numeric (NaN position)
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  ObstacleCircle obs;
+  obs.x = std::numeric_limits<double>::quiet_NaN();
+  obs.y = 0.0;
+  obs.effective_radius_m = 0.0;
+  input.obstacle_field.obstacles.push_back(obs);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 28.11 TrackingInvalidCorridorConfigTransitionsToFailed
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingInvalidCorridorConfigTransitionsToFailed)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavdogConfig config;
+  config.route_corridor.corridor_radius_m = 0.0;
+  NavigationCoordinator coordinator(config);
+
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: invalid corridor config → FAILED
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::FAILED);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::FAILED_STOP);
+  EXPECT_TRUE(coordinator.hasActiveTask());
+}
+
+// =============================================================================
+// 28.12 TrackingDoesNotUseObstacleSummaryForRouteBlocking
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingDoesNotUseObstacleSummaryForRouteBlocking)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // ObstacleSummary has very small front_min
+  // but ObstacleField is empty and valid
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacles.front_min = 0.01;
+  input.obstacles.valid = true;
+  input.obstacles.stamp_sec = 1.3;
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_corridor.valid);
+  EXPECT_FALSE(output.route_corridor.blocked);
+}
+
+// =============================================================================
+// 28.13 TrackingIgnoresObstacleBehindCurrentProgress
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingIgnoresObstacleBehindCurrentProgress)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Robot at x=5, obstacle behind at x=2
+  CoreInput input = makeRobotInput(5, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  ObstacleCircle obs;
+  obs.x = 2.0;
+  obs.y = 0.0;
+  obs.effective_radius_m = 0.0;
+  input.obstacle_field.obstacles.push_back(obs);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_corridor.valid);
+  EXPECT_FALSE(output.route_corridor.blocked);
+}
+
+// =============================================================================
+// 28.14 CancelFromTrackingClearsCorridorOutput
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, CancelFromTrackingClearsCorridorOutput)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  coordinator.update(input, 1.3);
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+
+  CoreOutput output = coordinator.update(CoreInput{}, 1.4);
+
+  EXPECT_EQ(output.state, NavState::IDLE);
+  EXPECT_FALSE(output.route_corridor.valid);
+  EXPECT_FALSE(coordinator.hasActiveTask());
+}
+
+// =============================================================================
+// 28.15 NewTaskDoesNotReuseOldCorridorOutput
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, NewTaskDoesNotReuseOldCorridorOutput)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput input1 = makeRobotInput(3, 0, 0);
+  input1.obstacle_field.valid = true;
+  input1.obstacle_field.stamp_sec = 1.3;
+  coordinator.update(input1, 1.3);
+
+  // Cancel and start new task
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+  coordinator.update(CoreInput{}, 1.4);
+
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.5);
+
+  CoreInput ready2 = makePlannerInput(PlannerState::READY, 2u, 1.6);
+  coordinator.update(ready2, 1.6);
+
+  // Enter TRACKING for task 2
+  CoreInput robot2 = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreOutput output = coordinator.update(robot2, 1.7);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_corridor.valid);
+}
+
+// =============================================================================
+// 28.16 SinglePointTaskPublishesCorridorAssessment
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, SinglePointTaskPublishesCorridorAssessment)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeValidStartEvent());  // single point at (1,0)
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: single point route, valid obstacle field
+  CoreInput input = makeRobotInput(0.5, 0, 0);
+  input.obstacle_field.valid = true;
+  input.obstacle_field.stamp_sec = 1.3;
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_TRUE(output.route_corridor.valid);
+  EXPECT_FALSE(output.route_corridor.blocked);
+}
 
 }  // namespace
 }  // namespace navdog
