@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navdog_core</name>
+  <version>0.1.0</version>
+  <description>
+    ROS-independent navigation core for the SCAN-Planner based navigation dog.
+  </description>
+
+  <maintainer email="iszhouxin@todo.todo">iszhouxin</maintainer>
+
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <export>
+  </export>
+</package>
