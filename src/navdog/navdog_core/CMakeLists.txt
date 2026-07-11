@@ -10,6 +10,7 @@ catkin_package(
 
 add_library(navdog_core
   src/navigation_coordinator.cpp
+  src/task_manager.cpp
 )
 
 target_include_directories(navdog_core
@@ -35,6 +36,16 @@ if(CATKIN_ENABLE_TESTING)
 
   if(TARGET test_navigation_coordinator)
     target_link_libraries(test_navigation_coordinator
+      navdog_core
+    )
+  endif()
+
+  catkin_add_gtest(test_task_manager
+    test/test_task_manager.cpp
+  )
+
+  if(TARGET test_task_manager)
+    target_link_libraries(test_task_manager
       navdog_core
     )
   endif()
