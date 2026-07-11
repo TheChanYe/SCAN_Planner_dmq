@@ -58,6 +58,7 @@ enum class CommandSource : std::uint8_t
 {
   NONE = 0,
   IDLE_STOP,
+  PLANNING_STOP,
   PLANNER,
   START_ALIGN,
   GOAL_ALIGN,

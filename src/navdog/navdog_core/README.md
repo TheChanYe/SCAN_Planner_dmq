@@ -46,13 +46,19 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 任务取消
 - 活动任务 max_vx 更新
 - 任务和速度输入校验
+- TaskManager 与 NavigationCoordinator 集成
+- START_TASK 驱动 IDLE → PLANNING
+- CANCEL_TASK 驱动 PLANNING → IDLE
+- 一次性 PlannerAction 队列
+- CANCEL 清除尚未执行的旧规划动作
+- PLANNING 阶段安全零速度输出
 
 尚未实现：
 - MQTT 接入
 - ROS1 适配
 - ROS2 适配
 - SCAN 路线发布
-- TaskManager 与 NavigationCoordinator 集成
+- SCAN PlannerFeedback 状态转换
 - 暂停继续
 - RouteManager
 - 起步和终点控制
@@ -68,6 +74,28 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
     ├── UPDATE_MAX_VX：只更新速度
     ├── START_TASK：拒绝替换
     └── CANCEL_TASK：解除锁定
+```
+
+## 核心流程
+
+```text
+START_TASK
+    ↓
+TaskManager 接收并锁定任务
+    ↓
+NavigationCoordinator 进入 PLANNING
+    ↓
+update() 输出一次 SET_ROUTE
+    ↓
+等待规划适配层反馈
+
+CANCEL_TASK
+    ↓
+清除活动任务和旧规划动作
+    ↓
+NavigationCoordinator 回到 IDLE
+    ↓
+update() 输出一次 CANCEL
 ```
 
 ## 构建

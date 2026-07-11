@@ -1,9 +1,10 @@
 #pragma once
 
-#include "navdog_core/types.hpp"
 #include "navdog_core/config.hpp"
+#include "navdog_core/task_manager.hpp"
+#include "navdog_core/types.hpp"
 
-#include <cstdint>
+#include <deque>
 
 namespace navdog
 {
@@ -16,18 +17,33 @@ public:
 
   void reset();
 
+  TaskHandleResult handleEvent(
+      const NavigationEvent& event);
+
   CoreOutput update(
       const CoreInput& input,
       double now_sec);
 
   NavState state() const noexcept;
 
+  bool hasActiveTask() const noexcept;
+
+  bool copyActiveTask(
+      NavigationTask& task) const;
+
   const NavdogConfig& config() const noexcept;
 
 private:
+  void enqueuePlannerAction(
+      const PlannerAction& action);
+
+  PlannerAction takeNextPlannerAction();
+
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
-  std::uint64_t active_task_sequence_{0};
+
+  TaskManager task_manager_{};
+  std::deque<PlannerAction> pending_planner_actions_;
 };
 
 }  // namespace navdog
