@@ -114,34 +114,31 @@ bool RouteCorridorObservationGate::isObservationNumericValid(
     return false;
   }
 
-  // BLOCKED requires finite, non-negative blocked distances.
+  if (!std::isfinite(observation.first_blocked_distance_ahead_m))
+  {
+    return false;
+  }
+
+  if (!std::isfinite(observation.first_blocked_arc_length_m))
+  {
+    return false;
+  }
+
+  // blocked == true requires finite blocked distances.
   if (observation.blocked)
   {
-    if (!std::isfinite(
-            observation.first_blocked_distance_ahead_m) ||
-        observation.first_blocked_distance_ahead_m < 0.0)
-    {
-      return false;
-    }
-
-    if (!std::isfinite(
-            observation.first_blocked_arc_length_m) ||
-        observation.first_blocked_arc_length_m < 0.0)
+    if (std::isinf(observation.first_blocked_distance_ahead_m) ||
+        std::isinf(observation.first_blocked_arc_length_m))
     {
       return false;
     }
   }
-  else
-  {
-    // CLEAR requires positive infinity for both blocked-distance fields.
-    // Do not use only std::isinf(), because negative infinity is invalid.
-    const double positive_infinity =
-        std::numeric_limits<double>::infinity();
 
-    if (observation.first_blocked_distance_ahead_m !=
-            positive_infinity ||
-        observation.first_blocked_arc_length_m !=
-            positive_infinity)
+  // blocked == false requires infinite blocked distances.
+  if (!observation.blocked)
+  {
+    if (!std::isinf(observation.first_blocked_distance_ahead_m) ||
+        !std::isinf(observation.first_blocked_arc_length_m))
     {
       return false;
     }
