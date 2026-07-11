@@ -1,11 +1,14 @@
 #include "navdog_scan_adapter/scan_grid_map_query.hpp"
 
+#include <plan_env/grid_map.h>
+
 #include <cmath>
 
 namespace navdog_scan_adapter
 {
 
-ScanGridMapQuery::ScanGridMapQuery(const GridMap::Ptr& grid_map)
+ScanGridMapQuery::ScanGridMapQuery(
+    const std::shared_ptr<GridMap>& grid_map)
     : grid_map_(grid_map)
 {
 }

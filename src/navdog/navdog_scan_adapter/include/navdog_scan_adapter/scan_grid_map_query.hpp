@@ -2,9 +2,9 @@
 
 #include "navdog_scan_adapter/inflated_grid_query_3d.hpp"
 
-#include <plan_env/grid_map.h>
-
 #include <memory>
+
+class GridMap;
 
 namespace navdog_scan_adapter
 {
@@ -12,7 +12,8 @@ namespace navdog_scan_adapter
 class ScanGridMapQuery : public InflatedGridQuery3D
 {
 public:
-  explicit ScanGridMapQuery(const GridMap::Ptr& grid_map);
+  explicit ScanGridMapQuery(
+      const std::shared_ptr<GridMap>& grid_map);
 
   bool ready() const noexcept override;
   double resolutionM() const noexcept override;
@@ -25,7 +26,7 @@ public:
       double yaw) const noexcept override;
 
 private:
-  GridMap::Ptr grid_map_;
+  std::shared_ptr<GridMap> grid_map_;
 };
 
 }  // namespace navdog_scan_adapter
