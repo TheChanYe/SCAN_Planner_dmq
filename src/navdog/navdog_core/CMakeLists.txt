@@ -13,7 +13,7 @@ add_library(navdog_core
   src/task_manager.cpp
   src/start_align_controller.cpp
   src/route_progress_tracker.cpp
-  src/route_corridor_evaluator.cpp
+  src/route_corridor_observation_gate.cpp
 )
 
 target_include_directories(navdog_core
@@ -73,12 +73,12 @@ if(CATKIN_ENABLE_TESTING)
     )
   endif()
 
-  catkin_add_gtest(test_route_corridor_evaluator
-    test/test_route_corridor_evaluator.cpp
+  catkin_add_gtest(test_route_corridor_observation_gate
+    test/test_route_corridor_observation_gate.cpp
   )
 
-  if(TARGET test_route_corridor_evaluator)
-    target_link_libraries(test_route_corridor_evaluator
+  if(TARGET test_route_corridor_observation_gate)
+    target_link_libraries(test_route_corridor_observation_gate
       navdog_core
     )
   endif()

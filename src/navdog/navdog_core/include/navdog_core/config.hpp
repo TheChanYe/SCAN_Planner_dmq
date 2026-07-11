@@ -66,10 +66,20 @@ struct RouteCorridorConfig
 {
   // 从当前路线进度向前检查的最大路线距离。
   double lookahead_distance_m{3.0};
+};
 
-  // 普通导航路线走廊的机器人半径。
-  // 当前其他导航逻辑仍使用 0.30m 半径模型。
-  double corridor_radius_m{0.30};
+// =============================================================================
+// 5.4c RouteCorridorObservationConfig
+// =============================================================================
+
+struct RouteCorridorObservationConfig
+{
+  // SCAN 三维地图数据允许的最大时间年龄。
+  double map_timeout_sec{0.30};
+
+  // 评估起点相对当前 RouteProgress 最多允许落后多少。
+  // 用于跨线程或跨节点传递时过滤旧结果。
+  double max_progress_lag_m{0.50};
 };
 
 // =============================================================================
@@ -133,6 +143,7 @@ struct NavdogConfig
   StartAlignConfig start_align{};
   RouteProgressConfig route_progress{};
   RouteCorridorConfig route_corridor{};
+  RouteCorridorObservationConfig route_corridor_observation{};
   GoalConfig goal{};
   SafetyConfig safety{};
   LimitConfig limits{};

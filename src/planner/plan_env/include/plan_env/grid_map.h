@@ -143,6 +143,10 @@ struct MappingData {
   double fuse_time_, max_fuse_time_;
   int update_num_;
 
+  // Timestamp of the last real occupancy update (raycast).
+  // Remains 0.0 until the first successful raycast.
+  double last_occupancy_update_stamp_sec_{0.0};
+
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
@@ -189,6 +193,14 @@ public:
 
   bool hasDepthObservation();
   bool odomValid();
+
+  // Returns true when the inflated occupancy buffer has been
+  // populated at least once via a real raycast update.
+  bool hasInflatedObservation() const noexcept;
+
+  // Returns the timestamp of the last real occupancy update.
+  // 0.0 means no update has ever occurred.
+  double getLastOccupancyUpdateStampSec() const noexcept;
   void getRegion(Eigen::Vector3d& ori, Eigen::Vector3d& size);
   inline double getResolution();
   Eigen::Vector3d getOrigin();

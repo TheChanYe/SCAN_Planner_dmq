@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navdog_scan_adapter</name>
+  <version>0.0.1</version>
+  <description>
+    SCAN 3D inflated grid map adapter for navdog.
+    Provides 3D route corridor evaluation using GridMap::getInflateOccupancy.
+  </description>
+  <maintainer email="erpang@protonmail.ch">TheChanYe</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>navdog_core</depend>
+  <depend>plan_env</depend>
+
+  <build_depend>eigen</build_depend>
+</package>

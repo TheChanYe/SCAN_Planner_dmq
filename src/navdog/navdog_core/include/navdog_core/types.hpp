@@ -193,40 +193,6 @@ struct RobotState
 };
 
 // =============================================================================
-// 4.9b 二维障碍物
-// =============================================================================
-
-struct ObstacleCircle
-{
-  // 必须与 NavigationTask 路点、RobotState
-  // 使用相同的世界坐标系。
-  double x{0.0};
-  double y{0.0};
-
-  // 障碍物当前已经具备的有效半径。
-  //
-  // 原始点障碍可使用 0。
-  // 聚类障碍可以使用聚类本体半径。
-  // 已膨胀障碍可以使用膨胀后的有效半径。
-  //
-  // 适配层和核心层不得对同一膨胀量重复计算。
-  double effective_radius_m{0.0};
-};
-
-struct ObstacleField
-{
-  // 此集合应由适配层完成必要的降采样或聚类。
-  // 不建议直接把完整高密度点云逐点传入核心。
-  std::vector<ObstacleCircle> obstacles;
-
-  // 与 NavigationCoordinator::update(now_sec)
-  // 使用同一时间基准。
-  double stamp_sec{0.0};
-
-  bool valid{false};
-};
-
-// =============================================================================
 // 4.10 障碍物摘要
 // =============================================================================
 
@@ -242,51 +208,66 @@ struct ObstacleSummary
 };
 
 // =============================================================================
-// 4.10b 路线走廊评估结果
+// 4.10b 路线走廊评估来源
+// =============================================================================
+
+enum class RouteCorridorSource : std::uint8_t
+{
+  NONE = 0,
+  SCAN_INFLATED_GRID_3D
+};
+
+// =============================================================================
+// 4.10c 路线走廊评估结果
 // =============================================================================
 
 struct RouteCorridorAssessment
 {
+  // 评估数据来源。
+  RouteCorridorSource source{
+      RouteCorridorSource::NONE};
+
   std::uint64_t task_sequence{0};
 
   // true 表示前方被检查的路线走廊中存在碰撞。
   bool blocked{false};
 
-  // 本周期实际检查的前方路线长度。
-  // 路线剩余距离不足 lookahead 时可以小于配置值。
+  // 本次评估是从原始路线的哪个累计进度开始。
+  double evaluated_from_arc_length_m{0.0};
+
+  // 本次实际检查的前方路线长度。
   double checked_distance_m{0.0};
 
-  // 最早碰撞点距离当前路线进度多远。
+  // 最早膨胀占据采样点距离评估起点的距离。
   // CLEAR 时保持 infinity。
   double first_blocked_distance_ahead_m{
       std::numeric_limits<double>::infinity()};
 
-  // 最早碰撞点在原始路线上的累计长度。
+  // 最早膨胀占据采样点在原始路线上的累计距离。
   // CLEAR 时保持 infinity。
   double first_blocked_arc_length_m{
       std::numeric_limits<double>::infinity()};
 
-  // 所有已检查路线段与所有障碍物之间的最小有符号间隙。
-  //
-  // clearance =
-  // 障碍物中心到路线段距离
-  // - corridor_radius
-  // - obstacle.effective_radius
-  //
-  // > 0：仍有安全间隙
-  // = 0：刚好接触边界
-  // < 0：发生重叠
-  //
-  // 没有障碍物时保持 infinity。
-  double minimum_clearance_m{
-      std::numeric_limits<double>::infinity()};
+  // SCAN 三维膨胀栅格地图的分辨率。
+  double map_resolution_m{0.0};
 
-  // 造成最早阻塞的 ObstacleField::obstacles 索引。
-  // CLEAR 时使用 size_t 最大值。
-  std::size_t obstacle_index{
-      std::numeric_limits<std::size_t>::max()};
+  // 实际路线采样间隔，预期约为 resolution / 2。
+  double sample_step_m{0.0};
 
-  double stamp_sec{0.0};
+  // 本次使用的身体中心查询高度。
+  double query_z_m{0.0};
+
+  std::size_t samples_checked{0};
+
+  // 只要任何必查采样点位于地图外，就置 true。
+  bool out_of_map{false};
+
+  // SCAN 三维地图实际最后更新时间。
+  double map_stamp_sec{0.0};
+
+  // 本评估结果生成时间。
+  double evaluation_stamp_sec{0.0};
+
   bool valid{false};
 };
 
@@ -353,9 +334,11 @@ struct CoreInput
 {
   RobotState robot{};
   ObstacleSummary obstacles{};
-  ObstacleField obstacle_field{};
   PlannerFeedback planner{};
   VelocityCommand planner_cmd{};
+
+  // 外部 SCAN 适配层提供的最新路线走廊评估。
+  RouteCorridorAssessment route_corridor_observation{};
 };
 
 // =============================================================================

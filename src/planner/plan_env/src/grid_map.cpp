@@ -168,6 +168,7 @@ void GridMap::initMap(ros::NodeHandle &nh)
   md_.fuse_time_ = 0.0;
   md_.update_num_ = 0;
   md_.max_fuse_time_ = 0.0;
+  md_.last_occupancy_update_stamp_sec_ = 0.0;
   md_.local_bound_min_ = mp_.map_bound_min_idx_;
   md_.local_bound_max_ = mp_.map_bound_max_idx_;
 
@@ -739,6 +740,15 @@ void GridMap::updateOccupancyCallback(const ros::TimerEvent & /*event*/)
   raycastProcess();
   // t3 = ros::Time::now();
 
+  // Update the occupancy timestamp only when raycast
+  // actually processed projected points (not an early
+  // return due to empty input).
+  if (md_.proj_points_cnt > 0)
+  {
+    md_.last_occupancy_update_stamp_sec_ =
+        ros::Time::now().toSec();
+  }
+
   // t4 = ros::Time::now();
 
   // cout << setprecision(7);
@@ -1113,6 +1123,25 @@ void GridMap::publishUnknown()
 bool GridMap::odomValid() { return md_.has_ray_pose_; }
 
 bool GridMap::hasDepthObservation() { return md_.has_first_depth_; }
+
+bool GridMap::hasInflatedObservation() const noexcept
+{
+  if (mp_.sensor_type_ == "lidar")
+  {
+    return md_.has_ray_pose_ &&
+           md_.has_cloud_ &&
+           md_.last_occupancy_update_stamp_sec_ > 0.0;
+  }
+  // depth
+  return md_.has_first_depth_ &&
+         md_.has_ray_pose_ &&
+         md_.last_occupancy_update_stamp_sec_ > 0.0;
+}
+
+double GridMap::getLastOccupancyUpdateStampSec() const noexcept
+{
+  return md_.last_occupancy_update_stamp_sec_;
+}
 
 Eigen::Vector3d GridMap::getOrigin() { return mp_.map_origin_; }
 

@@ -76,15 +76,19 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 单调不回退的路线进度
 - 受限前向搜索
 - 重复路点和单点路线支持
-- 独立 RouteCorridorEvaluator
-- 世界坐标系二维障碍物输入
-- 原始路线前向走廊检查
-- 路线走廊半径模型
-- 障碍物有效半径/膨胀半径支持
+- 独立 RouteCorridorObservationGate
+- SCAN 三维膨胀占据评估结果验证
+- 任务 sequence 关联校验
+- 地图时间戳超时/未来检查
+- 路线进度滞后/未来检查
+- 地图外采样结果处理
+- 14 种评估结果状态
+- navdog_scan_adapter 三维采样评估器
+- GridMap::getInflateOccupancy(pos, yaw) 查询
+- 三维 x/y/z + yaw 膨胀占据语义
+- 采样间隔 = 分辨率 × 0.5
 - 最早阻塞距离
 - 最早阻塞路线累计位置
-- 最小有符号安全间隙
-- 障碍物时间戳和超时检查
 - 已走路线障碍物忽略
 - 单点路线走廊检查
 
@@ -142,25 +146,48 @@ START_ALIGN
 
 TRACKING
     ├── 调用 RouteProgressTracker 计算路线进度
-    ├── 路线进度有效后调用 RouteCorridorEvaluator
+    ├── 路线进度有效后调用 RouteCorridorObservationGate
     ├── CLEAR / BLOCKED → 输出 TRACKING_STOP + route_progress + route_corridor
-    ├── 障碍物缺失/过期/非法 → 输出 TRACKING_STOP（route_corridor 无效）
-    └── INVALID_* → FAILED
+    ├── 观察缺失/过期/非法 → 输出 TRACKING_STOP（route_corridor 无效）
+    └── INVALID_TIME / INVALID_CONFIG / INVALID_PROGRESS → FAILED
 
 RouteProgressTracker 只回答：
-“机器人沿原始路线走到哪里了？”
+"机器人沿原始路线走到哪里了？"
 
-RouteCorridorEvaluator 只回答：
-“当前原始路线前方是否被障碍物有效范围占用？”
+RouteCorridorObservationGate 只回答：
+"SCAN 三维评估结果是否可用于路线阻塞判断？"
 
-它不负责：
-“什么时候正式进入绕障？”
-“应该向左绕还是向右绕？”
-“什么时候重新接回路线？”
-“应该输出什么速度？”
+ScanRouteCorridorEvaluator3D（navdog_scan_adapter）只回答：
+"沿当前路线进度之后的前方路线，三维膨胀占据是否被阻塞？"
 
-ObstacleCircle::effective_radius_m 已包含适配层赋予的有效半径。
-不要在适配层和核心层重复增加同一膨胀距离。
+它们不负责：
+"什么时候正式进入绕障？"
+"应该向左绕还是向右绕？"
+"什么时候重新接回路线？"
+"应该输出什么速度？"
+
+SCAN 使用三维雷达点云和三维膨胀栅格地图。
+
+navdog 不再使用二维 ObstacleCircle 判断路线阻塞。
+
+正式路线碰撞来源为：
+GridMap::getInflateOccupancy(pos, yaw)
+
+路线参考仍以地面 XY 为主，
+但占据查询保留完整 x/y/z 和 yaw 语义。
+
+当前查询高度使用 RobotState::z。
+
+当前阶段是三维地图碰撞查询，
+但地面路线采样高度使用实时 RobotState::z。
+未来只有在 RoutePoint 增加明确 has_z 语义后，
+才允许切换为路线 z 插值。
+
+/grid_map/occupancy_inflate 是可视化输出，
+不是 navdog 正式碰撞判断的数据来源。
+
+navdog_scan_adapter 不可自行增加水平半径、
+z 膨胀或双圆柱偏移；这些已由 SCAN GridMap 内部处理。
 
 注意：
 START_ALIGN 仅输出 yaw_rate。

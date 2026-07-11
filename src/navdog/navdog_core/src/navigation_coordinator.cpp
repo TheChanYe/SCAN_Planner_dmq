@@ -16,10 +16,8 @@ NavigationCoordinator::NavigationCoordinator(
       task_manager_(config.task),
       start_align_controller_(config.start_align),
       route_progress_tracker_(config.route_progress),
-      route_corridor_evaluator_(
-          config.route_corridor,
-          config.route_progress,
-          config.safety)
+      route_corridor_observation_gate_(
+          config.route_corridor_observation)
 {
 }
 
@@ -498,20 +496,18 @@ CoreOutput NavigationCoordinator::update(
               output.route_progress =
                   progress_output.progress;
 
-              const RouteCorridorOutput corridor_output =
-                  route_corridor_evaluator_.evaluate(
-                      active_task,
+              const RouteCorridorObservationOutput obs_output =
+                  route_corridor_observation_gate_.evaluate(
                       progress_output.progress,
-                      input.robot,
-                      input.obstacle_field,
+                      input.route_corridor_observation,
                       now_sec);
 
-              switch (corridor_output.result)
+              switch (obs_output.result)
               {
-                case RouteCorridorResult::CLEAR:
-                case RouteCorridorResult::BLOCKED:
+                case RouteCorridorObservationResult::CLEAR:
+                case RouteCorridorObservationResult::BLOCKED:
                   output.route_corridor =
-                      corridor_output.assessment;
+                      obs_output.assessment;
 
                   final_cmd =
                       makeZeroCommand(
@@ -519,22 +515,24 @@ CoreOutput NavigationCoordinator::update(
                           now_sec);
                   break;
 
-                case RouteCorridorResult::WAITING_FOR_OBSTACLES:
-                case RouteCorridorResult::STALE_OBSTACLES:
-                case RouteCorridorResult::FUTURE_OBSTACLES:
-                case RouteCorridorResult::INVALID_OBSTACLES:
-                case RouteCorridorResult::IDLE:
+                case RouteCorridorObservationResult::WAITING_FOR_OBSERVATION:
+                case RouteCorridorObservationResult::TASK_MISMATCH:
+                case RouteCorridorObservationResult::STALE_MAP:
+                case RouteCorridorObservationResult::FUTURE_MAP:
+                case RouteCorridorObservationResult::STALE_PROGRESS:
+                case RouteCorridorObservationResult::FUTURE_PROGRESS:
+                case RouteCorridorObservationResult::OUT_OF_MAP:
+                case RouteCorridorObservationResult::INVALID_OBSERVATION:
+                case RouteCorridorObservationResult::IDLE:
                   final_cmd =
                       makeZeroCommand(
                           CommandSource::TRACKING_STOP,
                           now_sec);
                   break;
 
-                case RouteCorridorResult::INVALID_TIME:
-                case RouteCorridorResult::INVALID_CONFIG:
-                case RouteCorridorResult::INVALID_TASK:
-                case RouteCorridorResult::INVALID_PROGRESS:
-                case RouteCorridorResult::INVALID_ROBOT:
+                case RouteCorridorObservationResult::INVALID_TIME:
+                case RouteCorridorObservationResult::INVALID_CONFIG:
+                case RouteCorridorObservationResult::INVALID_PROGRESS:
                   enterFailedState();
 
                   final_cmd =
