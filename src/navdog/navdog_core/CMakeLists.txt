@@ -12,6 +12,7 @@ add_library(navdog_core
   src/navigation_coordinator.cpp
   src/task_manager.cpp
   src/start_align_controller.cpp
+  src/route_progress_tracker.cpp
 )
 
 target_include_directories(navdog_core
@@ -57,6 +58,16 @@ if(CATKIN_ENABLE_TESTING)
 
   if(TARGET test_start_align_controller)
     target_link_libraries(test_start_align_controller
+      navdog_core
+    )
+  endif()
+
+  catkin_add_gtest(test_route_progress_tracker
+    test/test_route_progress_tracker.cpp
+  )
+
+  if(TARGET test_route_progress_tracker)
+    target_link_libraries(test_route_progress_tracker
       navdog_core
     )
   endif()

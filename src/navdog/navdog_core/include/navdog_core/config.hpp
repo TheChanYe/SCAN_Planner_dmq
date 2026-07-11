@@ -42,7 +42,24 @@ struct StartAlignConfig
 };
 
 // =============================================================================
-// 5.4 GoalConfig
+// 5.4 RouteProgressConfig
+// =============================================================================
+
+struct RouteProgressConfig
+{
+  // 小于此长度的路线段视为重复点或退化段。
+  double min_segment_length_m{0.01};
+
+  // 每次更新最多允许从当前进度向前搜索的路线距离。
+  // 防止闭环、交叉路线中直接跳到很远的未来路线段。
+  double max_forward_search_m{3.0};
+
+  // 仅用于输出 on_route 诊断，不参与路线进度有效性判断。
+  double on_route_lateral_tolerance_m{0.30};
+};
+
+// =============================================================================
+// 5.5 GoalConfig
 // =============================================================================
 
 struct GoalConfig
@@ -100,6 +117,7 @@ struct NavdogConfig
   TaskConfig task{};
   PlannerConfig planner{};
   StartAlignConfig start_align{};
+  RouteProgressConfig route_progress{};
   GoalConfig goal{};
   SafetyConfig safety{};
   LimitConfig limits{};

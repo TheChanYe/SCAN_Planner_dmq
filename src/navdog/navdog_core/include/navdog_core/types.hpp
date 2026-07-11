@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -127,6 +128,52 @@ struct NavigationTask
 };
 
 // =============================================================================
+// 4.8b 路线进度
+// =============================================================================
+
+struct RouteProgress
+{
+  // 对应当前 NavigationTask::sequence。
+  std::uint64_t task_sequence{0};
+
+  // 原始 NavigationTask::points 中的路线段起点索引。
+  // 表示当前投影位于 points[segment_index]
+  // 到 points[segment_index + 1] 之间。
+  std::size_t segment_index{0};
+
+  // 当前投影在线段上的比例，范围 [0, 1]。
+  double segment_ratio{0.0};
+
+  // 从路线起点到当前投影位置的累计长度。
+  double arc_length_m{0.0};
+
+  // 原始有效路线总长度。
+  double total_length_m{0.0};
+
+  // total_length_m - arc_length_m。
+  double remaining_distance_m{0.0};
+
+  // 当前机器人在路线上的投影点。
+  double projected_x{0.0};
+  double projected_y{0.0};
+
+  // 当前有效路线段方向，单位 rad。
+  double route_yaw{0.0};
+
+  // 机器人当前位置到投影点的二维距离。
+  double lateral_error_m{0.0};
+
+  // lateral_error_m 是否在配置阈值内。
+  bool on_route{false};
+
+  // 与 NavigationCoordinator::update(now_sec)
+  // 使用同一时间基准。
+  double stamp_sec{0.0};
+
+  bool valid{false};
+};
+
+// =============================================================================
 // 4.9 机器人状态
 // =============================================================================
 
@@ -237,6 +284,7 @@ struct CoreOutput
   VelocityCommand final_cmd{};
   PlannerAction planner_action{};
   std::uint64_t task_sequence{0};
+  RouteProgress route_progress{};
 };
 
 }  // namespace navdog

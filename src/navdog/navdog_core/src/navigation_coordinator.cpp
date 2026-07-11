@@ -14,7 +14,8 @@ NavigationCoordinator::NavigationCoordinator(
     : config_(config),
       state_(NavState::IDLE),
       task_manager_(config.task),
-      start_align_controller_(config.start_align)
+      start_align_controller_(config.start_align),
+      route_progress_tracker_(config.route_progress)
 {
 }
 
@@ -29,6 +30,7 @@ void NavigationCoordinator::reset()
   pending_planner_actions_.clear();
   clearPlanningContext();
   start_align_controller_.reset();
+  route_progress_tracker_.reset();
 }
 
 // =============================================================================
@@ -226,6 +228,7 @@ void NavigationCoordinator::enterFailedState() noexcept
 
   clearPlanningContext();
   start_align_controller_.reset();
+  route_progress_tracker_.reset();
 }
 
 // =============================================================================
@@ -274,6 +277,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
     case TaskHandleResult::STARTED:
       clearPlanningContext();
       start_align_controller_.reset();
+      route_progress_tracker_.reset();
       state_ = NavState::PLANNING;
       enqueuePlannerAction(task_output.planner_action);
       break;
@@ -281,6 +285,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
     case TaskHandleResult::CANCELLED:
       clearPlanningContext();
       start_align_controller_.reset();
+      route_progress_tracker_.reset();
       state_ = NavState::IDLE;
       enqueuePlannerAction(task_output.planner_action);
       break;
@@ -462,11 +467,60 @@ CoreOutput NavigationCoordinator::update(
         break;
 
       case NavState::TRACKING:
-        final_cmd =
-            makeZeroCommand(
-                CommandSource::TRACKING_STOP,
-                now_sec);
-        break;
+      {
+        NavigationTask active_task{};
+
+        if (!task_manager_.copyActiveTask(active_task))
+        {
+          enterFailedState();
+
+          final_cmd =
+              makeZeroCommand(
+                  CommandSource::FAILED_STOP,
+                  now_sec);
+        }
+        else
+        {
+          const RouteProgressOutput progress_output =
+              route_progress_tracker_.update(
+                  active_task,
+                  input.robot,
+                  now_sec);
+
+          switch (progress_output.result)
+          {
+            case RouteProgressResult::VALID:
+              output.route_progress =
+                  progress_output.progress;
+
+              final_cmd =
+                  makeZeroCommand(
+                      CommandSource::TRACKING_STOP,
+                      now_sec);
+              break;
+
+            case RouteProgressResult::WAITING_FOR_ROBOT:
+            case RouteProgressResult::IDLE:
+              final_cmd =
+                  makeZeroCommand(
+                      CommandSource::TRACKING_STOP,
+                      now_sec);
+              break;
+
+            case RouteProgressResult::INVALID_TIME:
+            case RouteProgressResult::INVALID_CONFIG:
+            case RouteProgressResult::INVALID_TASK:
+              enterFailedState();
+
+              final_cmd =
+                  makeZeroCommand(
+                      CommandSource::FAILED_STOP,
+                      now_sec);
+              break;
+          }
+        }
+      }
+      break;
 
       case NavState::FAILED:
         final_cmd =

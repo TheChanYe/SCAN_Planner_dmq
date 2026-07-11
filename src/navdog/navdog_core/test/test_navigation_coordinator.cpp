@@ -43,14 +43,48 @@ CoreInput makePlannerInput(
   return input;
 }
 
+RobotState makeRobotState(
+    double x, double y, double yaw)
+{
+  RobotState robot{};
+  robot.x = x;
+  robot.y = y;
+  robot.yaw = yaw;
+  robot.valid = true;
+  return robot;
+}
+
+CoreInput makeRobotInput(
+    double x, double y, double yaw)
+{
+  CoreInput input{};
+  input.robot = makeRobotState(x, y, yaw);
+  return input;
+}
+
+NavigationEvent makeMultiPointStartEvent()
+{
+  NavigationEvent event{};
+  event.type = NavigationEventType::START_TASK;
+  event.task.mode = TaskMode::NORMAL_AVOID;
+  event.task.max_vx = 0.4;
+
+  RoutePoint p0{};
+  p0.x = 0.0;
+  p0.y = 0.0;
+  event.task.points.push_back(p0);
+
+  RoutePoint p1{};
+  p1.x = 10.0;
+  p1.y = 0.0;
+  event.task.points.push_back(p1);
+
+  return event;
+}
+
 // =============================================================================
 // DefaultStateIsIdle
 // =============================================================================
-
-CoreInput makeRobotInput(
-    double x,
-    double y,
-    double yaw);
 
 TEST(NavigationCoordinatorTest, DefaultStateIsIdle)
 {
@@ -1214,27 +1248,328 @@ TEST(NavigationCoordinatorTest, FailedAlignmentRequiresCancelBeforeNewTask)
 }
 
 // =============================================================================
-// Helper: make robot state
+// 27.1 FirstTrackingCycleDoesNotPublishProgress
 // =============================================================================
 
-RobotState makeRobotState(
-    double x, double y, double yaw)
+TEST(NavigationCoordinatorTest, FirstTrackingCycleDoesNotPublishProgress)
 {
-  RobotState robot{};
-  robot.x = x;
-  robot.y = y;
-  robot.yaw = yaw;
-  robot.valid = true;
-  return robot;
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);  // SET_ROUTE
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  // Small error → directly ALIGNED → TRACKING (same cycle)
+  CoreInput robot = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreOutput output = coordinator.update(robot, 1.2);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_progress.valid);
 }
 
-CoreInput makeRobotInput(
-    double x, double y, double yaw)
+// =============================================================================
+// 27.2 TrackingPublishesRouteProgressOnNextCycle
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingPublishesRouteProgressOnNextCycle)
 {
-  CoreInput input{};
-  input.robot = makeRobotState(x, y, yaw);
-  return input;
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  // Enter TRACKING
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: robot at (3, 0) on the route
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(robot1, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_EQ(output.route_progress.task_sequence, 1u);
+  EXPECT_NEAR(output.route_progress.arc_length_m, 3.0, 1e-9);
 }
+
+// =============================================================================
+// 27.3 TrackingStillOutputsSafeZero
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStillOutputsSafeZero)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(robot1, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 27.4 TrackingWaitsForRobotWithoutFailure
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingWaitsForRobotWithoutFailure)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Invalid robot
+  CoreInput bad_robot{};
+  CoreOutput output = coordinator.update(bad_robot, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.route_progress.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 27.5 TrackingRouteProgressNeverRegresses
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingRouteProgressNeverRegresses)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // First: robot at x=5
+  CoreInput robot1 = makeRobotInput(5, 0, 0);
+  CoreOutput out1 = coordinator.update(robot1, 1.3);
+
+  EXPECT_EQ(out1.state, NavState::TRACKING);
+  EXPECT_TRUE(out1.route_progress.valid);
+  double arc1 = out1.route_progress.arc_length_m;
+
+  // Second: robot jitters back to x=4
+  CoreInput robot2 = makeRobotInput(4, 0, 0);
+  CoreOutput out2 = coordinator.update(robot2, 1.4);
+
+  EXPECT_EQ(out2.state, NavState::TRACKING);
+  EXPECT_TRUE(out2.route_progress.valid);
+  EXPECT_GE(out2.route_progress.arc_length_m, arc1);
+}
+
+// =============================================================================
+// 27.6 MaxVxUpdateDoesNotResetRouteProgress
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, MaxVxUpdateDoesNotResetRouteProgress)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // First: progress at x=3
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  CoreOutput out1 = coordinator.update(robot1, 1.3);
+
+  EXPECT_TRUE(out1.route_progress.valid);
+  double arc1 = out1.route_progress.arc_length_m;
+
+  // Update max_vx
+  NavigationEvent speedUp{};
+  speedUp.type = NavigationEventType::UPDATE_MAX_VX;
+  speedUp.max_vx = 0.6;
+  coordinator.handleEvent(speedUp);
+
+  // Next cycle: robot at x=5, progress should continue
+  CoreInput robot2 = makeRobotInput(5, 0, 0);
+  CoreOutput out2 = coordinator.update(robot2, 1.4);
+
+  EXPECT_EQ(out2.state, NavState::TRACKING);
+  EXPECT_TRUE(out2.route_progress.valid);
+  EXPECT_GT(out2.route_progress.arc_length_m, arc1);
+}
+
+// =============================================================================
+// 27.7 CancelFromTrackingClearsProgress
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, CancelFromTrackingClearsProgress)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  coordinator.update(robot1, 1.3);
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+
+  CoreOutput output = coordinator.update(CoreInput{}, 1.4);
+
+  EXPECT_EQ(output.state, NavState::IDLE);
+  EXPECT_FALSE(output.route_progress.valid);
+  EXPECT_FALSE(coordinator.hasActiveTask());
+}
+
+// =============================================================================
+// 27.8 NewTaskStartsFreshRouteProgress
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, NewTaskStartsFreshRouteProgress)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  coordinator.update(robot1, 1.3);
+
+  // Cancel task 1
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+  coordinator.update(CoreInput{}, 1.4);
+
+  // Start task 2 with a different route
+  NavigationEvent event2 = makeMultiPointStartEvent();
+  coordinator.handleEvent(event2);
+  coordinator.update(CoreInput{}, 1.5);  // SET_ROUTE for task 2
+
+  CoreInput ready2 = makePlannerInput(PlannerState::READY, 2u, 1.6);
+  coordinator.update(ready2, 1.6);
+
+  CoreInput robot2 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot2, 1.7);
+
+  // Next cycle in TRACKING
+  CoreInput robot3 = makeRobotInput(5, 0, 0);
+  CoreOutput output = coordinator.update(robot3, 1.8);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_EQ(output.route_progress.task_sequence, 2u);
+}
+
+// =============================================================================
+// 27.9 InvalidRouteProgressConfigTransitionsToFailed
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, InvalidRouteProgressConfigTransitionsToFailed)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavdogConfig config;
+  config.route_progress.max_forward_search_m = 0.0;
+  NavigationCoordinator coordinator(config);
+
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  // Enter TRACKING
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: invalid config → FAILED
+  CoreInput robot1 = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(robot1, 1.3);
+
+  EXPECT_EQ(output.state, NavState::FAILED);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::FAILED_STOP);
+  EXPECT_TRUE(coordinator.hasActiveTask());
+}
+
+// =============================================================================
+// 27.10 SinglePointTaskDoesNotFailInTracking
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, SinglePointTaskDoesNotFailInTracking)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+
+  NavigationCoordinator coordinator;
+  coordinator.handleEvent(makeValidStartEvent());  // single point at (1,0)
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coordinator.update(ready, 1.1);
+
+  // Enter TRACKING (robot at origin facing the target)
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot0, 1.2);
+
+  // Next cycle: single point route should be valid
+  CoreInput robot1 = makeRobotInput(0.5, 0, 0);
+  CoreOutput output = coordinator.update(robot1, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.route_progress.valid);
+}
+
+// =============================================================================
+// Helper: make robot state (moved to top of file)
+// =============================================================================
 
 }  // namespace
 }  // namespace navdog

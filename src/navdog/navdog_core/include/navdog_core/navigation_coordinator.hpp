@@ -1,6 +1,7 @@
 #pragma once
 
 #include "navdog_core/config.hpp"
+#include "navdog_core/route_progress_tracker.hpp"
 #include "navdog_core/start_align_controller.hpp"
 #include "navdog_core/task_manager.hpp"
 #include "navdog_core/types.hpp"
@@ -73,6 +74,8 @@ private:
   std::uint64_t expected_trajectory_id_{0};
 
   StartAlignController start_align_controller_{};
+
+  RouteProgressTracker route_progress_tracker_{};
 };
 
 }  // namespace navdog

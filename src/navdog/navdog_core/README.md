@@ -67,18 +67,28 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - START_ALIGN → TRACKING
 - START_ALIGN 超时保护
 - 非有限 SET_ROUTE 时间保护
+- 独立 RouteProgressTracker
+- 路线段投影
+- 原始路线累计长度
+- 剩余路线距离
+- 横向路线偏差
+- 路线当前方向
+- 单调不回退的路线进度
+- 受限前向搜索
+- 重复路点和单点路线支持
 
 尚未实现：
+- RouteCorridorEvaluator
+- ROUTE_FOLLOW / LOCAL_AVOID / ROUTE_REJOIN
+- NavigationModeManager
 - MQTT 接入
 - ROS1 适配
 - ROS2 适配
 - SCAN 路线发布
 - 暂停继续
-- RouteManager
-- 终点控制
-- 安全层
-- 速度和加速度统一限制
 - TRACKING planner_cmd 输出
+- 障碍物安全层
+- 终点控制
 
 注意：
 
@@ -120,6 +130,20 @@ START_ALIGN
     ├── 开始旋转后误差 ≤ exit_deg → TRACKING
     ├── 超时 → FAILED
     └── 无有效方向 → FAILED
+
+TRACKING
+    ├── 调用 RouteProgressTracker 计算路线进度
+    ├── VALID → 输出 TRACKING_STOP + route_progress
+    ├── WAITING_FOR_ROBOT → 输出 TRACKING_STOP
+    └── INVALID_* → FAILED
+
+RouteProgressTracker 只回答：
+“机器人沿原始路线走到哪里了？”
+
+它不回答：
+“路线是否被障碍物阻挡？”
+“现在应该沿路线还是绕障？”
+“应该输出什么速度？”
 
 注意：
 START_ALIGN 仅输出 yaw_rate。
