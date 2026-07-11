@@ -21,8 +21,8 @@ CoreOutput NavigationCoordinator::update(const CoreInput& input, double now_sec)
   (void)input;
 
   CoreOutput output{};
-  output.state = NavState::IDLE;
-  output.task_sequence = 0;
+  output.state = state_;
+  output.task_sequence = active_task_sequence_;
   output.planner_action.type = PlannerActionType::NONE;
 
   output.final_cmd.vx = 0.0;
