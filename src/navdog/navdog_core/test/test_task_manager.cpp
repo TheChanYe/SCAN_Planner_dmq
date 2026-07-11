@@ -41,9 +41,13 @@ TEST(TaskManagerTest, DefaultStateHasNoActiveTask)
 
   NavigationTask out{};
   EXPECT_FALSE(mgr.copyActiveTask(out));
-  EXPECT_EQ(out.sequence, 0u);
-  EXPECT_DOUBLE_EQ(out.max_vx, 0.0);
-  EXPECT_TRUE(out.points.empty());
+
+  const NavigationTask expected_default{};
+
+  EXPECT_EQ(out.sequence, expected_default.sequence);
+  EXPECT_EQ(out.mode, expected_default.mode);
+  EXPECT_DOUBLE_EQ(out.max_vx, expected_default.max_vx);
+  EXPECT_EQ(out.points.size(), expected_default.points.size());
 }
 
 // =============================================================================
