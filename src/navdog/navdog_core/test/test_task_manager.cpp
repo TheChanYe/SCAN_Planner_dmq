@@ -623,15 +623,15 @@ TEST(TaskManagerTest, UnsupportedEventDoesNotChangeTask)
   NavigationEvent pause{};
   pause.type = NavigationEventType::PAUSE;
   TaskManagerOutput out1 = mgr.handleEvent(pause);
-  EXPECT_EQ(out1.result, TaskHandleResult::UNSUPPORTED_EVENT);
-  EXPECT_EQ(out1.planner_action.type, PlannerActionType::NONE);
+  EXPECT_EQ(out1.result, TaskHandleResult::PAUSED);
+  EXPECT_EQ(out1.planner_action.type, PlannerActionType::PAUSE);
 
   // RESUME
   NavigationEvent resume{};
   resume.type = NavigationEventType::RESUME;
   TaskManagerOutput out2 = mgr.handleEvent(resume);
-  EXPECT_EQ(out2.result, TaskHandleResult::UNSUPPORTED_EVENT);
-  EXPECT_EQ(out2.planner_action.type, PlannerActionType::NONE);
+  EXPECT_EQ(out2.result, TaskHandleResult::RESUMED);
+  EXPECT_EQ(out2.planner_action.type, PlannerActionType::RESUME);
 
   // DYNAMIC_OBSTACLE_UPDATE
   NavigationEvent dyn{};

@@ -1,0 +1,26 @@
+<launch>
+  <arg name="sensor_type" default="lidar"/>
+  <arg name="use_pcd_map" default="false"/>
+
+  <param name="robot_description" textfile="$(find go2_description)/urdf/go2_description.urdf"/>
+  <node pkg="robot_state_publisher" type="robot_state_publisher"
+        name="go2_robot_state_publisher" output="screen"/>
+  <node pkg="scan_planner_dmq" type="go2_kinematic_sim_dmq"
+        name="go2_kinematic_sim" output="screen"/>
+  <node pkg="scan_planner_dmq" type="go2_gait_publisher_dmq"
+        name="go2_gait_publisher" output="screen"/>
+
+  <include file="$(find scan_planner_dmq)/launch/simulator.xml">
+    <arg name="is_real_world" value="false"/>
+    <arg name="sensor_type" value="$(arg sensor_type)"/>
+    <arg name="use_pcd_map" value="$(arg use_pcd_map)"/>
+  </include>
+
+  <node pkg="navdog_runtime" type="navdog_runtime_node"
+        name="navdog_runtime" output="screen">
+    <rosparam command="load" file="$(find navdog_runtime)/config/navdog_sim.yaml"/>
+    <remap from="/grid_map/body_pose" to="/quad_0/body_pose"/>
+    <remap from="/grid_map/sensor_pose" to="/quad_0/lidar_pose"/>
+    <remap from="/grid_map/cloud" to="/pcl_render_node/cloud"/>
+  </node>
+</launch>

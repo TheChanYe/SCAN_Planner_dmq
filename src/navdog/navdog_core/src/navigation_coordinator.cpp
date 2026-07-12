@@ -67,6 +67,7 @@ void NavigationCoordinator::reset()
   safety_supervisor_.reset();
 
   last_mode_ = NavigationMode::NONE;
+  state_before_pause_ = NavState::IDLE;
 }
 
 // =============================================================================
@@ -1353,10 +1354,29 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       break;
 
+    case TaskHandleResult::PAUSED:
+      if (state_ != NavState::PAUSED)
+      {
+        state_before_pause_ = state_;
+        state_ = NavState::PAUSED;
+        enqueuePlannerAction(task_output.planner_action);
+      }
+      break;
+
+    case TaskHandleResult::RESUMED:
+      if (state_ == NavState::PAUSED)
+      {
+        state_ = state_before_pause_ == NavState::IDLE
+            ? NavState::TRACKING : state_before_pause_;
+        enqueuePlannerAction(task_output.planner_action);
+      }
+      break;
+
     case TaskHandleResult::NONE:
     case TaskHandleResult::REJECTED_BUSY:
     case TaskHandleResult::REJECTED_INVALID_TASK:
     case TaskHandleResult::CANCEL_IGNORED:
+    case TaskHandleResult::PAUSE_RESUME_IGNORED:
     case TaskHandleResult::MAX_VX_UNCHANGED:
     case TaskHandleResult::MAX_VX_UPDATE_IGNORED:
     case TaskHandleResult::REJECTED_INVALID_MAX_VX:
@@ -1520,6 +1540,11 @@ CoreOutput NavigationCoordinator::update(
             makeZeroCommand(
                 CommandSource::PLANNING_STOP,
                 now_sec);
+        break;
+
+      case NavState::PAUSED:
+        final_cmd =
+            makeZeroCommand(CommandSource::PAUSE_STOP, now_sec);
         break;
 
       case NavState::TRACKING:

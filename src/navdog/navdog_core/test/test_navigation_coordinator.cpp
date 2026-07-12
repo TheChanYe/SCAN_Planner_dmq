@@ -697,7 +697,7 @@ TEST(NavigationCoordinatorTest, UnchangedMaxVxEmitsNoAction)
 // 13.10 UnsupportedEventDoesNotChangeCoordinator
 // =============================================================================
 
-TEST(NavigationCoordinatorTest, UnsupportedEventDoesNotChangeCoordinator)
+TEST(NavigationCoordinatorTest, PauseResumeKeepsActiveTask)
 {
   NavigationCoordinator coordinator;
 
@@ -708,12 +708,18 @@ TEST(NavigationCoordinatorTest, UnsupportedEventDoesNotChangeCoordinator)
   pause.type = NavigationEventType::PAUSE;
   TaskHandleResult result = coordinator.handleEvent(pause);
 
-  EXPECT_EQ(result, TaskHandleResult::UNSUPPORTED_EVENT);
-  EXPECT_EQ(coordinator.state(), NavState::PLANNING);
+  EXPECT_EQ(result, TaskHandleResult::PAUSED);
+  EXPECT_EQ(coordinator.state(), NavState::PAUSED);
   EXPECT_TRUE(coordinator.hasActiveTask());
 
   CoreOutput output = coordinator.update(CoreInput{}, 2.0);
-  EXPECT_EQ(output.planner_action.type, PlannerActionType::NONE);
+  EXPECT_EQ(output.planner_action.type, PlannerActionType::PAUSE);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::PAUSE_STOP);
+
+  NavigationEvent resume{};
+  resume.type = NavigationEventType::RESUME;
+  EXPECT_EQ(coordinator.handleEvent(resume), TaskHandleResult::RESUMED);
+  EXPECT_EQ(coordinator.state(), NavState::PLANNING);
 }
 
 // =============================================================================

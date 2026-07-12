@@ -1,0 +1,54 @@
+control_rate_hz: 50.0
+status_rate_hz: 10.0
+odom_topic: /quad_0/body_pose
+cmd_vel_topic: /cmd_vel
+odom_twist_in_world_frame: true
+default_route_z: 0.3
+default_max_vx: 0.4
+
+mqtt:
+  enabled: true
+  host: 127.0.0.1
+  port: 1883
+  keepalive_sec: 30
+  client_id: navdog_runtime
+  qos: 1
+
+manager:
+  max_vel: 0.75
+  max_acc: 0.5
+  max_jerk: 4.0
+  control_points_distance: 0.2
+  feasibility_tolerance: 0.5
+  planning_horizon: 7.5
+
+optimization:
+  lambda_smooth: 1.0
+  lambda_collision: 1.0
+  lambda_feasibility: 0.1
+  lambda_fitness: 1.0
+  dist0: 0.2
+  max_vel: 0.75
+  vel_tolerance: 1.0
+  max_acc: 0.5
+  acc_tolerance: 1.0
+
+grid_map:
+  sensor_type: lidar
+  cloud_is_world: true
+  resolution: 0.05
+  sliding_map_size_x: 10.0
+  sliding_map_size_y: 10.0
+  sliding_map_size_z: 5.0
+  map_sliding_thresh: 0.2
+  double_cylinder_radius: 0.25
+  double_cylinder_offset: 0.18
+  obstacles_inflation_z_up: 0.1
+  obstacles_inflation_z_down: 0.4
+  p_hit: 0.85
+  p_miss: 0.30
+  p_min: 0.12
+  p_max: 0.98
+  p_occ: 0.80
+  max_ray_length: 5.0
+  vis_height: 0.3

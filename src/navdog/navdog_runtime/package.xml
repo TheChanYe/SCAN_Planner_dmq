@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navdog_runtime</name>
+  <version>0.1.0</version>
+  <description>Navdog MQTT, ROS control, SCAN integration and simulation runtime.</description>
+  <maintainer email="erpang@protonmail.ch">TheChanYe</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf</depend>
+  <depend>navdog_core</depend>
+  <depend>navdog_scan_adapter</depend>
+  <depend>scan_planner_dmq</depend>
+  <depend>plan_env</depend>
+  <depend>jsoncpp</depend>
+  <depend>libmosquitto-dev</depend>
+  <test_depend>rostest</test_depend>
+</package>

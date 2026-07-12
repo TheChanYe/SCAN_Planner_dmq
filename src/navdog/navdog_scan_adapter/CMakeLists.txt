@@ -36,6 +36,7 @@ add_definitions(${PCL_DEFINITIONS})
 add_library(navdog_scan_adapter
   src/scan_grid_map_query.cpp
   src/scan_route_corridor_evaluator_3d.cpp
+  src/scan_obstacle_summary_evaluator_3d.cpp
   src/scan_local_planner_adapter.cpp
   src/occupancy_query_adapter.cpp
 )
@@ -72,6 +73,18 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET test_scan_local_planner_adapter)
     target_link_libraries(
       test_scan_local_planner_adapter
+      navdog_scan_adapter
+      ${catkin_LIBRARIES}
+    )
+  endif()
+
+  catkin_add_gtest(
+    test_scan_obstacle_summary_evaluator_3d
+    test/test_scan_obstacle_summary_evaluator_3d.cpp
+  )
+  if(TARGET test_scan_obstacle_summary_evaluator_3d)
+    target_link_libraries(
+      test_scan_obstacle_summary_evaluator_3d
       navdog_scan_adapter
       ${catkin_LIBRARIES}
     )

@@ -203,6 +203,7 @@ private:
   bool force_replan_{false};
   double near_goal_blocked_since_sec_{0.0};
   bool near_goal_blocked_timer_active_{false};
+  NavState state_before_pause_{NavState::IDLE};
 };
 
 }  // namespace navdog

@@ -191,6 +191,22 @@ TaskManagerOutput TaskManager::handleEvent(const NavigationEvent& event)
     return output;
   }
 
+  if (event.type == NavigationEventType::PAUSE ||
+      event.type == NavigationEventType::RESUME)
+  {
+    if (!has_active_task_)
+    {
+      output.result = TaskHandleResult::PAUSE_RESUME_IGNORED;
+      return output;
+    }
+    output.result = event.type == NavigationEventType::PAUSE
+        ? TaskHandleResult::PAUSED : TaskHandleResult::RESUMED;
+    output.planner_action.type = event.type == NavigationEventType::PAUSE
+        ? PlannerActionType::PAUSE : PlannerActionType::RESUME;
+    output.planner_action.task = active_task_;
+    return output;
+  }
+
   // -------------------------------------------------------------------------
   // UPDATE_MAX_VX
   // -------------------------------------------------------------------------
