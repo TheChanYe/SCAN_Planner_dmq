@@ -30,12 +30,6 @@ SafetySupervisor::SafetySupervisor(
     : safety_config_(config),
       limit_config_(limits)
 {
-  // Initialize previous output so the first call applies acceleration
-  // limits relative to zero rather than allowing an instant jump.
-  previous_output_ = VelocityCommand{};
-  previous_output_.valid = true;
-  previous_stamp_sec_ = 0.0;
-  has_previous_output_ = true;
 }
 
 // =============================================================================
@@ -55,7 +49,7 @@ void SafetySupervisor::reset() noexcept
 
 VelocityCommand SafetySupervisor::safetyStop(
     double now_sec,
-    CommandSource source) const noexcept
+    CommandSource source) noexcept
 {
   VelocityCommand cmd{};
   cmd.vx = 0.0;
@@ -64,6 +58,9 @@ VelocityCommand SafetySupervisor::safetyStop(
   cmd.stamp_sec = std::isfinite(now_sec) ? now_sec : 0.0;
   cmd.valid = true;
   cmd.source = source;
+  previous_output_ = cmd;
+  previous_stamp_sec_ = cmd.stamp_sec;
+  has_previous_output_ = true;
   return cmd;
 }
 
@@ -78,30 +75,40 @@ bool SafetySupervisor::checkTimeouts(
   if (!std::isfinite(now_sec))
     return false;
 
-  if (!context.robot.valid)
+  if (!context.robot.valid ||
+      !std::isfinite(context.robot.stamp_sec))
   {
     return false;
   }
 
-  if (std::isfinite(context.robot.stamp_sec) &&
-      now_sec - context.robot.stamp_sec >
-          safety_config_.odom_timeout_sec)
+  const double odom_age = now_sec - context.robot.stamp_sec;
+  if (odom_age > safety_config_.odom_timeout_sec ||
+      odom_age < -safety_config_.future_tolerance_sec)
   {
     return false;
   }
 
-  if (context.obstacles.valid &&
-      std::isfinite(context.obstacles.stamp_sec) &&
-      now_sec - context.obstacles.stamp_sec >
-          safety_config_.obstacle_timeout_sec)
+  if (!context.obstacles.valid ||
+      !std::isfinite(context.obstacles.stamp_sec))
   {
     return false;
   }
 
-  if (context.map_valid &&
-      std::isfinite(context.map_stamp_sec) &&
-      now_sec - context.map_stamp_sec >
-          safety_config_.obstacle_timeout_sec)
+  const double obstacle_age = now_sec - context.obstacles.stamp_sec;
+  if (obstacle_age > safety_config_.obstacle_timeout_sec ||
+      obstacle_age < -safety_config_.future_tolerance_sec)
+  {
+    return false;
+  }
+
+  if (!context.map_valid || !std::isfinite(context.map_stamp_sec))
+  {
+    return false;
+  }
+
+  const double map_age = now_sec - context.map_stamp_sec;
+  if (map_age > safety_config_.obstacle_timeout_sec ||
+      map_age < -safety_config_.future_tolerance_sec)
   {
     return false;
   }
@@ -254,6 +261,11 @@ VelocityCommand SafetySupervisor::apply(
   if (!context.map_valid)
   {
     return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
+
+  if (!has_previous_output_)
+  {
+    return safetyStop(now_sec, raw_cmd.source);
   }
 
   // Local trajectory identity guard.

@@ -10,6 +10,38 @@
 
 namespace navdog_scan_adapter
 {
+class ScanLocalPlannerAdapterTestPeer
+{
+public:
+  static void setPending(
+      ScanLocalPlannerAdapter& adapter,
+      const navdog::LocalPlanRequest& request)
+  {
+    std::lock_guard<std::mutex> lock(adapter.mutex_);
+    adapter.pending_request_ = request;
+    adapter.has_pending_request_ = true;
+  }
+
+  static void setActive(
+      ScanLocalPlannerAdapter& adapter,
+      const navdog::LocalPlanRequest& request)
+  {
+    std::lock_guard<std::mutex> lock(adapter.mutex_);
+    adapter.active_request_ = request;
+    adapter.has_active_request_ = true;
+  }
+
+  static void setCompleted(
+      ScanLocalPlannerAdapter& adapter,
+      const navdog::LocalPlanRequest& request,
+      navdog::LocalPlanState state)
+  {
+    std::lock_guard<std::mutex> lock(adapter.mutex_);
+    adapter.completed_request_ = request;
+    adapter.completed_state_ = state;
+  }
+};
+
 namespace
 {
 
@@ -92,6 +124,69 @@ TEST(ScanLocalPlannerAdapterTest, RoutePointHasNoFakeTrajectoryTimeUsage)
   EXPECT_FALSE((HasTimeFromStartSec<navdog::RoutePoint>::value));
   EXPECT_TRUE(
       (HasTimeFromStartSec<navdog::TimedTrajectoryPoint>::value));
+}
+
+navdog::LocalPlanRequest makeRequest(std::uint64_t plan_sequence)
+{
+  navdog::LocalPlanRequest request{};
+  request.purpose = navdog::NavigationMode::LOCAL_AVOID;
+  request.task_sequence = 7;
+  request.plan_sequence = plan_sequence;
+  request.valid = true;
+  return request;
+}
+
+TEST(ScanLocalPlannerAdapterTest, PendingRequestReportsQueued)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  const auto request = makeRequest(1);
+  ScanLocalPlannerAdapterTestPeer::setPending(adapter, request);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 1),
+            navdog::LocalPlanState::QUEUED);
+}
+
+TEST(ScanLocalPlannerAdapterTest, ActiveRequestReportsPlanning)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  const auto request = makeRequest(2);
+  ScanLocalPlannerAdapterTestPeer::setActive(adapter, request);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 2),
+            navdog::LocalPlanState::PLANNING);
+}
+
+TEST(ScanLocalPlannerAdapterTest, FailedRequestReportsFailed)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  const auto request = makeRequest(3);
+  ScanLocalPlannerAdapterTestPeer::setCompleted(
+      adapter, request, navdog::LocalPlanState::FAILED);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 3),
+            navdog::LocalPlanState::FAILED);
+}
+
+TEST(ScanLocalPlannerAdapterTest, NewestPendingRequestWins)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  ScanLocalPlannerAdapterTestPeer::setPending(adapter, makeRequest(1));
+  ScanLocalPlannerAdapterTestPeer::setPending(adapter, makeRequest(2));
+  EXPECT_EQ(adapter.localPlanState(
+                navdog::NavigationMode::LOCAL_AVOID, 7, 1),
+            navdog::LocalPlanState::IDLE);
+  EXPECT_EQ(adapter.localPlanState(
+                navdog::NavigationMode::LOCAL_AVOID, 7, 2),
+            navdog::LocalPlanState::QUEUED);
 }
 
 }  // namespace

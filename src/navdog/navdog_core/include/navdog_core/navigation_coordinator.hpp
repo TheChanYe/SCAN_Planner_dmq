@@ -129,7 +129,7 @@ private:
   bool isTrajectoryHealthy(
       NavigationMode mode,
       const RouteProgress& progress,
-      double now_sec) const;
+      double now_sec);
 
   bool trajectoryEndingSoon(
       const LocalTrajectory& trajectory,
@@ -184,12 +184,15 @@ private:
   std::uint64_t last_local_plan_task_sequence_{0};
   std::uint64_t last_local_plan_plan_sequence_{0};
   double last_local_plan_request_stamp_sec_{0.0};
-  bool local_plan_request_pending_{false};
   bool last_local_plan_failed_{false};
 
   std::uint64_t expected_local_plan_sequence_{0};
   std::uint64_t expected_local_plan_task_sequence_{0};
   NavigationMode expected_local_plan_purpose_{NavigationMode::NONE};
+
+  std::uint64_t accepted_task_sequence_{0};
+  std::uint64_t accepted_plan_sequence_{0};
+  NavigationMode accepted_purpose_{NavigationMode::NONE};
 
   // Last requested target for change detection.
   double last_request_target_x_{0.0};

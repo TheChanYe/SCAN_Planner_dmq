@@ -118,59 +118,13 @@ GoalController::Result GoalController::update(
     return result;
   }
 
-  if (position_reached)
-  {
-    // In-place yaw alignment.
-    result.command.vx = 0.0;
-    result.command.vy = 0.0;
-    result.command.yaw_rate =
-        std::max(-max_yaw_rate,
-            std::min(max_yaw_rate,
-                config_.near_goal_kp_w * yaw_error));
-    if (std::abs(result.command.yaw_rate) < kEpsilon)
-      result.command.yaw_rate = 0.0;
-    result.command.valid = true;
-    return result;
-  }
-
-  // Position not reached: drive slowly toward goal.
-  const double desired_v =
-      std::max(config_.near_goal_min_v,
-          std::min(config_.near_goal_max_v,
-              config_.near_goal_kp_v * dist));
-
-  const double effective_max_vx =
-      std::min(max_vx, desired_v);
-
-  const double heading_to_goal = std::atan2(dy, dx);
-  const double heading_error_to_goal =
-      normalizeAngle(heading_to_goal - robot.yaw);
-
-  if (std::abs(heading_error_to_goal) >
-      config_.near_goal_turn_only_rad)
-  {
-    result.command.vx = 0.0;
-    result.command.vy = 0.0;
-    result.command.yaw_rate =
-        std::max(-config_.near_goal_max_w,
-            std::min(config_.near_goal_max_w,
-                config_.near_goal_kp_w *
-                    heading_error_to_goal));
-    result.command.valid = true;
-    return result;
-  }
-
-  const double c = std::cos(robot.yaw);
-  const double s = std::sin(robot.yaw);
-
-  double vx_world = effective_max_vx * std::cos(heading_to_goal);
-  double vy_world = effective_max_vx * std::sin(heading_to_goal);
-
-  result.command.vx = c * vx_world + s * vy_world;
-  result.command.vy = -s * vx_world + c * vy_world;
+  (void)max_vx;
+  (void)position_reached;
+  result.command.vx = 0.0;
+  result.command.vy = 0.0;
   result.command.yaw_rate =
-      std::max(-config_.near_goal_max_w,
-          std::min(config_.near_goal_max_w,
+      std::max(-max_yaw_rate,
+          std::min(max_yaw_rate,
               config_.near_goal_kp_w * yaw_error));
 
   if (!std::isfinite(result.command.vx))

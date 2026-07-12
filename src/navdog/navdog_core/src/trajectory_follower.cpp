@@ -212,14 +212,6 @@ VelocityCommand TrajectoryFollower::update(
     return cmd;
   }
 
-  // Trajectory source stamp has aged beyond its duration.
-  if (now_sec - trajectory.source_stamp_sec >
-      trajectory.duration_sec)
-  {
-    reset();
-    return cmd;
-  }
-
   // Identity changed: reset execution time.
   const bool identity_changed =
       trajectory.task_sequence != active_task_sequence_ ||

@@ -309,7 +309,7 @@ TEST(TrajectoryFollowerTest, RejectsOldMode)
   EXPECT_EQ(cmd.vx, 0.0);
 }
 
-TEST(TrajectoryFollowerTest, StopsWhenExpired)
+TEST(TrajectoryFollowerTest, AcceptedTrajectoryRunsBeyondPointThreeSeconds)
 {
   TrajectoryFollowerConfig config{};
   TrajectoryFollower follower(config);
@@ -327,8 +327,7 @@ TEST(TrajectoryFollowerTest, StopsWhenExpired)
       1,
       2.5);  // elapsed 1.5s > duration 1.0s
 
-  EXPECT_FALSE(cmd.valid);
-  EXPECT_EQ(cmd.vx, 0.0);
+  EXPECT_TRUE(cmd.valid);
 }
 
 TEST(TrajectoryFollowerTest, RotatesOnlyWithLargeHeadingError)
@@ -410,7 +409,7 @@ TEST(RejoinTargetSelectorTest, RejectsBehindProgress)
 // GoalController tests
 // =============================================================================
 
-TEST(GoalControllerTest, SlowsDownNearGoal)
+TEST(GoalControllerTest, GoalControllerDoesNotDriveDirectChord)
 {
   GoalControllerConfig config{};
   config.near_goal_switch_dist = 0.8;
@@ -427,8 +426,8 @@ TEST(GoalControllerTest, SlowsDownNearGoal)
       task, robot, progress, 0.4, 0.65, 1.0);
 
   EXPECT_TRUE(result.command.valid);
-  EXPECT_GT(result.command.vx, 0.0);
-  EXPECT_LE(result.command.vx, config.near_goal_max_v);
+  EXPECT_EQ(result.command.vx, 0.0);
+  EXPECT_EQ(result.command.vy, 0.0);
 }
 
 TEST(GoalControllerTest, AlignsYawInPlace)
@@ -499,6 +498,10 @@ TEST(SafetySupervisorTest, EmergencyDistanceStops)
   context.obstacles.valid = true;
   context.obstacles.front_min = 0.3;
 
+  supervisor.apply(raw_cmd, context, 0.4, 0.9);
+  context.robot.stamp_sec = 1.0;
+  context.obstacles.stamp_sec = 1.0;
+  context.map_stamp_sec = 1.0;
   const VelocityCommand cmd =
       supervisor.apply(raw_cmd, context, 0.4, 1.0);
 
@@ -527,6 +530,7 @@ TEST(SafetySupervisorTest, FrontObstacleLinearSlowdown)
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
+  supervisor.apply(raw_cmd, context, 0.4, 0.9);
   const VelocityCommand cmd =
       supervisor.apply(raw_cmd, context, 0.4, 1.0);
 
@@ -589,6 +593,9 @@ TEST(SafetySupervisorTest, InvalidRawCommandStops)
 
   SafetySupervisor::Context context{};
   context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
@@ -632,12 +639,15 @@ TEST(SafetySupervisorTest, AccelerationRiseIsLimited)
 
   SafetySupervisor::Context context{};
   context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
   VelocityCommand first =
       supervisor.apply(raw_cmd, context, 1.0, 1.0);
-  EXPECT_GT(first.vx, 0.0);
+  EXPECT_EQ(first.vx, 0.0);
 
   raw_cmd.vx = 1.0;
   VelocityCommand second =
@@ -645,6 +655,114 @@ TEST(SafetySupervisorTest, AccelerationRiseIsLimited)
   EXPECT_GT(second.vx, first.vx);
   EXPECT_LE(second.vx - first.vx,
             config.limits.max_accel_x * 0.02 + 1e-9);
+}
+
+TEST(SafetySupervisorTest, FirstCommandRampsFromZero)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.0).vx, 0.0);
+  EXPECT_GT(supervisor.apply(raw, context, 0.4, 1.1).vx, 0.0);
+}
+
+TEST(SafetySupervisorTest, NaNOdomStampStops)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot();
+  context.robot.stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.0).vx, 0.0);
+}
+
+TEST(SafetySupervisorTest, NaNObstacleStampStops)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.0).vx, 0.0);
+}
+
+TEST(SafetySupervisorTest, NaNMapStampStops)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.map_valid = true;
+  context.map_stamp_sec = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.0).vx, 0.0);
+}
+
+TEST(SafetySupervisorTest, InvalidObstacleSummaryStops)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.0).vx, 0.0);
+}
+
+TEST(SafetySupervisorTest, SafetyStopResetsPreviousVelocity)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  VelocityCommand raw{};
+  raw.vx = 0.4;
+  raw.valid = true;
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  supervisor.apply(raw, context, 0.4, 1.0);
+  supervisor.apply(raw, context, 0.4, 1.2);
+  context.obstacles.valid = false;
+  EXPECT_EQ(supervisor.apply(raw, context, 0.4, 1.3).vx, 0.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.4;
+  context.map_stamp_sec = 1.4;
+  const VelocityCommand recovered =
+      supervisor.apply(raw, context, 0.4, 1.4);
+  EXPECT_EQ(recovered.vx, 0.0);
 }
 
 TEST(SafetySupervisorTest, LateralAccelerationIsLimited)
@@ -722,6 +840,7 @@ TEST(SafetySupervisorTest, EmergencyStopIsImmediate)
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
+  supervisor.apply(raw_cmd, context, 0.4, 0.9);
   VelocityCommand first =
       supervisor.apply(raw_cmd, context, 0.4, 1.0);
   EXPECT_GT(first.vx, 0.0);
@@ -736,7 +855,7 @@ TEST(SafetySupervisorTest, EmergencyStopIsImmediate)
 // TrajectoryFollower time tests
 // =============================================================================
 
-TEST(TrajectoryFollowerTimeTest, TurnOnlyFreezesExecutionTime)
+TEST(TrajectoryFollowerTimeTest, TurningFreezeDoesNotTriggerWallClockExpiry)
 {
   TrajectoryFollowerConfig config{};
   config.heading_turn_only_threshold_rad = 0.3;
@@ -946,7 +1065,7 @@ TEST(TrajectoryFollowerTimeTest, TrajectoryRunsLongerThanPointThreeSeconds)
   EXPECT_GT(cmd.vx, 0.0);
 }
 
-TEST(TrajectoryFollowerTimeTest, TrajectoryStopsAfterDuration)
+TEST(TrajectoryFollowerTimeTest, TrajectoryExpiresByExecutionTime)
 {
   TrajectoryFollowerConfig config{};
   // Note: TrajectoryFollower itself does not use expiry margin directly.

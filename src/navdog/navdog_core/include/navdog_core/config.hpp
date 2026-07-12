@@ -114,6 +114,7 @@ struct SafetyConfig
   double odom_timeout_sec{0.5};
   double obstacle_timeout_sec{0.5};
   double planner_cmd_timeout_sec{0.3};
+  double future_tolerance_sec{0.05};
 };
 
 // =============================================================================

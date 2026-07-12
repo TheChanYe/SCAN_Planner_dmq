@@ -81,7 +81,6 @@ bool ScanLocalPlannerAdapter::requestLocalPlan(
     // Newest-wins: overwrite any pending request.
     pending_request_ = request;
     has_pending_request_ = true;
-    state_ = navdog::LocalPlanState::QUEUED;
   }
 
   cv_.notify_one();
@@ -113,7 +112,8 @@ void ScanLocalPlannerAdapter::planningLoop()
         request = pending_request_;
         has_request = true;
         has_pending_request_ = false;
-        state_ = navdog::LocalPlanState::PLANNING;
+        active_request_ = request;
+        has_active_request_ = true;
       }
     }
 
@@ -128,28 +128,23 @@ void ScanLocalPlannerAdapter::planningLoop()
       if (shutdown_)
         return;
 
+      has_active_request_ = false;
+      completed_request_ = request;
+
       if (ok)
       {
-        last_request_ = request;
-        last_plan_stamp_sec_ = rosTimeToSec(ros::Time::now());
         cached_trajectory_ = sampleLocalTrajData(
             request.task_sequence,
             request.plan_sequence,
             request.purpose);
-        state_ = cached_trajectory_.valid
+        completed_state_ = cached_trajectory_.valid
                      ? navdog::LocalPlanState::READY
                      : navdog::LocalPlanState::FAILED;
       }
       else
       {
-        // Invalidate cached trajectory if it belongs to the same identity.
-        if (cached_trajectory_.purpose == request.purpose &&
-            cached_trajectory_.task_sequence == request.task_sequence &&
-            cached_trajectory_.plan_sequence == request.plan_sequence)
-        {
-          cached_trajectory_ = navdog::LocalTrajectory{};
-        }
-        state_ = navdog::LocalPlanState::FAILED;
+        cached_trajectory_ = navdog::LocalTrajectory{};
+        completed_state_ = navdog::LocalPlanState::FAILED;
       }
     }
   }
@@ -218,7 +213,7 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
   trajectory.plan_sequence = plan_sequence;
   trajectory.purpose = purpose;
   trajectory.duration_sec = local_data.duration_;
-  trajectory.source_stamp_sec = rosTimeToSec(local_data.start_time_);
+  trajectory.source_stamp_sec = rosTimeToSec(ros::Time::now());
 
   const int sample_count = static_cast<int>(
       std::ceil(local_data.duration_ / kSampleDtSec)) + 1;
@@ -272,8 +267,8 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::getLocalTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (last_request_.task_sequence != task_sequence ||
-      last_request_.purpose != purpose)
+  if (completed_request_.task_sequence != task_sequence ||
+      completed_request_.purpose != purpose)
   {
     return navdog::LocalTrajectory{};
   }
@@ -291,8 +286,8 @@ bool ScanLocalPlannerAdapter::hasValidTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (last_request_.task_sequence != task_sequence ||
-      last_request_.purpose != purpose)
+  if (completed_request_.task_sequence != task_sequence ||
+      completed_request_.purpose != purpose)
   {
     return false;
   }
@@ -314,19 +309,28 @@ navdog::LocalPlanState ScanLocalPlannerAdapter::localPlanState(
 
   if (has_pending_request_ &&
       pending_request_.purpose == purpose &&
-      pending_request_.task_sequence == task_sequence)
+      pending_request_.task_sequence == task_sequence &&
+      pending_request_.plan_sequence == plan_sequence)
   {
     return navdog::LocalPlanState::QUEUED;
   }
 
-  if (last_request_.purpose != purpose ||
-      last_request_.task_sequence != task_sequence ||
-      last_request_.plan_sequence != plan_sequence)
+  if (has_active_request_ &&
+      active_request_.purpose == purpose &&
+      active_request_.task_sequence == task_sequence &&
+      active_request_.plan_sequence == plan_sequence)
+  {
+    return navdog::LocalPlanState::PLANNING;
+  }
+
+  if (completed_request_.purpose != purpose ||
+      completed_request_.task_sequence != task_sequence ||
+      completed_request_.plan_sequence != plan_sequence)
   {
     return navdog::LocalPlanState::IDLE;
   }
 
-  return state_;
+  return completed_state_;
 }
 
 // =============================================================================
@@ -341,9 +345,9 @@ bool ScanLocalPlannerAdapter::isTrajectoryColliding(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (last_request_.task_sequence != task_sequence ||
-      last_request_.purpose != purpose ||
-      last_request_.plan_sequence != plan_sequence)
+  if (completed_request_.task_sequence != task_sequence ||
+      completed_request_.purpose != purpose ||
+      completed_request_.plan_sequence != plan_sequence)
   {
     return true;
   }

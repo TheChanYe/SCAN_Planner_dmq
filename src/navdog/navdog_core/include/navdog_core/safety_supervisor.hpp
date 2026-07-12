@@ -41,7 +41,7 @@ public:
 private:
   VelocityCommand safetyStop(
       double now_sec,
-      CommandSource source) const noexcept;
+      CommandSource source) noexcept;
 
   bool checkTimeouts(
       const Context& context,

@@ -383,6 +383,9 @@ NavigationModeOutput NavigationModeManager::update(
     // obstacle can still enter LOCAL_AVOID in the same update.
   }
 
+  const NavigationMode mode_after_initialization = status_.mode;
+  const NavigationModeReason initialization_reason = status_.reason;
+
   // Update task-related fields.
   status_.task_sequence = task.sequence;
   status_.avoidance_allowed =
@@ -755,6 +758,12 @@ NavigationModeOutput NavigationModeManager::update(
   }
 
   // --- 10. Finalize ---
+
+  if (initialized_this_update &&
+      status_.mode == mode_after_initialization)
+  {
+    status_.reason = initialization_reason;
+  }
 
   status_.stamp_sec = now_sec;
   status_.valid = status_.initialized;

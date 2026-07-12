@@ -1355,6 +1355,35 @@ TEST(NavigationModeManagerTest, NewTaskPreviousModeIsNone)
   EXPECT_FALSE(output.status.has_rejoin_anchor);
 }
 
+TEST(NavigationModeManagerTest, NewTaskClearKeepsTaskChangedReason)
+{
+  NavigationModeManager manager;
+  manager.update(makeValidTask(), makeRobot(), makeProgress(1, 0.0),
+                 makeClearCorridor(1), 1.0);
+
+  NavigationModeOutput output = manager.update(
+      makeValidTask(2), makeRobot(), makeProgress(2, 0.0),
+      makeClearCorridor(2), 2.0);
+
+  EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.status.previous_mode, NavigationMode::NONE);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::TASK_CHANGED);
+}
+
+TEST(NavigationModeManagerTest, NewTaskImmediateBlockKeepsBlockImmediate)
+{
+  NavigationModeManager manager;
+  manager.update(makeValidTask(), makeRobot(), makeProgress(1, 0.0),
+                 makeClearCorridor(1), 1.0);
+
+  NavigationModeOutput output = manager.update(
+      makeValidTask(2), makeRobot(), makeProgress(2, 0.0),
+      makeBlockedCorridor(2, 0.1), 2.0);
+
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::BLOCK_IMMEDIATE);
+}
+
 }  // namespace
 }  // namespace navdog
 

@@ -5,3 +5,5 @@ build/
 devel/
 src/CMakeLists.txt
 src/simulator/map_generator/resource/
+build_manual/
+*.o

@@ -65,6 +65,10 @@ CoreInput makeRobotInput(
 {
   CoreInput input{};
   input.robot = makeRobotState(x, y, yaw, stamp_sec);
+  input.obstacles.valid = true;
+  input.obstacles.stamp_sec = stamp_sec;
+  input.obstacles.front_min =
+      std::numeric_limits<double>::infinity();
   return input;
 }
 
@@ -403,6 +407,17 @@ private:
   bool use_free_after_x_{false};
   double free_after_x_{0.0};
 };
+
+void attachLocalPlanner(
+    NavigationCoordinator& coordinator,
+    FakeLocalPlannerAdapter& adapter)
+{
+  static FakeOccupancyQuery occupancy;
+  occupancy.setReady(true);
+  occupancy.setFree(true);
+  coordinator.setOccupancyQuery(&occupancy);
+  coordinator.setLocalPlannerAdapter(&adapter);
+}
 
 // =============================================================================
 // DefaultStateIsIdle
@@ -2989,7 +3004,7 @@ TEST(NavigationCoordinatorTest,
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   // Trigger LOCAL_AVOID with immediate obstacle.
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3019,7 +3034,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3046,7 +3061,7 @@ TEST(NavigationCoordinatorTest, ExpiredTrajectoryStops)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 1.0, 1.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3076,7 +3091,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   // Enter LOCAL_AVOID.
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3110,7 +3125,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   // Enter LOCAL_AVOID and consume the first plan request.
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3181,7 +3196,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3226,7 +3241,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3292,7 +3307,7 @@ TEST(NavigationCoordinatorTest, MissingCorridorStopsLocalAvoid)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3319,7 +3334,7 @@ TEST(NavigationCoordinatorTest, WaitingRobotStopsTrajectory)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3448,7 +3463,7 @@ TEST(NavigationCoordinatorTest, WrongPlanSequenceRejected)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3479,7 +3494,7 @@ TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsAtZero)
   LocalTrajectory trajectory1 = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory1);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3515,7 +3530,7 @@ TEST(NavigationCoordinatorTest, OldPlanRejectedWhileNewPlanPending)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3545,7 +3560,7 @@ TEST(NavigationCoordinatorTest, FailedReplanDoesNotReuseOldTrajectory)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3575,7 +3590,7 @@ TEST(NavigationCoordinatorTest, ModeChangeRejectsOldTrajectory)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3611,7 +3626,7 @@ TEST(NavigationCoordinatorTest, TurnOnlyReallyFreezesTrajectoryTime)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3647,7 +3662,7 @@ TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsTrajectoryAtZero)
   LocalTrajectory trajectory1 = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory1);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3680,7 +3695,7 @@ TEST(NavigationCoordinatorTest, PurposeChangeRestartsTrajectoryAtZero)
       1u, 2u, NavigationMode::ROUTE_REJOIN, 2.0, 2.0);
 
   adapter.setTrajectory(avoid_traj);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3711,7 +3726,7 @@ TEST(NavigationCoordinatorTest, TaskChangeRestartsTrajectoryAtZero)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3737,7 +3752,7 @@ TEST(NavigationCoordinatorTest, LargeControlGapDoesNotSkipTrajectory)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3770,7 +3785,7 @@ TEST(NavigationCoordinatorTest, TimeRegressionStopsTrajectory)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3796,7 +3811,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3821,7 +3836,7 @@ TEST(NavigationCoordinatorTest, TrajectoryStopsAfterDuration)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.1, 0.1);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3853,7 +3868,7 @@ TEST(NavigationCoordinatorTest, TrajectoryStopsAfterDuration)
 // =============================================================================
 
 TEST(NavigationCoordinatorTest,
-     HealthyTrajectoryDoesNotPeriodicallyReplan)
+     SourceAgeCheckedOnlyOnFirstAcceptance)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -3862,7 +3877,7 @@ TEST(NavigationCoordinatorTest,
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3880,13 +3895,14 @@ TEST(NavigationCoordinatorTest,
   EXPECT_EQ(adapter.requestCount(), count_after_first);
 }
 
-TEST(NavigationCoordinatorTest, PlanningRequestIsRateLimited)
+TEST(NavigationCoordinatorTest,
+     PlanningRequestIsNotResubmittedEveryControlCycle)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3910,7 +3926,7 @@ TEST(NavigationCoordinatorTest, OnlyOneOutstandingRequestExists)
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3934,7 +3950,7 @@ TEST(NavigationCoordinatorTest, TargetChangeTriggersReplan)
 
   FakeLocalPlannerAdapter adapter;
   FakeOccupancyQuery occupancy;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -3966,7 +3982,7 @@ TEST(NavigationCoordinatorTest, CollisionTriggersReplan)
   LocalTrajectory trajectory = makeTestLocalTrajectory(
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   adapter.setTrajectory(trajectory);
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
 
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
   input.route_corridor_observation =
@@ -3984,7 +4000,7 @@ TEST(NavigationCoordinatorTest, CollisionTriggersReplan)
 // Near goal tests
 // =============================================================================
 
-TEST(NavigationCoordinatorTest, NearGoalFollowsRouteInsteadOfDirectChord)
+TEST(NavigationCoordinatorTest, NearGoalContinuesAlongRoute)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -4036,7 +4052,8 @@ TEST(NavigationCoordinatorTest, RouteOnlyBlockedNearGoalStops)
   EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
 }
 
-TEST(NavigationCoordinatorTest, GoalYawAlignOnlyAfterPositionReached)
+TEST(NavigationCoordinatorTest,
+     GoalControllerOnlyAlignsYawInsideFinishDistance)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -4065,7 +4082,7 @@ TEST(NavigationCoordinatorTest, LocalAvoidSkipsOccupiedFirstCandidate)
 
   FakeLocalPlannerAdapter adapter;
   FakeOccupancyQuery occupancy;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   // Robot at x = 3.0, arc = 3.0.
@@ -4095,7 +4112,7 @@ TEST(NavigationCoordinatorTest, LocalAvoidFindsLaterFreeCandidate)
 
   FakeLocalPlannerAdapter adapter;
   FakeOccupancyQuery occupancy;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
@@ -4116,14 +4133,14 @@ TEST(NavigationCoordinatorTest, LocalAvoidFindsLaterFreeCandidate)
   EXPECT_GE(adapter.lastRequest().target.x, 6.0 - 1e-6);
 }
 
-TEST(NavigationCoordinatorTest, LocalAvoidWaitsWhenMapNotReady)
+TEST(NavigationCoordinatorTest, MapNotReadyStopsPlanning)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
   FakeOccupancyQuery occupancy;
-  coordinator.setLocalPlannerAdapter(&adapter);
+  attachLocalPlanner(coordinator, adapter);
   coordinator.setOccupancyQuery(&occupancy);
 
   CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
@@ -4141,6 +4158,24 @@ TEST(NavigationCoordinatorTest, LocalAvoidWaitsWhenMapNotReady)
 
   EXPECT_EQ(output.navigation_mode.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_EQ(adapter.requestCount(), 0u);
+}
+
+TEST(NavigationCoordinatorTest, MissingOccupancyQueryStopsPlanning)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  FakeLocalPlannerAdapter adapter;
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(nullptr);
+
+  CoreInput input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.4);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  const CoreOutput output = coordinator.update(input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
   EXPECT_EQ(adapter.requestCount(), 0u);
 }

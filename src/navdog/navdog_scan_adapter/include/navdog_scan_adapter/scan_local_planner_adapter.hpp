@@ -60,6 +60,8 @@ public:
       double from_time_sec) const override;
 
 private:
+  friend class ScanLocalPlannerAdapterTestPeer;
+
   void planningLoop();
 
   navdog::LocalTrajectory sampleLocalTrajData(
@@ -74,9 +76,6 @@ private:
       const navdog::LocalTrajectory& trajectory,
       double from_time_sec) const;
 
-  bool shouldReplan(
-      const navdog::LocalPlanRequest& request) const;
-
   navdog::PlannerTriggerConfig config_{};
   std::shared_ptr<InflatedGridQuery3D> grid_query_{};
   std::shared_ptr<scan_planner::SCANPlannerManager>
@@ -90,10 +89,13 @@ private:
   navdog::LocalPlanRequest pending_request_{};
   bool has_pending_request_{false};
 
-  navdog::LocalPlanRequest last_request_{};
-  double last_plan_stamp_sec_{0.0};
+  navdog::LocalPlanRequest active_request_{};
+  bool has_active_request_{false};
+
+  navdog::LocalPlanRequest completed_request_{};
+  navdog::LocalPlanState completed_state_{
+      navdog::LocalPlanState::IDLE};
   navdog::LocalTrajectory cached_trajectory_{};
-  navdog::LocalPlanState state_{navdog::LocalPlanState::IDLE};
 };
 
 }  // namespace navdog_scan_adapter
