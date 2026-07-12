@@ -660,7 +660,7 @@ bool NavigationCoordinator::isTrajectoryHealthy(
 bool NavigationCoordinator::needsNewLocalPlan(
     NavigationMode mode,
     const RouteProgress& progress,
-    double now_sec) const
+    double now_sec)
 {
   if (mode != NavigationMode::LOCAL_AVOID &&
       mode != NavigationMode::ROUTE_REJOIN)

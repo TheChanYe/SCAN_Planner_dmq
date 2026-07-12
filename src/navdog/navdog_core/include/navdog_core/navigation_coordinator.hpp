@@ -124,7 +124,7 @@ private:
   bool needsNewLocalPlan(
       NavigationMode mode,
       const RouteProgress& progress,
-      double now_sec) const;
+      double now_sec);
 
   bool isTrajectoryHealthy(
       NavigationMode mode,

@@ -27,6 +27,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 catkin_package(
   INCLUDE_DIRS include
+  LIBRARIES scan_planner_manager_dmq
   CATKIN_DEPENDS
     plan_env
     path_searching
@@ -44,15 +45,33 @@ include_directories(
 )
 
 
+add_library(scan_planner_manager_dmq
+  src/planner_manager.cpp
+)
+
+target_link_libraries(scan_planner_manager_dmq
+  ${catkin_LIBRARIES}
+)
+
+add_dependencies(
+  scan_planner_manager_dmq
+  ${catkin_EXPORTED_TARGETS}
+)
+
 add_executable(scan_planner_dmq_node
   src/scan_planner_node.cpp
   src/scan_replan_fsm.cpp
-  src/planner_manager.cpp
-  )
+)
+
 target_link_libraries(scan_planner_dmq_node
+  scan_planner_manager_dmq
   ${catkin_LIBRARIES}
-  )
-add_dependencies(scan_planner_dmq_node ${catkin_EXPORTED_TARGETS})
+)
+
+add_dependencies(
+  scan_planner_dmq_node
+  ${catkin_EXPORTED_TARGETS}
+)
 
 add_executable(open_loop_controller_dmq src/open_loop_controller.cpp)
 target_link_libraries(open_loop_controller_dmq ${catkin_LIBRARIES})
@@ -69,3 +88,15 @@ add_dependencies(go2_kinematic_sim_dmq ${catkin_EXPORTED_TARGETS})
 add_executable(go2_gait_publisher_dmq src/go2_gait_publisher.cpp)
 target_link_libraries(go2_gait_publisher_dmq ${catkin_LIBRARIES})
 add_dependencies(go2_gait_publisher_dmq ${catkin_EXPORTED_TARGETS})
+
+install(
+  TARGETS scan_planner_manager_dmq
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)

@@ -220,16 +220,16 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
   if (!planner_manager_)
     return trajectory;
 
-  const scan_planner::LocalTrajData& local_data =
+  scan_planner::LocalTrajData& local_data =
       planner_manager_->local_data_;
 
   if (!std::isfinite(local_data.duration_) ||
       local_data.duration_ <= kEpsilon)
     return trajectory;
 
-  const scan_planner::UniformBspline& pos_traj =
+  scan_planner::UniformBspline& pos_traj =
       local_data.position_traj_;
-  const scan_planner::UniformBspline& vel_traj =
+  scan_planner::UniformBspline& vel_traj =
       local_data.velocity_traj_;
 
   trajectory.task_sequence = task_sequence;

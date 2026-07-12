@@ -14,7 +14,7 @@
   <depend>roscpp</depend>
   <depend>navdog_core</depend>
   <depend>plan_env</depend>
-  <depend>plan_manage_dmq</depend>
+  <depend>scan_planner_dmq</depend>
   <depend>bspline_opt</depend>
 
   <build_depend>eigen</build_depend>

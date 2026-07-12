@@ -7,7 +7,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   navdog_core
   plan_env
-  plan_manage_dmq
+  scan_planner_dmq
   bspline_opt
 )
 
@@ -18,7 +18,7 @@ find_package(OpenCV REQUIRED)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES navdog_scan_adapter
-  CATKIN_DEPENDS roscpp navdog_core plan_env plan_manage_dmq bspline_opt
+  CATKIN_DEPENDS roscpp navdog_core plan_env scan_planner_dmq bspline_opt
 )
 
 include_directories(
