@@ -211,19 +211,71 @@ TEST(RuntimeNodeTest, CancelClearsPendingFeedback)
 TEST(RuntimeNodeTest, PauseKeepsPendingFeedback)
 {
   navdog::NavigationCoordinator coordinator;
+
   coordinator.handleEvent(makeStartEvent());
-  const auto first = coordinator.update(navdog::CoreInput{}, 1.0);
-  // Pause
+
+  const auto first =
+      coordinator.update(navdog::CoreInput{}, 1.0);
+
+  ASSERT_EQ(
+      first.planner_action.type,
+      navdog::PlannerActionType::SET_ROUTE);
+
+  // Runtime receives READY feedback but keeps it externally while paused.
+  const navdog::PlannerFeedback held_feedback =
+      NavdogRuntimeNode::feedbackForAction(
+          first.planner_action,
+          1.0);
+
   navdog::NavigationEvent pause{};
   pause.type = navdog::NavigationEventType::PAUSE;
-  coordinator.handleEvent(pause);
-  // Provide planner feedback while paused - should be ignored/held
-  navdog::CoreInput input{};
-  input.planner = NavdogRuntimeNode::feedbackForAction(first.planner_action, 1.0);
-  const auto output = coordinator.update(input, 1.1);
-  EXPECT_EQ(output.state, navdog::NavState::PAUSED);
-  // Planner action should not be consumed while paused
-  EXPECT_EQ(output.planner_action.type, navdog::PlannerActionType::NONE);
+
+  ASSERT_EQ(
+      coordinator.handleEvent(pause),
+      navdog::TaskHandleResult::PAUSED);
+
+  // Even if feedback is accidentally supplied during PAUSED,
+  // Coordinator must remain paused. The PAUSE planner action itself
+  // is still expected to be emitted.
+  navdog::CoreInput paused_input{};
+  paused_input.planner = held_feedback;
+
+  const auto paused_output =
+      coordinator.update(paused_input, 1.1);
+
+  EXPECT_EQ(
+      paused_output.state,
+      navdog::NavState::PAUSED);
+
+  EXPECT_EQ(
+      paused_output.planner_action.type,
+      navdog::PlannerActionType::PAUSE);
+
+  EXPECT_DOUBLE_EQ(paused_output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(paused_output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(paused_output.final_cmd.yaw_rate, 0.0);
+
+  // Resume and provide the same feedback that Runtime held while paused.
+  navdog::NavigationEvent resume{};
+  resume.type = navdog::NavigationEventType::RESUME;
+
+  ASSERT_EQ(
+      coordinator.handleEvent(resume),
+      navdog::TaskHandleResult::RESUMED);
+
+  navdog::CoreInput resumed_input{};
+  resumed_input.planner = held_feedback;
+
+  const auto resumed_output =
+      coordinator.update(resumed_input, 1.2);
+
+  EXPECT_EQ(
+      resumed_output.state,
+      navdog::NavState::START_ALIGN);
+
+  EXPECT_EQ(
+      resumed_output.planner_action.type,
+      navdog::PlannerActionType::RESUME);
 }
 
 // =============================================================================
