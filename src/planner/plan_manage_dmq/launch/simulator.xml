@@ -6,9 +6,11 @@
   <arg name="init_x" default="-19.0"/>
   <arg name="init_y" default="1.0"/>
   <arg name="init_z" default="0.3"/>
+  <arg name="init_yaw" default="0.0"/>
   <param unless="$(arg is_real_world)" name="init_x" value="$(arg init_x)" type="double"/>
   <param unless="$(arg is_real_world)" name="init_y" value="$(arg init_y)" type="double"/>
   <param unless="$(arg is_real_world)" name="init_z" value="$(arg init_z)" type="double"/>
+  <param unless="$(arg is_real_world)" name="init_yaw" value="$(arg init_yaw)" type="double"/>
 
   <!-- sim map size -->
   <arg name="map_size_x" default="40.0"/>

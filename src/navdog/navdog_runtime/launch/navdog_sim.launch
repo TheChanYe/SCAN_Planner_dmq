@@ -1,12 +1,18 @@
 <launch>
   <arg name="sensor_type" default="lidar"/>
   <arg name="use_pcd_map" default="false"/>
+  <arg name="init_x" default="0.0"/>
+  <arg name="init_y" default="0.0"/>
+  <arg name="init_z" default="0.3"/>
+  <arg name="init_yaw" default="0.0"/>
 
   <param name="robot_description" textfile="$(find go2_description)/urdf/go2_description.urdf"/>
   <node pkg="robot_state_publisher" type="robot_state_publisher"
         name="go2_robot_state_publisher" output="screen"/>
   <node pkg="scan_planner_dmq" type="go2_kinematic_sim_dmq"
-        name="go2_kinematic_sim" output="screen"/>
+        name="go2_kinematic_sim" output="screen">
+    <param name="init_yaw" value="$(arg init_yaw)"/>
+  </node>
   <node pkg="scan_planner_dmq" type="go2_gait_publisher_dmq"
         name="go2_gait_publisher" output="screen"/>
 
@@ -14,6 +20,9 @@
     <arg name="is_real_world" value="false"/>
     <arg name="sensor_type" value="$(arg sensor_type)"/>
     <arg name="use_pcd_map" value="$(arg use_pcd_map)"/>
+    <arg name="init_x" value="$(arg init_x)"/>
+    <arg name="init_y" value="$(arg init_y)"/>
+    <arg name="init_z" value="$(arg init_z)"/>
   </include>
 
   <node pkg="navdog_runtime" type="navdog_runtime_node"

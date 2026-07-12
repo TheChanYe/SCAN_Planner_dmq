@@ -43,6 +43,10 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET test_runtime_mapping)
     target_link_libraries(test_runtime_mapping navdog_runtime)
   endif()
+  catkin_add_gtest(test_runtime_config test/test_runtime_config.cpp)
+  if(TARGET test_runtime_config)
+    target_link_libraries(test_runtime_config navdog_runtime)
+  endif()
 endif()
 
 install(TARGETS navdog_runtime navdog_runtime_node

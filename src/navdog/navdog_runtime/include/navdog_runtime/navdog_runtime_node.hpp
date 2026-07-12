@@ -43,12 +43,15 @@ private:
   static navdog::NavdogConfig loadNavdogConfig(ros::NodeHandle& nh);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
   void controlCallback(const ros::TimerEvent&);
+  void publisherCheckCallback(const ros::TimerEvent&);
   void processEvents();
   void processPlannerAction(const navdog::PlannerAction& action, double now_sec);
-  void publishDebug(const navdog::CoreOutput& output, double now_sec);
+  void publishDebug(const navdog::CoreOutput& output, double now_sec,
+                    const navdog::VelocityCommand& effective_cmd);
   void publishRoute(const navdog::NavigationTask& task);
   void publishMqttStatus(const navdog::CoreOutput& output);
-  bool hasUniqueCmdVelPublisher() const;
+  bool hasUniqueCmdVelPublisher();
+  bool hasUniqueCmdVelPublisherCached() const;
   void publishZeroFiveTimes();
 
   ros::NodeHandle nh_;
@@ -69,6 +72,7 @@ private:
   ros::Publisher mode_publisher_;
   ros::Publisher final_cmd_publisher_;
   ros::Timer control_timer_;
+  ros::Timer publisher_check_timer_;
 
   mutable std::mutex odom_mutex_;
   navdog::RobotState robot_{};
@@ -78,6 +82,10 @@ private:
   ros::Time last_status_publish_{};
   navdog::NavState last_logged_state_{navdog::NavState::IDLE};
   navdog::NavigationMode last_logged_mode_{navdog::NavigationMode::NONE};
+
+  navdog::VelocityCommand effective_command_{};
+  bool cmd_vel_conflict_{false};
+  bool cmd_vel_conflict_latched_{false};
 
   std::string odom_topic_;
   std::string cmd_vel_topic_;

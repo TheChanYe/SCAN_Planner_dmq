@@ -14,14 +14,216 @@ namespace navdog_runtime
 navdog::NavdogConfig NavdogRuntimeNode::loadNavdogConfig(ros::NodeHandle& nh)
 {
   navdog::NavdogConfig config{};
+
+  // Runtime
+  nh.param("control_rate_hz", config.runtime.control_rate_hz,
+           config.runtime.control_rate_hz);
+  nh.param("status_rate_hz", config.runtime.status_rate_hz,
+           config.runtime.status_rate_hz);
+
+  // Task
+  nh.param("task/default_max_vx", config.task.default_max_vx,
+           config.task.default_max_vx);
+  nh.param("task/min_max_vx", config.task.min_max_vx,
+           config.task.min_max_vx);
+  nh.param("task/max_max_vx", config.task.max_max_vx,
+           config.task.max_max_vx);
+
+  // Start align
+  nh.param("start_align/enter_deg", config.start_align.enter_deg,
+           config.start_align.enter_deg);
+  nh.param("start_align/exit_deg", config.start_align.exit_deg,
+           config.start_align.exit_deg);
+  nh.param("start_align/max_hold_sec", config.start_align.max_hold_sec,
+           config.start_align.max_hold_sec);
+  nh.param("start_align/kp_yaw", config.start_align.kp_yaw,
+           config.start_align.kp_yaw);
+  nh.param("start_align/max_yaw_rate", config.start_align.max_yaw_rate,
+           config.start_align.max_yaw_rate);
+  nh.param("start_align/target_min_dist_m",
+           config.start_align.target_min_dist_m,
+           config.start_align.target_min_dist_m);
+
+  // Route progress
+  nh.param("route_progress/min_segment_length_m",
+           config.route_progress.min_segment_length_m,
+           config.route_progress.min_segment_length_m);
+  nh.param("route_progress/max_forward_search_m",
+           config.route_progress.max_forward_search_m,
+           config.route_progress.max_forward_search_m);
+  nh.param("route_progress/on_route_lateral_tolerance_m",
+           config.route_progress.on_route_lateral_tolerance_m,
+           config.route_progress.on_route_lateral_tolerance_m);
+
+  // Route corridor
+  nh.param("route_corridor/lookahead_distance_m",
+           config.route_corridor.lookahead_distance_m,
+           config.route_corridor.lookahead_distance_m);
+
+  // Route corridor observation
+  nh.param("route_corridor_observation/map_timeout_sec",
+           config.route_corridor_observation.map_timeout_sec,
+           config.route_corridor_observation.map_timeout_sec);
+  nh.param("route_corridor_observation/max_progress_lag_m",
+           config.route_corridor_observation.max_progress_lag_m,
+           config.route_corridor_observation.max_progress_lag_m);
+
+  // Planner
+  nh.param("planner/planning_timeout_sec",
+           config.planner.planning_timeout_sec,
+           config.planner.planning_timeout_sec);
+
+  // Safety
+  nh.param("safety/slow_down_front", config.safety.slow_down_front,
+           config.safety.slow_down_front);
+  nh.param("safety/emergency_stop", config.safety.emergency_stop,
+           config.safety.emergency_stop);
+  nh.param("safety/odom_timeout_sec", config.safety.odom_timeout_sec,
+           config.safety.odom_timeout_sec);
+  nh.param("safety/obstacle_timeout_sec",
+           config.safety.obstacle_timeout_sec,
+           config.safety.obstacle_timeout_sec);
+  nh.param("safety/planner_cmd_timeout_sec",
+           config.safety.planner_cmd_timeout_sec,
+           config.safety.planner_cmd_timeout_sec);
+  nh.param("safety/future_tolerance_sec",
+           config.safety.future_tolerance_sec,
+           config.safety.future_tolerance_sec);
+
+  // Limits
   nh.param("limits/max_vx", config.limits.max_vx, config.limits.max_vx);
   nh.param("limits/max_vy", config.limits.max_vy, config.limits.max_vy);
   nh.param("limits/max_yaw_rate", config.limits.max_yaw_rate,
            config.limits.max_yaw_rate);
-  nh.param("safety/odom_timeout_sec", config.safety.odom_timeout_sec,
-           config.safety.odom_timeout_sec);
-  nh.param("safety/obstacle_timeout_sec", config.safety.obstacle_timeout_sec,
-           config.safety.obstacle_timeout_sec);
+  nh.param("limits/max_accel_x", config.limits.max_accel_x,
+           config.limits.max_accel_x);
+  nh.param("limits/max_accel_y", config.limits.max_accel_y,
+           config.limits.max_accel_y);
+  nh.param("limits/max_accel_yaw", config.limits.max_accel_yaw,
+           config.limits.max_accel_yaw);
+
+  // Navigation mode
+  nh.param("navigation_mode/avoid_enter_distance_m",
+           config.navigation_mode.avoid_enter_distance_m,
+           config.navigation_mode.avoid_enter_distance_m);
+  nh.param("navigation_mode/avoid_immediate_distance_m",
+           config.navigation_mode.avoid_immediate_distance_m,
+           config.navigation_mode.avoid_immediate_distance_m);
+  nh.param("navigation_mode/avoid_block_confirm_sec",
+           config.navigation_mode.avoid_block_confirm_sec,
+           config.navigation_mode.avoid_block_confirm_sec);
+  nh.param("navigation_mode/local_avoid_min_hold_sec",
+           config.navigation_mode.local_avoid_min_hold_sec,
+           config.navigation_mode.local_avoid_min_hold_sec);
+  nh.param("navigation_mode/route_clear_confirm_sec",
+           config.navigation_mode.route_clear_confirm_sec,
+           config.navigation_mode.route_clear_confirm_sec);
+  nh.param("navigation_mode/rejoin_lateral_tolerance_m",
+           config.navigation_mode.rejoin_lateral_tolerance_m,
+           config.navigation_mode.rejoin_lateral_tolerance_m);
+  nh.param("navigation_mode/rejoin_heading_tolerance_rad",
+           config.navigation_mode.rejoin_heading_tolerance_rad,
+           config.navigation_mode.rejoin_heading_tolerance_rad);
+  nh.param("navigation_mode/rejoin_confirm_sec",
+           config.navigation_mode.rejoin_confirm_sec,
+           config.navigation_mode.rejoin_confirm_sec);
+
+  // Route follower
+  nh.param("route_follower/lookahead_distance_m",
+           config.route_follower.lookahead_distance_m,
+           config.route_follower.lookahead_distance_m);
+  nh.param("route_follower/kp_x", config.route_follower.kp_x,
+           config.route_follower.kp_x);
+  nh.param("route_follower/kp_y", config.route_follower.kp_y,
+           config.route_follower.kp_y);
+  nh.param("route_follower/kp_yaw", config.route_follower.kp_yaw,
+           config.route_follower.kp_yaw);
+  nh.param("route_follower/heading_turn_only_threshold_rad",
+           config.route_follower.heading_turn_only_threshold_rad,
+           config.route_follower.heading_turn_only_threshold_rad);
+  nh.param("route_follower/max_vx", config.route_follower.max_vx,
+           config.route_follower.max_vx);
+
+  // Trajectory follower
+  nh.param("trajectory_follower/time_forward_sec",
+           config.trajectory_follower.time_forward_sec,
+           config.trajectory_follower.time_forward_sec);
+  nh.param("trajectory_follower/kp_pos",
+           config.trajectory_follower.kp_pos,
+           config.trajectory_follower.kp_pos);
+  nh.param("trajectory_follower/kp_yaw",
+           config.trajectory_follower.kp_yaw,
+           config.trajectory_follower.kp_yaw);
+  nh.param("trajectory_follower/heading_turn_only_threshold_rad",
+           config.trajectory_follower.heading_turn_only_threshold_rad,
+           config.trajectory_follower.heading_turn_only_threshold_rad);
+
+  // Rejoin target
+  nh.param("rejoin_target/default_forward_distance_m",
+           config.rejoin_target.default_forward_distance_m,
+           config.rejoin_target.default_forward_distance_m);
+  nh.param("rejoin_target/min_forward_distance_m",
+           config.rejoin_target.min_forward_distance_m,
+           config.rejoin_target.min_forward_distance_m);
+  nh.param("rejoin_target/max_forward_distance_m",
+           config.rejoin_target.max_forward_distance_m,
+           config.rejoin_target.max_forward_distance_m);
+  nh.param("rejoin_target/route_yaw_tolerance_rad",
+           config.rejoin_target.route_yaw_tolerance_rad,
+           config.rejoin_target.route_yaw_tolerance_rad);
+
+  // Goal controller
+  nh.param("goal_controller/near_goal_switch_dist",
+           config.goal_controller.near_goal_switch_dist,
+           config.goal_controller.near_goal_switch_dist);
+  nh.param("goal_controller/near_goal_kp_v",
+           config.goal_controller.near_goal_kp_v,
+           config.goal_controller.near_goal_kp_v);
+  nh.param("goal_controller/near_goal_min_v",
+           config.goal_controller.near_goal_min_v,
+           config.goal_controller.near_goal_min_v);
+  nh.param("goal_controller/near_goal_max_v",
+           config.goal_controller.near_goal_max_v,
+           config.goal_controller.near_goal_max_v);
+  nh.param("goal_controller/near_goal_turn_only_deg",
+           config.goal_controller.near_goal_turn_only_deg,
+           config.goal_controller.near_goal_turn_only_deg);
+  nh.param("goal_controller/near_goal_kp_w",
+           config.goal_controller.near_goal_kp_w,
+           config.goal_controller.near_goal_kp_w);
+  nh.param("goal_controller/near_goal_max_w",
+           config.goal_controller.near_goal_max_w,
+           config.goal_controller.near_goal_max_w);
+  nh.param("goal_controller/obstacle_finish_timeout_sec",
+           config.goal_controller.obstacle_finish_timeout_sec,
+           config.goal_controller.obstacle_finish_timeout_sec);
+  nh.param("goal_controller/finish_dist",
+           config.goal_controller.finish_dist,
+           config.goal_controller.finish_dist);
+  nh.param("goal_controller/finish_yaw_tolerance_deg",
+           config.goal_controller.finish_yaw_tolerance_deg,
+           config.goal_controller.finish_yaw_tolerance_deg);
+
+  // Planner trigger
+  nh.param("planner_trigger/replan_retry_interval_sec",
+           config.planner_trigger.replan_retry_interval_sec,
+           config.planner_trigger.replan_retry_interval_sec);
+  nh.param("planner_trigger/trajectory_expiry_margin_sec",
+           config.planner_trigger.trajectory_expiry_margin_sec,
+           config.planner_trigger.trajectory_expiry_margin_sec);
+  nh.param("planner_trigger/min_remaining_duration_sec",
+           config.planner_trigger.min_remaining_duration_sec,
+           config.planner_trigger.min_remaining_duration_sec);
+  nh.param("planner_trigger/trajectory_source_max_age_sec",
+           config.planner_trigger.trajectory_source_max_age_sec,
+           config.planner_trigger.trajectory_source_max_age_sec);
+  nh.param("planner_trigger/trajectory_future_tolerance_sec",
+           config.planner_trigger.trajectory_future_tolerance_sec,
+           config.planner_trigger.trajectory_future_tolerance_sec);
+  nh.param("planner_trigger/target_change_threshold_m",
+           config.planner_trigger.target_change_threshold_m,
+           config.planner_trigger.target_change_threshold_m);
+
   return config;
 }
 
@@ -40,8 +242,134 @@ NavdogRuntimeNode::~NavdogRuntimeNode()
 
 bool NavdogRuntimeNode::initialize()
 {
-  private_nh_.param("control_rate_hz", control_rate_hz_, 50.0);
-  private_nh_.param("status_rate_hz", status_rate_hz_, 10.0);
+  const auto& config = coordinator_.config();
+
+  // Validate runtime config
+  if (!std::isfinite(config.runtime.control_rate_hz) ||
+      config.runtime.control_rate_hz <= 0.0)
+  {
+    ROS_ERROR("invalid control_rate_hz: %.3f", config.runtime.control_rate_hz);
+    return false;
+  }
+  if (!std::isfinite(config.runtime.status_rate_hz) ||
+      config.runtime.status_rate_hz <= 0.0)
+  {
+    ROS_ERROR("invalid status_rate_hz: %.3f", config.runtime.status_rate_hz);
+    return false;
+  }
+
+  // Validate safety timeouts
+  if (!std::isfinite(config.safety.odom_timeout_sec) ||
+      config.safety.odom_timeout_sec <= 0.0)
+  {
+    ROS_ERROR("invalid safety/odom_timeout_sec: %.3f",
+              config.safety.odom_timeout_sec);
+    return false;
+  }
+  if (!std::isfinite(config.safety.obstacle_timeout_sec) ||
+      config.safety.obstacle_timeout_sec <= 0.0)
+  {
+    ROS_ERROR("invalid safety/obstacle_timeout_sec: %.3f",
+              config.safety.obstacle_timeout_sec);
+    return false;
+  }
+  if (!std::isfinite(config.safety.planner_cmd_timeout_sec) ||
+      config.safety.planner_cmd_timeout_sec <= 0.0)
+  {
+    ROS_ERROR("invalid safety/planner_cmd_timeout_sec: %.3f",
+              config.safety.planner_cmd_timeout_sec);
+    return false;
+  }
+
+  // Validate planner timeout
+  if (!std::isfinite(config.planner.planning_timeout_sec) ||
+      config.planner.planning_timeout_sec <= 0.0)
+  {
+    ROS_ERROR("invalid planner/planning_timeout_sec: %.3f",
+              config.planner.planning_timeout_sec);
+    return false;
+  }
+
+  // Validate limits
+  if (!std::isfinite(config.limits.max_vx) || config.limits.max_vx <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_vx: %.3f", config.limits.max_vx);
+    return false;
+  }
+  if (!std::isfinite(config.limits.max_vy) || config.limits.max_vy <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_vy: %.3f", config.limits.max_vy);
+    return false;
+  }
+  if (!std::isfinite(config.limits.max_yaw_rate) ||
+      config.limits.max_yaw_rate <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_yaw_rate: %.3f",
+              config.limits.max_yaw_rate);
+    return false;
+  }
+  if (!std::isfinite(config.limits.max_accel_x) ||
+      config.limits.max_accel_x <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_accel_x: %.3f", config.limits.max_accel_x);
+    return false;
+  }
+  if (!std::isfinite(config.limits.max_accel_y) ||
+      config.limits.max_accel_y <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_accel_y: %.3f", config.limits.max_accel_y);
+    return false;
+  }
+  if (!std::isfinite(config.limits.max_accel_yaw) ||
+      config.limits.max_accel_yaw <= 0.0)
+  {
+    ROS_ERROR("invalid limits/max_accel_yaw: %.3f",
+              config.limits.max_accel_yaw);
+    return false;
+  }
+
+  // Validate navigation_mode distance thresholds
+  if (!std::isfinite(config.navigation_mode.avoid_enter_distance_m) ||
+      config.navigation_mode.avoid_enter_distance_m <= 0.0)
+  {
+    ROS_ERROR("invalid navigation_mode/avoid_enter_distance_m: %.3f",
+              config.navigation_mode.avoid_enter_distance_m);
+    return false;
+  }
+  if (!std::isfinite(config.navigation_mode.avoid_immediate_distance_m) ||
+      config.navigation_mode.avoid_immediate_distance_m <= 0.0)
+  {
+    ROS_ERROR("invalid navigation_mode/avoid_immediate_distance_m: %.3f",
+              config.navigation_mode.avoid_immediate_distance_m);
+    return false;
+  }
+
+  // Validate navigation_mode time thresholds
+  if (!std::isfinite(config.navigation_mode.avoid_block_confirm_sec) ||
+      config.navigation_mode.avoid_block_confirm_sec <= 0.0)
+  {
+    ROS_ERROR("invalid navigation_mode/avoid_block_confirm_sec: %.3f",
+              config.navigation_mode.avoid_block_confirm_sec);
+    return false;
+  }
+  if (!std::isfinite(config.navigation_mode.route_clear_confirm_sec) ||
+      config.navigation_mode.route_clear_confirm_sec <= 0.0)
+  {
+    ROS_ERROR("invalid navigation_mode/route_clear_confirm_sec: %.3f",
+              config.navigation_mode.route_clear_confirm_sec);
+    return false;
+  }
+  if (!std::isfinite(config.navigation_mode.rejoin_confirm_sec) ||
+      config.navigation_mode.rejoin_confirm_sec <= 0.0)
+  {
+    ROS_ERROR("invalid navigation_mode/rejoin_confirm_sec: %.3f",
+              config.navigation_mode.rejoin_confirm_sec);
+    return false;
+  }
+
+  control_rate_hz_ = config.runtime.control_rate_hz;
+  status_rate_hz_ = config.runtime.status_rate_hz;
+
   private_nh_.param<std::string>("odom_topic", odom_topic_, "/quad_0/body_pose");
   private_nh_.param<std::string>("cmd_vel_topic", cmd_vel_topic_, "/cmd_vel");
   private_nh_.param("odom_twist_in_world_frame", odom_twist_in_world_frame_, true);
@@ -74,8 +402,56 @@ bool NavdogRuntimeNode::initialize()
   private_nh_.param("mqtt/keepalive_sec", mqtt_config.keepalive_sec, 30);
   private_nh_.param<std::string>("mqtt/client_id", mqtt_config.client_id, "navdog_runtime");
   private_nh_.param("mqtt/qos", mqtt_config.qos, 1);
+  private_nh_.param<std::string>("mqtt/task_topic", mqtt_config.task_topic,
+                                 mqtt_config.task_topic);
+  private_nh_.param<std::string>("mqtt/pause_topic", mqtt_config.pause_topic,
+                                 mqtt_config.pause_topic);
+  private_nh_.param<std::string>("mqtt/status_topic", mqtt_config.status_topic,
+                                 mqtt_config.status_topic);
+  private_nh_.param("mqtt/max_queue_size", mqtt_config.max_queue_size,
+                    mqtt_config.max_queue_size);
   private_nh_.param("default_route_z", mqtt_config.default_route_z, 0.3);
   private_nh_.param("default_max_vx", mqtt_config.default_max_vx, 0.4);
+
+  // Validate MQTT config
+  if (mqtt_config.qos < 0 || mqtt_config.qos > 2)
+  {
+    ROS_ERROR("invalid mqtt/qos: %d (must be 0-2)", mqtt_config.qos);
+    return false;
+  }
+  if (mqtt_config.port < 1 || mqtt_config.port > 65535)
+  {
+    ROS_ERROR("invalid mqtt/port: %d (must be 1-65535)", mqtt_config.port);
+    return false;
+  }
+  if (mqtt_config.keepalive_sec <= 0)
+  {
+    ROS_ERROR("invalid mqtt/keepalive_sec: %d (must be > 0)",
+              mqtt_config.keepalive_sec);
+    return false;
+  }
+  if (mqtt_config.max_queue_size == 0)
+  {
+    ROS_ERROR("invalid mqtt/max_queue_size: %lu (must be > 0)",
+              static_cast<unsigned long>(mqtt_config.max_queue_size));
+    return false;
+  }
+  if (mqtt_config.task_topic.empty())
+  {
+    ROS_ERROR("mqtt/task_topic must not be empty");
+    return false;
+  }
+  if (mqtt_config.pause_topic.empty())
+  {
+    ROS_ERROR("mqtt/pause_topic must not be empty");
+    return false;
+  }
+  if (mqtt_config.status_topic.empty())
+  {
+    ROS_ERROR("mqtt/status_topic must not be empty");
+    return false;
+  }
+
   mqtt_.reset(new MqttBridge(mqtt_config));
   if (!mqtt_->start()) ROS_WARN("MQTT unavailable at startup; navigation runtime remains active");
 
@@ -88,6 +464,13 @@ bool NavdogRuntimeNode::initialize()
   final_cmd_publisher_ = nh_.advertise<geometry_msgs::TwistStamped>("/navdog/final_cmd", 1);
   control_timer_ = nh_.createTimer(ros::Duration(1.0 / control_rate_hz_),
       &NavdogRuntimeNode::controlCallback, this);
+
+  // Check cmd_vel publisher uniqueness once after registration
+  hasUniqueCmdVelPublisher();
+  // Periodic check at 1.0 Hz (not in control loop)
+  publisher_check_timer_ = nh_.createTimer(ros::Duration(1.0),
+      &NavdogRuntimeNode::publisherCheckCallback, this);
+
   initialized_ = true;
   return true;
 }
@@ -127,9 +510,10 @@ void NavdogRuntimeNode::processEvents()
     if (result == navdog::TaskHandleResult::STARTED)
     {
       last_route_progress_ = navdog::RouteProgress{};
-      navdog::NavigationTask task{};
-      if (coordinator_.copyActiveTask(task)) publishRoute(task);
-      ROS_INFO("task started: task_sequence=%lu", static_cast<unsigned long>(event.task.sequence));
+      navdog::NavigationTask active_task{};
+      if (coordinator_.copyActiveTask(active_task)) publishRoute(active_task);
+      ROS_INFO("task started: task_sequence=%lu",
+               static_cast<unsigned long>(active_task.sequence));
     }
     else if (result == navdog::TaskHandleResult::CANCELLED)
     {
@@ -170,6 +554,19 @@ navdog::PlannerFeedback NavdogRuntimeNode::feedbackForAction(
   return feedback;
 }
 
+void NavdogRuntimeNode::publisherCheckCallback(const ros::TimerEvent&)
+{
+  if (!hasUniqueCmdVelPublisher())
+  {
+    if (!cmd_vel_conflict_latched_)
+    {
+      cmd_vel_conflict_latched_ = true;
+      ROS_ERROR("multiple %s publishers detected; latching fault",
+                cmd_vel_topic_.c_str());
+    }
+  }
+}
+
 void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 {
   const double now_sec = ros::Time::now().toSec();
@@ -196,14 +593,25 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
 
-  geometry_msgs::Twist command = toTwist(output.final_cmd);
-  if (!hasUniqueCmdVelPublisher())
+  // Compute effective command: start from final_cmd, override on conflict
+  effective_command_ = output.final_cmd;
+  cmd_vel_conflict_ = false;
+  if (cmd_vel_conflict_latched_)
   {
-    ROS_ERROR_THROTTLE(2.0, "multiple %s publishers detected; forcing zero", cmd_vel_topic_.c_str());
-    command = geometry_msgs::Twist{};
+    effective_command_.vx = 0.0;
+    effective_command_.vy = 0.0;
+    effective_command_.yaw_rate = 0.0;
+    effective_command_.valid = true;
+    effective_command_.source = navdog::CommandSource::SAFETY_STOP;
+    effective_command_.stamp_sec = now_sec;
+    cmd_vel_conflict_ = true;
   }
+
+  // Publish effective command to /cmd_vel
+  geometry_msgs::Twist command = toTwist(effective_command_);
   cmd_vel_publisher_.publish(command);
-  publishDebug(output, now_sec);
+
+  publishDebug(output, now_sec, effective_command_);
   if (last_status_publish_.isZero() ||
       (ros::Time::now() - last_status_publish_).toSec() >= 1.0 / status_rate_hz_)
   {
@@ -217,8 +625,9 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
         static_cast<unsigned long>(output.task_sequence),
         static_cast<unsigned>(output.state),
         static_cast<unsigned>(output.navigation_mode.mode),
-        static_cast<unsigned>(output.final_cmd.source), output.final_cmd.vx,
-        output.final_cmd.vy, output.final_cmd.yaw_rate);
+        static_cast<unsigned>(effective_command_.source),
+        effective_command_.vx, effective_command_.vy,
+        effective_command_.yaw_rate);
     last_logged_state_ = output.state;
     last_logged_mode_ = output.navigation_mode.mode;
   }
@@ -237,7 +646,9 @@ geometry_msgs::Twist NavdogRuntimeNode::toTwist(const navdog::VelocityCommand& c
   return result;
 }
 
-void NavdogRuntimeNode::publishDebug(const navdog::CoreOutput& output, double now_sec)
+void NavdogRuntimeNode::publishDebug(const navdog::CoreOutput& output,
+                                     double now_sec,
+                                     const navdog::VelocityCommand& effective_cmd)
 {
   std_msgs::UInt8 state; state.data = static_cast<std::uint8_t>(output.state);
   std_msgs::UInt8 mode; mode.data = static_cast<std::uint8_t>(output.navigation_mode.mode);
@@ -245,7 +656,7 @@ void NavdogRuntimeNode::publishDebug(const navdog::CoreOutput& output, double no
   mode_publisher_.publish(mode);
   geometry_msgs::TwistStamped command;
   command.header.stamp.fromSec(now_sec);
-  command.twist = toTwist(output.final_cmd);
+  command.twist = toTwist(effective_cmd);
   final_cmd_publisher_.publish(command);
 }
 
@@ -271,16 +682,21 @@ void NavdogRuntimeNode::statusForOutput(
     const navdog::CoreOutput& output, bool protocol_error, int& status, int& error)
 {
   status = 0; error = protocol_error ? 1 : 0;
+
+  // FAILED / EMERGENCY_STOP -> status=0, error=2
+  if (output.state == navdog::NavState::FAILED ||
+      output.state == navdog::NavState::EMERGENCY_STOP)
+  {
+    status = 0; error = 2;
+    return;
+  }
+
   if (output.state == navdog::NavState::PAUSED) status = 5;
   else if (output.state == navdog::NavState::PLANNING ||
            output.state == navdog::NavState::START_ALIGN ||
            output.state == navdog::NavState::TRACKING ||
            output.state == navdog::NavState::GOAL_ALIGN ||
            output.state == navdog::NavState::RECOVERY) status = 1;
-  if (output.state == navdog::NavState::FAILED ||
-      output.state == navdog::NavState::EMERGENCY_STOP ||
-      output.final_cmd.source == navdog::CommandSource::SAFETY_STOP)
-  { status = 0; error = 2; }
 }
 
 void NavdogRuntimeNode::publishMqttStatus(const navdog::CoreOutput& output)
@@ -290,15 +706,16 @@ void NavdogRuntimeNode::publishMqttStatus(const navdog::CoreOutput& output)
   statusForOutput(output, mqtt_->consumeProtocolError() > 0, status, error);
   Json::Value root;
   root["status"] = status; root["error"] = error;
-  root["velocity"]["vx"] = output.final_cmd.vx;
-  root["velocity"]["vy"] = output.final_cmd.vy;
-  root["velocity"]["yaw_rate"] = output.final_cmd.yaw_rate;
+  root["velocity"]["vx"] = effective_command_.vx;
+  root["velocity"]["vy"] = effective_command_.vy;
+  root["velocity"]["yaw_rate"] = effective_command_.yaw_rate;
   Json::StreamWriterBuilder writer; writer["indentation"] = "";
   mqtt_->publishStatus(Json::writeString(writer, root));
 }
 
-bool NavdogRuntimeNode::hasUniqueCmdVelPublisher() const
+bool NavdogRuntimeNode::hasUniqueCmdVelPublisher()
 {
+  const std::string resolved = nh_.resolveName(cmd_vel_topic_);
   XmlRpc::XmlRpcValue args, result, payload;
   args[0] = ros::this_node::getName();
   if (!ros::master::execute("getSystemState", args, result, payload, true) ||
@@ -307,11 +724,16 @@ bool NavdogRuntimeNode::hasUniqueCmdVelPublisher() const
   const auto& publishers = payload[0];
   for (int i = 0; i < publishers.size(); ++i)
   {
-    if (static_cast<std::string>(publishers[i][0]) == cmd_vel_topic_)
+    if (static_cast<std::string>(publishers[i][0]) == resolved)
       return publishers[i][1].size() == 1 &&
           static_cast<std::string>(publishers[i][1][0]) == ros::this_node::getName();
   }
   return false;
+}
+
+bool NavdogRuntimeNode::hasUniqueCmdVelPublisherCached() const
+{
+  return !cmd_vel_conflict_latched_;
 }
 
 void NavdogRuntimeNode::publishZeroFiveTimes()
