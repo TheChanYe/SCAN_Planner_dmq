@@ -128,6 +128,62 @@ RouteCorridorAssessment makeBlockedScanObservation(
   return obs;
 }
 
+RouteCorridorAssessment makeBlockedScanObservationAt(
+    std::uint64_t sequence,
+    double evaluated_from_arc,
+    double now_sec,
+    double blocked_distance)
+{
+  RouteCorridorAssessment obs =
+      makeClearScanObservation(
+          sequence, evaluated_from_arc, now_sec);
+  obs.blocked = true;
+  obs.first_blocked_distance_ahead_m = blocked_distance;
+  obs.first_blocked_arc_length_m =
+      evaluated_from_arc + blocked_distance;
+  return obs;
+}
+
+RouteCorridorAssessment makeStaleScanObservation(
+    std::uint64_t sequence,
+    double evaluated_from_arc,
+    double now_sec)
+{
+  RouteCorridorAssessment obs =
+      makeClearScanObservation(
+          sequence, evaluated_from_arc, now_sec);
+  obs.map_stamp_sec = now_sec - 0.50;
+  obs.evaluation_stamp_sec = now_sec - 0.50;
+  return obs;
+}
+
+void setupToTracking(
+    NavigationCoordinator& coord,
+    TaskMode mode = TaskMode::NORMAL_AVOID)
+{
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+  NavigationEvent event = makeMultiPointStartEvent();
+  event.task.mode = mode;
+  coord.handleEvent(event);
+  coord.update(CoreInput{}, 1.0);
+  CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
+  coord.update(ready, 1.1);
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coord.update(robot0, 1.2);
+}
+
+CoreInput makeTrackingInput(
+    double x, double y, double yaw,
+    std::uint64_t seq,
+    double arc,
+    double now_sec)
+{
+  CoreInput input = makeRobotInput(x, y, yaw);
+  input.route_corridor_observation =
+      makeClearScanObservation(seq, arc, now_sec);
+  return input;
+}
+
 // =============================================================================
 // DefaultStateIsIdle
 // =============================================================================
@@ -2075,6 +2131,507 @@ TEST(NavigationCoordinatorTest, SinglePointTaskPublishesCorridorAssessment)
   EXPECT_TRUE(output.route_progress.valid);
   EXPECT_TRUE(output.route_corridor.valid);
   EXPECT_FALSE(output.route_corridor.blocked);
+}
+
+// =============================================================================
+// 29.1 TrackingInitializesRouteFollowMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingInitializesRouteFollowMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_TRUE(output.navigation_mode.initialized);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+}
+
+// =============================================================================
+// 29.2 TrackingClearKeepsRouteFollowMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingClearKeepsRouteFollowMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  CoreOutput output = coordinator.update(input, 1.4);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_FALSE(output.navigation_mode.transitioned);
+}
+
+// =============================================================================
+// 29.3 TrackingFarBlockedDoesNotEnterAvoid
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingFarBlockedDoesNotEnterAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.3, 2.0);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_TRUE(output.navigation_mode.route_blocked);
+  EXPECT_FALSE(output.navigation_mode.route_blocked_near);
+}
+
+// =============================================================================
+// 29.4 TrackingNearBlockedRequiresConfirmation
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingNearBlockedRequiresConfirmation)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput clear_input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(clear_input, 1.3);
+
+  CoreInput blocked_input = makeRobotInput(3, 0, 0);
+  blocked_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 1.0);
+  CoreOutput output = coordinator.update(blocked_input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::BLOCK_CONFIRMING);
+}
+
+// =============================================================================
+// 29.5 TrackingImmediateBlockedEntersLocalAvoid
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingImmediateBlockedEntersLocalAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput clear_input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(clear_input, 1.3);
+
+  CoreInput blocked_input = makeRobotInput(3, 0, 0);
+  blocked_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  CoreOutput output = coordinator.update(blocked_input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::BLOCK_IMMEDIATE);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+}
+
+// =============================================================================
+// 29.6 TrackingClearAfterAvoidEntersRejoin
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingClearAfterAvoidEntersRejoin)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+
+  // Init + immediate block -> LOCAL_AVOID.
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+
+  // CLEAR: min_hold met at t=2.0, clear_confirm at t=2.4.
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.0);
+  coordinator.update(input, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.4);
+  CoreOutput output = coordinator.update(input, 2.4);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_REJOIN);
+}
+
+// =============================================================================
+// 29.7 TrackingAlignedRejoinReturnsRouteFollow
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingAlignedRejoinReturnsRouteFollow)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.0);
+  coordinator.update(input, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.4);
+  coordinator.update(input, 2.4);
+
+  // Start rejoin confirmation (aligned at t=2.4).
+  coordinator.update(input, 2.4);
+
+  // Confirm at t=2.7 (0.3s after timer start).
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.7);
+  CoreOutput output = coordinator.update(input, 2.7);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::REJOIN_COMPLETE);
+}
+
+// =============================================================================
+// 29.8 TrackingRejoinBlockedReturnsLocalAvoid
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingRejoinBlockedReturnsLocalAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.0);
+  coordinator.update(input, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.4);
+  coordinator.update(input, 2.4);
+
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.5, 0.5);
+  CoreOutput output = coordinator.update(input, 2.5);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::REJOIN_BLOCKED);
+}
+
+// =============================================================================
+// 29.9 TrackingRouteOnlyNeverEntersLocalAvoid
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingRouteOnlyNeverEntersLocalAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator, TaskMode::ROUTE_ONLY);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  CoreOutput output = coordinator.update(input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::ROUTE_ONLY_BLOCKED);
+}
+
+// =============================================================================
+// 29.10 TrackingChargingAllowsLocalAvoid
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingChargingAllowsLocalAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator, TaskMode::CHARGING);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  CoreOutput output = coordinator.update(input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+}
+
+// =============================================================================
+// 29.11 TrackingMissingCorridorKeepsCurrentMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingMissingCorridorKeepsCurrentMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  // No corridor observation.
+  CoreInput no_corridor = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(no_corridor, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+}
+
+// =============================================================================
+// 29.12 TrackingStaleCorridorKeepsCurrentMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingStaleCorridorKeepsCurrentMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  CoreInput stale_input = makeRobotInput(3, 0, 0);
+  stale_input.route_corridor_observation =
+      makeStaleScanObservation(1u, 3.0, 1.4);
+  CoreOutput output = coordinator.update(stale_input, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+}
+
+// =============================================================================
+// 29.13 TrackingModeStillOutputsSafeZero
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingModeStillOutputsSafeZero)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.3, 0.5);
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source,
+            CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 29.14 TrackingModeDoesNotPassPlannerCmd
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingModeDoesNotPassPlannerCmd)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  input.planner_cmd.vx = 0.5;
+  input.planner_cmd.vy = 0.2;
+  input.planner_cmd.yaw_rate = 0.3;
+  input.planner_cmd.valid = true;
+  input.planner_cmd.source = CommandSource::PLANNER;
+  CoreOutput output = coordinator.update(input, 1.4);
+
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+}
+
+// =============================================================================
+// 29.15 MaxVxUpdateDoesNotResetNavigationMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, MaxVxUpdateDoesNotResetNavigationMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  NavigationEvent speedUp{};
+  speedUp.type = NavigationEventType::UPDATE_MAX_VX;
+  speedUp.max_vx = 0.6;
+  coordinator.handleEvent(speedUp);
+
+  CoreOutput output = coordinator.update(input, 1.4);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_FALSE(output.navigation_mode.transitioned);
+}
+
+// =============================================================================
+// 29.16 CancelClearsNavigationMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, CancelClearsNavigationMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.3, 0.5);
+  coordinator.update(input, 1.3);
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+
+  CoreOutput output = coordinator.update(CoreInput{}, 1.4);
+  EXPECT_EQ(output.state, NavState::IDLE);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::NONE);
+}
+
+// =============================================================================
+// 29.17 FailedStateClearsNavigationMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, FailedStateClearsNavigationMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  CoreOutput out1 = coordinator.update(input, 1.3);
+  EXPECT_EQ(out1.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+
+  CoreOutput out2 = coordinator.update(input,
+      std::numeric_limits<double>::quiet_NaN());
+  EXPECT_EQ(out2.state, NavState::FAILED);
+  EXPECT_EQ(out2.navigation_mode.mode,
+            NavigationMode::NONE);
+}
+
+// =============================================================================
+// 29.18 NewTaskDoesNotReuseOldNavigationMode
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, NewTaskDoesNotReuseOldNavigationMode)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+  coordinator.update(CoreInput{}, 1.5);
+
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 1.6);
+  CoreInput ready2 = makePlannerInput(PlannerState::READY, 2u, 1.7);
+  coordinator.update(ready2, 1.7);
+
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+  CoreInput robot2 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot2, 1.8);
+
+  CoreInput input2 = makeTrackingInput(3, 0, 0, 2u, 3.0, 1.9);
+  CoreOutput output = coordinator.update(input2, 1.9);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+}
+
+// =============================================================================
+// 29.19 NewTaskDoesNotReuseRejoinAnchor
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, NewTaskDoesNotReuseRejoinAnchor)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.0);
+  coordinator.update(input, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.4);
+  coordinator.update(input, 2.4);
+  EXPECT_TRUE(coordinator.update(input, 2.4)
+      .navigation_mode.has_rejoin_anchor);
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
+  coordinator.handleEvent(cancel);
+  coordinator.update(CoreInput{}, 2.5);
+
+  coordinator.handleEvent(makeMultiPointStartEvent());
+  coordinator.update(CoreInput{}, 2.6);
+  CoreInput ready2 = makePlannerInput(PlannerState::READY, 2u, 2.7);
+  coordinator.update(ready2, 2.7);
+
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+  CoreInput robot2 = makeRobotInput(0, 0, 10.0 * kDeg);
+  coordinator.update(robot2, 2.8);
+
+  CoreInput input2 = makeTrackingInput(3, 0, 0, 2u, 3.0, 2.9);
+  CoreOutput output = coordinator.update(input2, 2.9);
+
+  EXPECT_FALSE(output.navigation_mode.has_rejoin_anchor);
 }
 
 }  // namespace

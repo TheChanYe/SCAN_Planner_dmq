@@ -17,7 +17,9 @@ NavigationCoordinator::NavigationCoordinator(
       start_align_controller_(config.start_align),
       route_progress_tracker_(config.route_progress),
       route_corridor_observation_gate_(
-          config.route_corridor_observation)
+          config.route_corridor_observation),
+      navigation_mode_manager_(
+          config.navigation_mode)
 {
 }
 
@@ -33,6 +35,7 @@ void NavigationCoordinator::reset()
   clearPlanningContext();
   start_align_controller_.reset();
   route_progress_tracker_.reset();
+  navigation_mode_manager_.reset();
 }
 
 // =============================================================================
@@ -231,6 +234,7 @@ void NavigationCoordinator::enterFailedState() noexcept
   clearPlanningContext();
   start_align_controller_.reset();
   route_progress_tracker_.reset();
+  navigation_mode_manager_.reset();
 }
 
 // =============================================================================
@@ -280,6 +284,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       clearPlanningContext();
       start_align_controller_.reset();
       route_progress_tracker_.reset();
+      navigation_mode_manager_.reset();
       state_ = NavState::PLANNING;
       enqueuePlannerAction(task_output.planner_action);
       break;
@@ -288,6 +293,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       clearPlanningContext();
       start_align_controller_.reset();
       route_progress_tracker_.reset();
+      navigation_mode_manager_.reset();
       state_ = NavState::IDLE;
       enqueuePlannerAction(task_output.planner_action);
       break;
@@ -502,37 +508,40 @@ CoreOutput NavigationCoordinator::update(
                       input.route_corridor_observation,
                       now_sec);
 
-              switch (obs_output.result)
+              // Output route_corridor for CLEAR/BLOCKED.
+              if (obs_output.result ==
+                      RouteCorridorObservationResult::CLEAR ||
+                  obs_output.result ==
+                      RouteCorridorObservationResult::BLOCKED)
               {
-                case RouteCorridorObservationResult::CLEAR:
-                case RouteCorridorObservationResult::BLOCKED:
-                  output.route_corridor =
-                      obs_output.assessment;
+                output.route_corridor =
+                    obs_output.assessment;
+              }
 
+              // Call NavigationModeManager.
+              const NavigationModeOutput mode_output =
+                  navigation_mode_manager_.update(
+                      active_task,
+                      input.robot,
+                      progress_output.progress,
+                      obs_output,
+                      now_sec);
+
+              switch (mode_output.result)
+              {
+                case NavigationModeUpdateResult::UPDATED:
+                case NavigationModeUpdateResult::WAITING_FOR_CORRIDOR:
+                case NavigationModeUpdateResult::WAITING_FOR_ROBOT:
+                case NavigationModeUpdateResult::IDLE:
+                  output.navigation_mode =
+                      mode_output.status;
                   final_cmd =
                       makeZeroCommand(
                           CommandSource::TRACKING_STOP,
                           now_sec);
                   break;
 
-                case RouteCorridorObservationResult::WAITING_FOR_OBSERVATION:
-                case RouteCorridorObservationResult::TASK_MISMATCH:
-                case RouteCorridorObservationResult::STALE_MAP:
-                case RouteCorridorObservationResult::FUTURE_MAP:
-                case RouteCorridorObservationResult::STALE_PROGRESS:
-                case RouteCorridorObservationResult::FUTURE_PROGRESS:
-                case RouteCorridorObservationResult::OUT_OF_MAP:
-                case RouteCorridorObservationResult::INVALID_OBSERVATION:
-                case RouteCorridorObservationResult::IDLE:
-                  final_cmd =
-                      makeZeroCommand(
-                          CommandSource::TRACKING_STOP,
-                          now_sec);
-                  break;
-
-                case RouteCorridorObservationResult::INVALID_TIME:
-                case RouteCorridorObservationResult::INVALID_CONFIG:
-                case RouteCorridorObservationResult::INVALID_PROGRESS:
+                default:
                   enterFailedState();
 
                   final_cmd =

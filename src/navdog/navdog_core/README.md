@@ -91,11 +91,19 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 最早阻塞路线累计位置
 - 已走路线障碍物忽略
 - 单点路线走廊检查
+- NavigationModeManager 导航子模式管理
+- ROUTE_FOLLOW / LOCAL_AVOID / ROUTE_REJOIN 三态状态机
+- 路线阻塞确认时间（0.2s）
+- 立即绕障触发（≤0.8m）
+- LOCAL_AVOID 最短保持时间（0.5s）
+- 路线恢复确认时间（0.4s）
+- 接回路线横向+航向确认时间（0.3s）
+- 多轮绕障切换
+- TaskMode 差异策略（NORMAL_AVOID / ROUTE_ONLY / CHARGING）
+- 模式诊断输出（NavigationModeStatus）
+- 浮点时间 epsilon 防边界误判
 
 尚未实现：
-- NavigationModeManager
-- ROUTE_FOLLOW / LOCAL_AVOID / ROUTE_REJOIN
-- 绕障触发迟滞
 - SCAN 局部绕障轨迹
 - TRACKING planner_cmd 输出
 - 障碍物安全层
@@ -147,9 +155,74 @@ START_ALIGN
 TRACKING
     ├── 调用 RouteProgressTracker 计算路线进度
     ├── 路线进度有效后调用 RouteCorridorObservationGate
-    ├── CLEAR / BLOCKED → 输出 TRACKING_STOP + route_progress + route_corridor
-    ├── 观察缺失/过期/非法 → 输出 TRACKING_STOP（route_corridor 无效）
+    ├── 调用 NavigationModeManager 决定导航子模式
+    ├── CLEAR / BLOCKED → 输出 TRACKING_STOP + route_progress + route_corridor + navigation_mode
+    ├── 观察缺失/过期/非法 → 输出 TRACKING_STOP（navigation_mode 保持当前模式）
     └── INVALID_TIME / INVALID_CONFIG / INVALID_PROGRESS → FAILED
+
+NavigationModeManager 只回答：
+"当前应该使用哪种导航参考意图？"
+
+它不负责：
+"应该输出什么速度？"
+"应该向左绕还是向右绕？"
+"具体接回哪个路点？"
+
+本阶段只输出模式意图，不输出真实导航速度。
+所有 TRACKING 输出仍然为 TRACKING_STOP（vx=0, vy=0, yaw_rate=0）。
+
+## 导航子模式状态机
+
+```text
+CoreState::TRACKING
+        |
+        v
+ROUTE_FOLLOW
+   | BLOCKED <= 0.8m
+   | 或 <=1.5m 持续0.2s
+   v
+LOCAL_AVOID
+   | 最少0.5s
+   | 路线CLEAR持续0.4s
+   v
+ROUTE_REJOIN
+   | 横向<=0.2m
+   | 航向<=12deg
+   | 持续0.3s
+   v
+ROUTE_FOLLOW
+```
+
+ROUTE_REJOIN 途中重新 BLOCKED
+→ 返回 LOCAL_AVOID（avoidance_cycle_count +1）
+
+ROUTE_ONLY
+→ 不进入 LOCAL_AVOID
+→ 始终保持 ROUTE_FOLLOW
+→ 近距离阻塞时 reason = ROUTE_ONLY_BLOCKED
+
+CHARGING
+→ 当前阶段允许 LOCAL_AVOID
+→ 与 NORMAL_AVOID 行为一致
+→ 不实现充电桩附近特殊行为
+
+Corridor 暂时不可用（WAITING_FOR_OBSERVATION / STALE_MAP 等）
+→ 保持当前模式
+→ 清零所有确认计时器
+→ 不进入 FAILED
+
+Corridor 内部错误（INVALID_TIME / INVALID_CONFIG / INVALID_PROGRESS）
+→ INVALID_CORRIDOR_RESULT
+→ Coordinator 转入 FAILED
+
+新任务（sequence 变化）
+→ 重新初始化为 ROUTE_FOLLOW
+→ 清空所有计时器和 rejoin anchor
+→ avoidance_cycle_count 归零
+
+同一任务 UPDATE_MAX_VX
+→ 不重置模式
+→ 不清空计时器
 
 RouteProgressTracker 只回答：
 "机器人沿原始路线走到哪里了？"

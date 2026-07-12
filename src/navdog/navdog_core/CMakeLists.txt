@@ -14,6 +14,7 @@ add_library(navdog_core
   src/start_align_controller.cpp
   src/route_progress_tracker.cpp
   src/route_corridor_observation_gate.cpp
+  src/navigation_mode_manager.cpp
 )
 
 target_include_directories(navdog_core
@@ -79,6 +80,18 @@ if(CATKIN_ENABLE_TESTING)
 
   if(TARGET test_route_corridor_observation_gate)
     target_link_libraries(test_route_corridor_observation_gate
+      navdog_core
+    )
+  endif()
+
+  catkin_add_gtest(
+    test_navigation_mode_manager
+    test/test_navigation_mode_manager.cpp
+  )
+
+  if(TARGET test_navigation_mode_manager)
+    target_link_libraries(
+      test_navigation_mode_manager
       navdog_core
     )
   endif()

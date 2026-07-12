@@ -132,6 +132,38 @@ struct LimitConfig
 };
 
 // =============================================================================
+// 5.7b NavigationModeConfig
+// =============================================================================
+
+struct NavigationModeConfig
+{
+  // BLOCKED 进入正式绕障判断范围。
+  double avoid_enter_distance_m{1.50};
+
+  // 小于等于该距离时，不等待确认，立即进入 LOCAL_AVOID。
+  double avoid_immediate_distance_m{0.80};
+
+  // 普通近距离 BLOCKED 必须连续保持的时间。
+  double avoid_block_confirm_sec{0.20};
+
+  // LOCAL_AVOID 进入后最短保持时间。
+  double local_avoid_min_hold_sec{0.50};
+
+  // 原始路线连续 CLEAR 后才能尝试接回。
+  double route_clear_confirm_sec{0.40};
+
+  // 接回路线的横向误差要求。
+  double rejoin_lateral_tolerance_m{0.20};
+
+  // 12 degrees。
+  double rejoin_heading_tolerance_rad{
+      0.20943951023931953};
+
+  // 横向和航向条件连续满足时间。
+  double rejoin_confirm_sec{0.30};
+};
+
+// =============================================================================
 // 5.8 总配置
 // =============================================================================
 
@@ -147,6 +179,7 @@ struct NavdogConfig
   GoalConfig goal{};
   SafetyConfig safety{};
   LimitConfig limits{};
+  NavigationModeConfig navigation_mode{};
 };
 
 }  // namespace navdog

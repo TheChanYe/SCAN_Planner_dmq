@@ -342,6 +342,126 @@ struct CoreInput
 };
 
 // =============================================================================
+// 4.16a 导航子模式
+// =============================================================================
+
+enum class NavigationMode : std::uint8_t
+{
+  NONE = 0,
+
+  ROUTE_FOLLOW,
+  LOCAL_AVOID,
+  ROUTE_REJOIN
+};
+
+// =============================================================================
+// 4.16b 参考意图
+// =============================================================================
+
+enum class ReferenceIntent : std::uint8_t
+{
+  NONE = 0,
+
+  GLOBAL_ROUTE,
+  LOCAL_AVOIDANCE,
+  FORWARD_ROUTE_REJOIN
+};
+
+// =============================================================================
+// 4.16c 模式原因
+// =============================================================================
+
+enum class NavigationModeReason : std::uint8_t
+{
+  NONE = 0,
+
+  INITIALIZED,
+
+  ROUTE_CLEAR,
+  BLOCKED_FAR_AHEAD,
+  BLOCK_CONFIRMING,
+  BLOCK_IMMEDIATE,
+  BLOCK_CONFIRMED,
+
+  ROUTE_ONLY_BLOCKED,
+
+  LOCAL_AVOID_ACTIVE,
+  CLEAR_CONFIRMING,
+  CLEAR_CONFIRMED,
+
+  ROUTE_REJOIN_ACTIVE,
+  REJOIN_CONFIRMING,
+  REJOIN_COMPLETE,
+  REJOIN_BLOCKED,
+
+  WAITING_FOR_CORRIDOR,
+  WAITING_FOR_ROBOT,
+
+  TASK_CHANGED
+};
+
+// =============================================================================
+// 4.16d 模式状态
+// =============================================================================
+
+struct NavigationModeStatus
+{
+  NavigationMode mode{NavigationMode::NONE};
+  NavigationMode previous_mode{NavigationMode::NONE};
+
+  ReferenceIntent reference_intent{
+      ReferenceIntent::NONE};
+
+  NavigationModeReason reason{
+      NavigationModeReason::NONE};
+
+  std::uint64_t task_sequence{0};
+
+  // 模式是否已经初始化。
+  bool initialized{false};
+
+  // 本次 update 是否发生模式变化。
+  bool transitioned{false};
+
+  // 当前 Corridor Gate 是否提供了可用的 CLEAR/BLOCKED。
+  bool corridor_available{false};
+
+  // 当前有效评估是否为 BLOCKED。
+  bool route_blocked{false};
+
+  // BLOCKED 且 first_blocked_distance <= avoid_enter_distance。
+  bool route_blocked_near{false};
+
+  // 当前任务是否允许进入 LOCAL_AVOID。
+  bool avoidance_allowed{false};
+
+  // 当前模式进入时间。
+  double mode_enter_stamp_sec{0.0};
+
+  // 最近一次模式切换时间。
+  double transition_stamp_sec{0.0};
+
+  // 连续近距离 BLOCKED 持续时间。
+  double blocked_confirm_elapsed_sec{0.0};
+
+  // 连续 CLEAR 持续时间。
+  double clear_confirm_elapsed_sec{0.0};
+
+  // 接回条件连续满足时间。
+  double rejoin_confirm_elapsed_sec{0.0};
+
+  // 进入当前 ROUTE_REJOIN 时，不允许接到此 arc 之前。
+  double rejoin_min_arc_length_m{0.0};
+  bool has_rejoin_anchor{false};
+
+  // 本任务累计进入 LOCAL_AVOID 的次数。
+  std::uint32_t avoidance_cycle_count{0};
+
+  double stamp_sec{0.0};
+  bool valid{false};
+};
+
+// =============================================================================
 // 4.16 核心输出
 // =============================================================================
 
@@ -353,6 +473,7 @@ struct CoreOutput
   std::uint64_t task_sequence{0};
   RouteProgress route_progress{};
   RouteCorridorAssessment route_corridor{};
+  NavigationModeStatus navigation_mode{};
 };
 
 }  // namespace navdog

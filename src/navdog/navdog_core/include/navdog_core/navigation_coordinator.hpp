@@ -1,6 +1,7 @@
 #pragma once
 
 #include "navdog_core/config.hpp"
+#include "navdog_core/navigation_mode_manager.hpp"
 #include "navdog_core/route_corridor_observation_gate.hpp"
 #include "navdog_core/route_progress_tracker.hpp"
 #include "navdog_core/start_align_controller.hpp"
@@ -80,6 +81,8 @@ private:
 
   RouteCorridorObservationGate
       route_corridor_observation_gate_{};
+
+  NavigationModeManager navigation_mode_manager_{};
 };
 
 }  // namespace navdog
