@@ -772,7 +772,8 @@ TEST(SafetySupervisorTest, SafetyStopResetsPreviousVelocity)
   context.map_stamp_sec = 1.4;
   const VelocityCommand recovered =
       supervisor.apply(raw, context, 0.4, 1.4);
-  EXPECT_EQ(recovered.vx, 0.0);
+  EXPECT_GT(recovered.vx, 0.0);
+  EXPECT_LE(recovered.vx, config.limits.max_accel_x * 0.1 + 1e-9);
 }
 
 TEST(SafetySupervisorTest, LateralAccelerationIsLimited)

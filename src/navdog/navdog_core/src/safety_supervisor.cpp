@@ -308,7 +308,12 @@ VelocityCommand SafetySupervisor::apply(
   double limited_w = raw_cmd.yaw_rate;
   const bool goal_align =
       raw_cmd.source == CommandSource::GOAL_ALIGN;
-  if (goal_align)
+  const bool turn_in_place =
+      std::abs(raw_cmd.vx) <= kEpsilon &&
+      std::abs(raw_cmd.vy) <= kEpsilon &&
+      std::abs(raw_cmd.yaw_rate) > kEpsilon;
+  const bool immediate_linear_stop = goal_align || turn_in_place;
+  if (immediate_linear_stop)
   {
     limited_vx = 0.0;
     limited_vy = 0.0;
@@ -368,7 +373,7 @@ VelocityCommand SafetySupervisor::apply(
       const double max_dvy = limit_config_.max_accel_y * dt;
       const double max_dw = limit_config_.max_accel_yaw * dt;
 
-      if (!goal_align)
+      if (!immediate_linear_stop)
       {
         limited_vx = clamp(
             limited_vx,

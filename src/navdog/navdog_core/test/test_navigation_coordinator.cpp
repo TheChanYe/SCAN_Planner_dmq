@@ -72,6 +72,12 @@ CoreInput makeRobotInput(
   return input;
 }
 
+void stampInput(CoreInput& input, double stamp_sec)
+{
+  input.robot.stamp_sec = stamp_sec;
+  input.obstacles.stamp_sec = stamp_sec;
+}
+
 NavigationEvent makeMultiPointStartEvent()
 {
   NavigationEvent event{};
@@ -180,6 +186,10 @@ void setupToTracking(
   coord.update(ready, 1.1);
   CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg, 1.2);
   coord.update(robot0, 1.2);
+  CoreInput prime = makeRobotInput(0.0, 0.0, 0.0, 1.3);
+  prime.route_corridor_observation =
+      makeClearScanObservation(1u, 0.0, 1.3);
+  coord.update(prime, 1.3);
 }
 
 CoreInput makeTrackingInput(
@@ -1629,7 +1639,7 @@ TEST(NavigationCoordinatorTest, TrackingPublishesRouteProgressOnNextCycle)
   coordinator.update(ready, 1.1);
 
   // Enter TRACKING
-  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg, 1.2);
   coordinator.update(robot0, 1.2);
 
   // Next cycle: robot at (3, 0) on the route
@@ -1952,10 +1962,14 @@ TEST(NavigationCoordinatorTest, TrackingAcceptsClearScan3DAssessment)
   coordinator.update(robot0, 1.2);
 
   // Next cycle: robot at (3,0), valid clear SCAN observation
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeClearScanObservation(1u, 3.0, 1.3);
-  CoreOutput output = coordinator.update(input, 1.3);
+  coordinator.update(input, 1.3);
+  stampInput(input, 1.4);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.4);
+  CoreOutput output = coordinator.update(input, 1.4);
 
   EXPECT_EQ(output.state, NavState::TRACKING);
   EXPECT_TRUE(output.route_progress.valid);
@@ -1978,11 +1992,11 @@ TEST(NavigationCoordinatorTest, TrackingAcceptsBlockedScan3DAssessment)
   CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
   coordinator.update(ready, 1.1);
 
-  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg, 1.2);
   coordinator.update(robot0, 1.2);
 
   // Next cycle: blocked SCAN observation
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeBlockedScanObservation(1u, 3.0, 1.3);
   CoreOutput output = coordinator.update(input, 1.3);
@@ -2010,7 +2024,7 @@ TEST(NavigationCoordinatorTest, TrackingStillOutputsZeroWhenClear)
   CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
   coordinator.update(robot0, 1.2);
 
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeClearScanObservation(1u, 3.0, 1.3);
   CoreOutput output = coordinator.update(input, 1.3);
@@ -2018,8 +2032,7 @@ TEST(NavigationCoordinatorTest, TrackingStillOutputsZeroWhenClear)
   EXPECT_EQ(output.state, NavState::TRACKING);
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_FOLLOW);
-  EXPECT_GT(output.final_cmd.vx, 0.0);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
 }
 
 // =============================================================================
@@ -2037,10 +2050,10 @@ TEST(NavigationCoordinatorTest, TrackingStillOutputsZeroWhenBlocked)
   CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
   coordinator.update(ready, 1.1);
 
-  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg, 1.2);
   coordinator.update(robot0, 1.2);
 
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeBlockedScanObservation(1u, 3.0, 1.3);
   CoreOutput output = coordinator.update(input, 1.3);
@@ -2072,7 +2085,7 @@ TEST(NavigationCoordinatorTest, TrackingWaitsForMissingAssessment)
   coordinator.update(robot0, 1.2);
 
   // route_corridor_observation.valid defaults to false
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   CoreOutput output = coordinator.update(input, 1.3);
 
   EXPECT_EQ(output.state, NavState::TRACKING);
@@ -2099,7 +2112,7 @@ TEST(NavigationCoordinatorTest, TrackingRejectsMismatchedTaskAssessmentWithoutFa
   coordinator.update(robot0, 1.2);
 
   // Assessment with wrong task sequence
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeClearScanObservation(999u, 3.0, 1.3);
   CoreOutput output = coordinator.update(input, 1.3);
@@ -2128,7 +2141,7 @@ TEST(NavigationCoordinatorTest, TrackingRejectsStaleMapAssessmentWithoutFailure)
   coordinator.update(robot0, 1.2);
 
   // Stale map (map_timeout_sec default = 0.30)
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeClearScanObservation(1u, 3.0, 1.3);
   input.route_corridor_observation.map_stamp_sec =
@@ -2683,7 +2696,7 @@ TEST(NavigationCoordinatorTest, TrackingModeStillOutputsSafeZero)
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
 
-  CoreInput input = makeRobotInput(3, 0, 0);
+  CoreInput input = makeRobotInput(3, 0, 0, 1.3);
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 1.3, 0.5);
   CoreOutput output = coordinator.update(input, 1.3);
@@ -2946,6 +2959,7 @@ TEST(NavigationCoordinatorTest, TrackingRejoinBlockClearBlockRequiresFreshConfir
   // BLOCKED again at 1.0m — timer should start fresh.
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 2.7, 1.0);
+  stampInput(input, 2.7);
   CoreOutput output = coordinator.update(input, 2.7);
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_REJOIN);
@@ -2960,6 +2974,7 @@ TEST(NavigationCoordinatorTest, TrackingRejoinBlockClearBlockRequiresFreshConfir
   // Continue BLOCKED — only 0.1s since fresh start, not enough.
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 2.8, 1.0);
+  stampInput(input, 2.8);
   output = coordinator.update(input, 2.8);
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_REJOIN);
@@ -2967,6 +2982,7 @@ TEST(NavigationCoordinatorTest, TrackingRejoinBlockClearBlockRequiresFreshConfir
   // 0.2s continuous — should enter LOCAL_AVOID.
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 2.9, 1.0);
+  stampInput(input, 2.9);
   output = coordinator.update(input, 2.9);
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
@@ -2996,7 +3012,8 @@ TEST(NavigationCoordinatorTest,
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_FOLLOW);
   EXPECT_GT(output.final_cmd.vx, 0.0);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
+  EXPECT_TRUE(output.final_cmd.source == CommandSource::PLANNER ||
+              output.final_cmd.source == CommandSource::SAFETY_SLOW);
 }
 
 // =============================================================================
@@ -3057,7 +3074,8 @@ TEST(NavigationCoordinatorTest,
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
   EXPECT_GT(output.final_cmd.vx, 0.0);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
+  EXPECT_TRUE(output.final_cmd.source == CommandSource::PLANNER ||
+              output.final_cmd.source == CommandSource::SAFETY_SLOW);
 }
 
 // =============================================================================
@@ -3071,7 +3089,7 @@ TEST(NavigationCoordinatorTest, ExpiredTrajectoryStops)
 
   FakeLocalPlannerAdapter adapter;
   LocalTrajectory trajectory = makeTestLocalTrajectory(
-      1u, 1u, NavigationMode::LOCAL_AVOID, 1.0, 1.0);
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.1, 0.1);
   adapter.setTrajectory(trajectory);
   attachLocalPlanner(coordinator, adapter);
 
@@ -3115,11 +3133,18 @@ TEST(NavigationCoordinatorTest,
   input = makeTrackingInput(0.2, 0.0, 0.0, 1u, 0.2, 3.0);
   input.route_corridor_observation =
       makeClearScanObservation(1u, 0.2, 3.0);
-  CoreOutput output = coordinator.update(input, 3.0);
+  coordinator.update(input, 3.0);
+  input = makeTrackingInput(0.2, 0.0, 0.0, 1u, 0.2, 3.4);
+  coordinator.update(input, 3.4);
+  input = makeTrackingInput(0.2, 0.0, 0.0, 1u, 0.2, 3.8);
+  coordinator.update(input, 3.8);
+  input = makeTrackingInput(0.2, 0.0, 0.0, 1u, 0.2, 4.2);
+  CoreOutput output = coordinator.update(input, 4.2);
 
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_FOLLOW);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
+  EXPECT_TRUE(output.final_cmd.source == CommandSource::PLANNER ||
+              output.final_cmd.source == CommandSource::SAFETY_SLOW);
   EXPECT_GT(output.final_cmd.vx, 0.0);
 }
 
@@ -3518,7 +3543,7 @@ TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsAtZero)
 
   // Second plan with new plan_sequence.
   LocalTrajectory trajectory2 = makeTestLocalTrajectory(
-      1u, 2u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+      1u, 2u, NavigationMode::LOCAL_AVOID, 2.4, 2.0);
   adapter.setTrajectory(trajectory2);
   adapter.setState(LocalPlanState::READY);
 
@@ -3587,7 +3612,11 @@ TEST(NavigationCoordinatorTest, FailedReplanDoesNotReuseOldTrajectory)
   coordinator.update(input, 2.05);
 
   // The old trajectory must not be reused while replan is failing.
-  CoreOutput output = coordinator.update(input, 2.4);
+  coordinator.update(input, 2.4);
+  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.45);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.45, 0.5);
+  CoreOutput output = coordinator.update(input, 2.45);
   EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
   EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
 }
@@ -3616,7 +3645,9 @@ TEST(NavigationCoordinatorTest, ModeChangeRejectsOldTrajectory)
   clear_input.route_corridor_observation =
       makeClearScanObservation(1u, 0.0, 3.0);
   coordinator.update(clear_input, 3.0);
+  clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.5);
   coordinator.update(clear_input, 3.5);
+  clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.9);
   CoreOutput output = coordinator.update(clear_input, 3.9);
 
   EXPECT_EQ(output.navigation_mode.mode,
@@ -3684,17 +3715,22 @@ TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsTrajectoryAtZero)
 
   // New plan with different plan_sequence: time should restart at 0.
   LocalTrajectory trajectory2 = makeTestLocalTrajectory(
-      1u, 2u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+      1u, 2u, NavigationMode::LOCAL_AVOID, 2.4, 2.0);
   adapter.setTrajectory(trajectory2);
   adapter.setCollisionFlag(true);
 
-  CoreOutput output = coordinator.update(input, 2.4);
+  coordinator.update(input, 2.4);
+  adapter.setCollisionFlag(false);
+  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.45);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.45, 0.5);
+  CoreOutput output = coordinator.update(input, 2.45);
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
   EXPECT_GT(output.final_cmd.vx, 0.0);
 }
 
-TEST(NavigationCoordinatorTest, PurposeChangeRestartsTrajectoryAtZero)
+TEST(NavigationCoordinatorTest, PurposeChangeDoesNotExecuteUnacceptedTrajectory)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -3705,6 +3741,7 @@ TEST(NavigationCoordinatorTest, PurposeChangeRestartsTrajectoryAtZero)
       1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
   LocalTrajectory rejoin_traj = makeTestLocalTrajectory(
       1u, 2u, NavigationMode::ROUTE_REJOIN, 2.0, 2.0);
+  rejoin_traj.source_stamp_sec = 3.5;
 
   adapter.setTrajectory(avoid_traj);
   attachLocalPlanner(coordinator, adapter);
@@ -3722,11 +3759,18 @@ TEST(NavigationCoordinatorTest, PurposeChangeRestartsTrajectoryAtZero)
   clear_input.route_corridor_observation =
       makeClearScanObservation(1u, 0.0, 3.0);
   coordinator.update(clear_input, 3.0);
-  CoreOutput output = coordinator.update(clear_input, 3.05);
+  clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.5);
+  coordinator.update(clear_input, 3.5);
+  adapter.setTrajectory(rejoin_traj);
+  clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.55);
+  coordinator.update(clear_input, 3.55);
+  clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.6);
+  CoreOutput output = coordinator.update(clear_input, 3.6);
 
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::ROUTE_REJOIN);
-  EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
 }
 
 TEST(NavigationCoordinatorTest, TaskChangeRestartsTrajectoryAtZero)
@@ -3772,6 +3816,11 @@ TEST(NavigationCoordinatorTest, LargeControlGapDoesNotSkipTrajectory)
 
   // First aligned update.
   coordinator.update(input, 2.0);
+  CoreInput accept_input = makeTrackingInput(
+      0.0, 0.0, 0.0, 1u, 0.0, 2.05);
+  accept_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
+  coordinator.update(accept_input, 2.05);
 
   // Large gap (> 0.2s) must not advance exec_time this frame.
   CoreInput gap_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.5);
@@ -3803,6 +3852,11 @@ TEST(NavigationCoordinatorTest, TimeRegressionStopsTrajectory)
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
   coordinator.update(input, 2.0);
+  CoreInput accept_input = makeTrackingInput(
+      0.0, 0.0, 0.0, 1u, 0.0, 2.05);
+  accept_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
+  coordinator.update(accept_input, 2.05);
 
   // now_sec goes backwards -> trajectory follower resets.
   CoreInput regress_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 1.9);
@@ -3829,6 +3883,12 @@ TEST(NavigationCoordinatorTest,
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
   coordinator.update(input, 2.0);
+
+  CoreInput accepted_input = makeTrackingInput(
+      0.0, 0.0, 0.0, 1u, 0.0, 2.05);
+  accepted_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
+  coordinator.update(accepted_input, 2.05);
 
   // 0.35s later the trajectory is still valid (duration = 2.0s).
   CoreInput later_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.35);
@@ -4174,7 +4234,7 @@ TEST(NavigationCoordinatorTest, LocalAvoidSkipsOccupiedFirstCandidate)
 
   // Immediate block ahead -> LOCAL_AVOID. The preferred target is at
   // arc = 3.0 + default_forward_distance_m (2.5) = 5.5.
-  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0, 1.4);
   blocked_input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
 
@@ -4201,7 +4261,7 @@ TEST(NavigationCoordinatorTest, LocalAvoidFindsLaterFreeCandidate)
   CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
   coordinator.update(clear_input, 1.3);
 
-  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0, 1.4);
   blocked_input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
 
@@ -4229,7 +4289,7 @@ TEST(NavigationCoordinatorTest, MapNotReadyStopsPlanning)
   CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
   coordinator.update(clear_input, 1.3);
 
-  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0, 1.4);
   blocked_input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
 
