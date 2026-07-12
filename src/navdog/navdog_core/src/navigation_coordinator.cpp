@@ -158,7 +158,18 @@ void NavigationCoordinator::clearLocalPlanningContext() noexcept
   accepted_plan_sequence_ = 0;
   accepted_purpose_ = NavigationMode::NONE;
 
+  last_request_target_x_ = 0.0;
+  last_request_target_y_ = 0.0;
+  force_replan_ = false;
+  resetNearGoalBlockedTimer();
+
   trajectory_follower_.reset();
+}
+
+void NavigationCoordinator::resetNearGoalBlockedTimer() noexcept
+{
+  near_goal_blocked_since_sec_ = 0.0;
+  near_goal_blocked_timer_active_ = false;
 }
 
 // =============================================================================
@@ -706,6 +717,14 @@ void NavigationCoordinator::requestLocalPlanIfNeeded(
     return;
   }
 
+  if (!std::isfinite(robot.x) || !std::isfinite(robot.y) ||
+      !std::isfinite(robot.z) || !std::isfinite(robot.yaw) ||
+      !std::isfinite(robot.vx) || !std::isfinite(robot.vy) ||
+      !std::isfinite(robot.yaw_rate))
+  {
+    return;
+  }
+
   if (!local_planner_adapter_)
   {
     return;
@@ -890,7 +909,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
   (void)now_sec;
   trajectory_follower_.reset();
 
-  // Do not bypass corridor blocking state near goal.
+  // Do not bypass corridor blocking state away from the finish region.
   if (mode_status.route_blocked_near ||
       mode_status.reason == NavigationModeReason::ROUTE_ONLY_BLOCKED)
   {
@@ -904,6 +923,10 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
       std::hypot(task.points.back().x - robot.x,
                  task.points.back().y - robot.y) <=
           config_.goal_controller.near_goal_switch_dist;
+  const double goal_distance = task.points.empty()
+      ? std::numeric_limits<double>::infinity()
+      : std::hypot(task.points.back().x - robot.x,
+                   task.points.back().y - robot.y);
 
   double effective_max_vx = max_vx;
 
@@ -935,10 +958,6 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
   }
 
   // Only hand over to GoalController for final yaw alignment / finish.
-  const double goal_distance = task.points.empty()
-      ? std::numeric_limits<double>::infinity()
-      : std::hypot(task.points.back().x - robot.x,
-                   task.points.back().y - robot.y);
   if (std::isfinite(goal_distance) &&
       goal_distance <= config_.goal_controller.finish_dist)
   {
@@ -947,7 +966,8 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
         robot,
         progress,
         effective_max_vx,
-        config_.limits.max_yaw_rate,
+        std::min(config_.limits.max_yaw_rate,
+                 config_.goal_controller.near_goal_max_w),
         now_sec);
 
     if (result.finished)
@@ -1167,9 +1187,46 @@ VelocityCommand NavigationCoordinator::executeMode(
   // Corridor / robot not ready: do not execute any real controller.
   if (!corridor_available)
   {
+    resetNearGoalBlockedTimer();
     return makeZeroCommand(
         CommandSource::TRACKING_STOP, now_sec);
   }
+
+  const double goal_distance = task.points.empty()
+      ? std::numeric_limits<double>::infinity()
+      : std::hypot(task.points.back().x - robot.x,
+                   task.points.back().y - robot.y);
+  const bool near_goal_blocked =
+      std::isfinite(goal_distance) &&
+      goal_distance <= config_.goal_controller.near_goal_switch_dist &&
+      mode_status.route_blocked_near;
+  if (near_goal_blocked)
+  {
+    if (!near_goal_blocked_timer_active_)
+    {
+      near_goal_blocked_since_sec_ = now_sec;
+      near_goal_blocked_timer_active_ = true;
+    }
+    const double elapsed = now_sec - near_goal_blocked_since_sec_;
+    if (std::isfinite(elapsed) && elapsed >=
+        config_.goal_controller.obstacle_finish_timeout_sec)
+    {
+      state_ = NavState::SUCCEEDED;
+      clearLocalPlanningContext();
+      safety_supervisor_.reset();
+    }
+
+    SafetySupervisor::Context safety_context{};
+    safety_context.robot = robot;
+    safety_context.obstacles = obstacles;
+    safety_context.corridor = corridor;
+    safety_context.map_valid = true;
+    safety_context.map_stamp_sec = corridor.map_stamp_sec;
+    return safety_supervisor_.apply(
+        makeZeroCommand(CommandSource::TRACKING_STOP, now_sec),
+        safety_context, max_vx, now_sec);
+  }
+  resetNearGoalBlockedTimer();
 
   // A mode transition invalidates the old mode's trajectory identity. Clear
   // it before submitting the first request for the new mode.

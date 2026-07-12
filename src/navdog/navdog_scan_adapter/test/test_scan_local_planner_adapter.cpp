@@ -6,6 +6,7 @@
 #include <navdog_core/types.hpp>
 
 #include <memory>
+#include <limits>
 #include <type_traits>
 
 namespace navdog_scan_adapter
@@ -39,6 +40,12 @@ public:
     std::lock_guard<std::mutex> lock(adapter.mutex_);
     adapter.completed_request_ = request;
     adapter.completed_state_ = state;
+  }
+
+  static bool validateTrajectory(
+      const navdog::LocalTrajectory& trajectory)
+  {
+    return ScanLocalPlannerAdapter::isSampledTrajectoryValid(trajectory);
   }
 };
 
@@ -132,8 +139,24 @@ navdog::LocalPlanRequest makeRequest(std::uint64_t plan_sequence)
   request.purpose = navdog::NavigationMode::LOCAL_AVOID;
   request.task_sequence = 7;
   request.plan_sequence = plan_sequence;
+  request.max_vx = 0.4;
   request.valid = true;
   return request;
+}
+
+navdog::LocalTrajectory makeSampledTrajectory()
+{
+  navdog::LocalTrajectory trajectory{};
+  trajectory.duration_sec = 0.1;
+  for (int i = 0; i < 2; ++i)
+  {
+    navdog::TimedTrajectoryPoint point{};
+    point.time_from_start_sec = 0.1 * i;
+    point.x = 0.1 * i;
+    point.vx = 1.0;
+    trajectory.points.push_back(point);
+  }
+  return trajectory;
 }
 
 TEST(ScanLocalPlannerAdapterTest, PendingRequestReportsQueued)
@@ -187,6 +210,90 @@ TEST(ScanLocalPlannerAdapterTest, NewestPendingRequestWins)
   EXPECT_EQ(adapter.localPlanState(
                 navdog::NavigationMode::LOCAL_AVOID, 7, 2),
             navdog::LocalPlanState::QUEUED);
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsNaNPlanStart)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  auto request = makeRequest(1);
+  request.start.x = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsNaNPlanVelocity)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  auto request = makeRequest(1);
+  request.start_vel.y = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsNaNPlanTarget)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  auto request = makeRequest(1);
+  request.target.z = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsZeroTaskSequence)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  auto request = makeRequest(1);
+  request.task_sequence = 0;
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsZeroPlanSequence)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  EXPECT_FALSE(adapter.requestLocalPlan(makeRequest(0)));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsInvalidMaxVx)
+{
+  auto manager = std::make_shared<scan_planner::SCANPlannerManager>();
+  ScanLocalPlannerAdapter adapter(navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), manager);
+  auto request = makeRequest(1);
+  request.max_vx = 0.0;
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+  request.max_vx = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(adapter.requestLocalPlan(request));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsNaNSampledPoint)
+{
+  auto trajectory = makeSampledTrajectory();
+  trajectory.points[0].x = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_FALSE(ScanLocalPlannerAdapterTestPeer::validateTrajectory(trajectory));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsNonMonotonicTrajectoryTime)
+{
+  auto trajectory = makeSampledTrajectory();
+  trajectory.points.insert(trajectory.points.begin() + 1,
+                           trajectory.points.front());
+  trajectory.points[1].time_from_start_sec = 0.08;
+  trajectory.points[2].time_from_start_sec = 0.05;
+  EXPECT_FALSE(ScanLocalPlannerAdapterTestPeer::validateTrajectory(trajectory));
+}
+
+TEST(ScanLocalPlannerAdapterTest, RejectsSinglePointTrajectory)
+{
+  auto trajectory = makeSampledTrajectory();
+  trajectory.points.resize(1);
+  EXPECT_FALSE(ScanLocalPlannerAdapterTestPeer::validateTrajectory(trajectory));
 }
 
 }  // namespace

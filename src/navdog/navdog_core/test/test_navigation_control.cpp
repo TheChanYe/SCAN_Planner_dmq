@@ -555,10 +555,20 @@ TEST(SafetySupervisorTest, DynamicMaxVxLimit)
 
   SafetySupervisor::Context context{};
   context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
 
+  supervisor.apply(raw_cmd, context, 0.4, 1.0);
+  context.robot.stamp_sec = 1.1;
+  context.obstacles.stamp_sec = 1.1;
+  context.map_stamp_sec = 1.1;
   const VelocityCommand cmd =
-      supervisor.apply(raw_cmd, context, 0.4, 1.0);
+      supervisor.apply(raw_cmd, context, 0.4, 1.1);
 
+  EXPECT_GT(cmd.vx, 0.0);
   EXPECT_LE(cmd.vx, 0.4);
 }
 
@@ -778,6 +788,9 @@ TEST(SafetySupervisorTest, LateralAccelerationIsLimited)
 
   SafetySupervisor::Context context{};
   context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
@@ -785,9 +798,13 @@ TEST(SafetySupervisorTest, LateralAccelerationIsLimited)
       supervisor.apply(raw_cmd, context, 1.0, 1.0);
 
   raw_cmd.vy = -0.3;
+  context.robot.stamp_sec = 1.05;
+  context.obstacles.stamp_sec = 1.05;
+  context.map_stamp_sec = 1.05;
   VelocityCommand second =
       supervisor.apply(raw_cmd, context, 1.0, 1.05);
 
+  EXPECT_NE(second.vy, 0.0);
   EXPECT_LE(std::abs(second.vy - first.vy),
             config.limits.max_accel_y * 0.05 + 1e-9);
 }
@@ -805,6 +822,9 @@ TEST(SafetySupervisorTest, YawAccelerationIsLimited)
 
   SafetySupervisor::Context context{};
   context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
   context.map_valid = true;
   context.map_stamp_sec = 1.0;
 
@@ -812,11 +832,111 @@ TEST(SafetySupervisorTest, YawAccelerationIsLimited)
       supervisor.apply(raw_cmd, context, 1.0, 1.0);
 
   raw_cmd.yaw_rate = -0.5;
+  context.robot.stamp_sec = 1.05;
+  context.obstacles.stamp_sec = 1.05;
+  context.map_stamp_sec = 1.05;
   VelocityCommand second =
       supervisor.apply(raw_cmd, context, 1.0, 1.05);
 
+  EXPECT_NE(second.yaw_rate, 0.0);
   EXPECT_LE(std::abs(second.yaw_rate - first.yaw_rate),
             config.limits.max_accel_yaw * 0.05 + 1e-9);
+}
+
+TEST(SafetySupervisorTest, TrackingStopBypassesAccelerationRamp)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  VelocityCommand moving{};
+  moving.vx = 0.4;
+  moving.valid = true;
+  supervisor.apply(moving, context, 0.4, 1.0);
+  context.robot.stamp_sec = 1.5;
+  context.obstacles.stamp_sec = 1.5;
+  context.map_stamp_sec = 1.5;
+  supervisor.apply(moving, context, 0.4, 1.5);
+
+  VelocityCommand stop{};
+  stop.valid = true;
+  stop.source = CommandSource::TRACKING_STOP;
+  const VelocityCommand result = supervisor.apply(stop, context, 0.4, 1.5);
+  EXPECT_DOUBLE_EQ(result.vx, 0.0);
+  EXPECT_DOUBLE_EQ(result.vy, 0.0);
+  EXPECT_DOUBLE_EQ(result.yaw_rate, 0.0);
+  EXPECT_EQ(result.source, CommandSource::TRACKING_STOP);
+}
+
+TEST(SafetySupervisorTest, GoalAlignStopsLinearMotionImmediately)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  VelocityCommand moving{};
+  moving.vx = 0.4;
+  moving.valid = true;
+  supervisor.apply(moving, context, 0.4, 1.0);
+  context.robot.stamp_sec = 1.5;
+  context.obstacles.stamp_sec = 1.5;
+  context.map_stamp_sec = 1.5;
+  supervisor.apply(moving, context, 0.4, 1.5);
+
+  VelocityCommand align{};
+  align.yaw_rate = 0.22;
+  align.valid = true;
+  align.source = CommandSource::GOAL_ALIGN;
+  const VelocityCommand result = supervisor.apply(align, context, 0.4, 1.5);
+  EXPECT_DOUBLE_EQ(result.vx, 0.0);
+  EXPECT_DOUBLE_EQ(result.vy, 0.0);
+}
+
+TEST(SafetySupervisorTest, GoalAlignYawStillUsesAccelerationLimit)
+{
+  NavdogConfig config{};
+  config.limits.max_accel_yaw = 0.8;
+  SafetySupervisor supervisor(config.safety, config.limits);
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.0;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.0;
+  VelocityCommand align{};
+  align.yaw_rate = 0.22;
+  align.valid = true;
+  align.source = CommandSource::GOAL_ALIGN;
+  supervisor.apply(align, context, 0.4, 1.0);
+  context.robot.stamp_sec = 1.1;
+  context.obstacles.stamp_sec = 1.1;
+  context.map_stamp_sec = 1.1;
+  const VelocityCommand result = supervisor.apply(align, context, 0.4, 1.1);
+  EXPECT_GT(result.yaw_rate, 0.0);
+  EXPECT_LE(result.yaw_rate, config.limits.max_accel_yaw * 0.1 + 1e-9);
+}
+
+TEST(GoalControllerTest, GoalAlignRespectsNearGoalMaxW)
+{
+  GoalControllerConfig config{};
+  GoalController controller(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RobotState robot = makeRobot(10.0, 0.0, kPi);
+  const RouteProgress progress = makeProgress(1, 10.0, 0.0, 0.0);
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0);
+  EXPECT_LE(std::abs(result.command.yaw_rate), 0.22 + 1e-9);
 }
 
 TEST(SafetySupervisorTest, EmergencyStopIsImmediate)

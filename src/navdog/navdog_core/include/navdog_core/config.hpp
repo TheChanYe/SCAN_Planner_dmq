@@ -226,6 +226,7 @@ struct GoalControllerConfig
 
   double near_goal_kp_w{1.2};
   double near_goal_max_w{0.22};
+  double obstacle_finish_timeout_sec{5.0};
 
   double finish_dist{0.15};
   double finish_yaw_tolerance_deg{5.0};

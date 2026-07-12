@@ -152,6 +152,8 @@ private:
       const RouteProgress& progress,
       RoutePoint& out_target) const;
 
+  void resetNearGoalBlockedTimer() noexcept;
+
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
 
@@ -199,6 +201,8 @@ private:
   double last_request_target_y_{0.0};
 
   bool force_replan_{false};
+  double near_goal_blocked_since_sec_{0.0};
+  bool near_goal_blocked_timer_active_{false};
 };
 
 }  // namespace navdog

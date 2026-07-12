@@ -2998,13 +2998,19 @@ TEST(NavigationCoordinatorTest,
 // =============================================================================
 
 TEST(NavigationCoordinatorTest,
-     LocalAvoidWithoutTrajectoryStops)
+     WaitingForPlanStopsImmediately)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
   attachLocalPlanner(coordinator, adapter);
+
+  coordinator.update(
+      makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 1.8), 1.8);
+  const CoreOutput moving = coordinator.update(
+      makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 1.9), 1.9);
+  EXPECT_GT(moving.final_cmd.vx, 0.0);
 
   // Trigger LOCAL_AVOID with immediate obstacle.
   CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
@@ -4017,6 +4023,77 @@ TEST(NavigationCoordinatorTest, NearGoalContinuesAlongRoute)
             NavigationMode::ROUTE_FOLLOW);
   EXPECT_GT(output.final_cmd.vx, 0.0);
   EXPECT_LE(output.final_cmd.vx, 0.25);
+}
+
+TEST(NavigationCoordinatorTest, NearGoalBlockedStartsTimeout)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  CoreInput input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 2.0, 0.5);
+  const CoreOutput output = coordinator.update(input, 2.0);
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+}
+
+TEST(NavigationCoordinatorTest, NearGoalBlockedBeforeTimeoutStaysTracking)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  CoreInput input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+  input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 6.9);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 6.9, 0.5);
+  EXPECT_EQ(coordinator.update(input, 6.9).state, NavState::TRACKING);
+}
+
+TEST(NavigationCoordinatorTest, NearGoalBlockedAtTimeoutSucceeds)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  CoreInput input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+  input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 7.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 7.0, 0.5);
+  const CoreOutput output = coordinator.update(input, 7.0);
+  EXPECT_EQ(output.state, NavState::SUCCEEDED);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, NearGoalClearResetsTimeout)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  CoreInput input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+  coordinator.update(makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 4.0), 4.0);
+  input = makeTrackingInput(9.3, 0.0, 0.0, 1u, 9.3, 7.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.3, 7.0, 0.5);
+  EXPECT_EQ(coordinator.update(input, 7.0).state, NavState::TRACKING);
+}
+
+TEST(NavigationCoordinatorTest, FarObstacleNeverTriggersGoalTimeout)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+  CoreInput input = makeTrackingInput(5.0, 0.0, 0.0, 1u, 5.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 5.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+  input = makeTrackingInput(5.0, 0.0, 0.0, 1u, 5.0, 8.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 5.0, 8.0, 0.5);
+  EXPECT_NE(coordinator.update(input, 8.0).state, NavState::SUCCEEDED);
 }
 
 TEST(NavigationCoordinatorTest, BlockedNearGoalStops)

@@ -18,6 +18,30 @@ double clamp(double value, double min_value, double max_value)
   return std::max(min_value, std::min(max_value, value));
 }
 
+bool isExplicitStopCommand(const VelocityCommand& cmd) noexcept
+{
+  const bool zero_motion =
+      std::abs(cmd.vx) <= kEpsilon &&
+      std::abs(cmd.vy) <= kEpsilon &&
+      std::abs(cmd.yaw_rate) <= kEpsilon;
+  if (!zero_motion)
+    return false;
+
+  switch (cmd.source)
+  {
+    case CommandSource::IDLE_STOP:
+    case CommandSource::PLANNING_STOP:
+    case CommandSource::TRACKING_STOP:
+    case CommandSource::FAILED_STOP:
+    case CommandSource::PAUSE_STOP:
+    case CommandSource::CANCEL_STOP:
+    case CommandSource::SAFETY_STOP:
+      return true;
+    default:
+      return false;
+  }
+}
+
 }  // namespace
 
 // =============================================================================
@@ -274,9 +298,21 @@ VelocityCommand SafetySupervisor::apply(
     return safetyStop(now_sec, CommandSource::SAFETY_STOP);
   }
 
+  if (isExplicitStopCommand(raw_cmd))
+  {
+    return safetyStop(now_sec, raw_cmd.source);
+  }
+
   double limited_vx = raw_cmd.vx;
   double limited_vy = raw_cmd.vy;
   double limited_w = raw_cmd.yaw_rate;
+  const bool goal_align =
+      raw_cmd.source == CommandSource::GOAL_ALIGN;
+  if (goal_align)
+  {
+    limited_vx = 0.0;
+    limited_vy = 0.0;
+  }
 
   // Dynamic max_vx cap.
   const double effective_max_vx =
@@ -332,14 +368,17 @@ VelocityCommand SafetySupervisor::apply(
       const double max_dvy = limit_config_.max_accel_y * dt;
       const double max_dw = limit_config_.max_accel_yaw * dt;
 
-      limited_vx = clamp(
-          limited_vx,
-          previous_output_.vx - max_dvx,
-          previous_output_.vx + max_dvx);
-      limited_vy = clamp(
-          limited_vy,
-          previous_output_.vy - max_dvy,
-          previous_output_.vy + max_dvy);
+      if (!goal_align)
+      {
+        limited_vx = clamp(
+            limited_vx,
+            previous_output_.vx - max_dvx,
+            previous_output_.vx + max_dvx);
+        limited_vy = clamp(
+            limited_vy,
+            previous_output_.vy - max_dvy,
+            previous_output_.vy + max_dvy);
+      }
       limited_w = clamp(
           limited_w,
           previous_output_.yaw_rate - max_dw,

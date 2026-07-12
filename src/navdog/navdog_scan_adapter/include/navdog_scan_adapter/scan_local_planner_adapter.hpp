@@ -76,6 +76,9 @@ private:
       const navdog::LocalTrajectory& trajectory,
       double from_time_sec) const;
 
+  static bool isSampledTrajectoryValid(
+      const navdog::LocalTrajectory& trajectory) noexcept;
+
   navdog::PlannerTriggerConfig config_{};
   std::shared_ptr<InflatedGridQuery3D> grid_query_{};
   std::shared_ptr<scan_planner::SCANPlannerManager>

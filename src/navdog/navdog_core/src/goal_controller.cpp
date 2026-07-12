@@ -120,11 +120,14 @@ GoalController::Result GoalController::update(
 
   (void)max_vx;
   (void)position_reached;
+  const double effective_max_w =
+      std::max(0.0,
+          std::min(max_yaw_rate, config_.near_goal_max_w));
   result.command.vx = 0.0;
   result.command.vy = 0.0;
   result.command.yaw_rate =
-      std::max(-max_yaw_rate,
-          std::min(max_yaw_rate,
+      std::max(-effective_max_w,
+          std::min(effective_max_w,
               config_.near_goal_kp_w * yaw_error));
 
   if (!std::isfinite(result.command.vx))

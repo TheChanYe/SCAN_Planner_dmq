@@ -22,6 +22,31 @@ double rosTimeToSec(const ros::Time& t)
          static_cast<double>(t.nsec) * 1e-9;
 }
 
+bool finitePoint(const navdog::RoutePoint& point, bool require_z)
+{
+  if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+      (require_z && !std::isfinite(point.z)))
+  {
+    return false;
+  }
+  return !point.has_yaw || std::isfinite(point.yaw);
+}
+
+bool validRequest(const navdog::LocalPlanRequest& request)
+{
+  const bool valid_purpose =
+      request.purpose == navdog::NavigationMode::LOCAL_AVOID ||
+      request.purpose == navdog::NavigationMode::ROUTE_REJOIN;
+  return request.valid && valid_purpose &&
+      request.task_sequence != 0 && request.plan_sequence != 0 &&
+      finitePoint(request.start, true) &&
+      finitePoint(request.start_vel, false) &&
+      finitePoint(request.target, true) &&
+      finitePoint(request.target_vel, false) &&
+      std::isfinite(request.robot_z) &&
+      std::isfinite(request.max_vx) && request.max_vx > 0.0;
+}
+
 }  // namespace
 
 // =============================================================================
@@ -67,10 +92,7 @@ ScanLocalPlannerAdapter::~ScanLocalPlannerAdapter()
 bool ScanLocalPlannerAdapter::requestLocalPlan(
     const navdog::LocalPlanRequest& request)
 {
-  if (!request.valid ||
-      request.purpose == navdog::NavigationMode::NONE ||
-      request.purpose == navdog::NavigationMode::ROUTE_FOLLOW ||
-      !planner_manager_)
+  if (!validRequest(request) || !planner_manager_)
   {
     return false;
   }
@@ -201,7 +223,8 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
   const scan_planner::LocalTrajData& local_data =
       planner_manager_->local_data_;
 
-  if (local_data.duration_ <= kEpsilon)
+  if (!std::isfinite(local_data.duration_) ||
+      local_data.duration_ <= kEpsilon)
     return trajectory;
 
   const scan_planner::UniformBspline& pos_traj =
@@ -253,8 +276,41 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
     trajectory.points.push_back(point);
   }
 
-  trajectory.valid = !trajectory.points.empty();
+  if (!isSampledTrajectoryValid(trajectory))
+    return navdog::LocalTrajectory{};
+
+  trajectory.valid = true;
   return trajectory;
+}
+
+bool ScanLocalPlannerAdapter::isSampledTrajectoryValid(
+    const navdog::LocalTrajectory& trajectory) noexcept
+{
+  if (!std::isfinite(trajectory.duration_sec) ||
+      trajectory.duration_sec <= 0.0 ||
+      trajectory.points.size() < 2)
+  {
+    return false;
+  }
+
+  double previous_time = -1.0;
+  for (const auto& point : trajectory.points)
+  {
+    if (!std::isfinite(point.time_from_start_sec) ||
+        point.time_from_start_sec < 0.0 ||
+        point.time_from_start_sec + kEpsilon < previous_time ||
+        !std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z) || !std::isfinite(point.vx) ||
+        !std::isfinite(point.vy) ||
+        (point.has_yaw && !std::isfinite(point.yaw)))
+    {
+      return false;
+    }
+    previous_time = point.time_from_start_sec;
+  }
+
+  return std::abs(trajectory.points.back().time_from_start_sec -
+                  trajectory.duration_sec) <= kEpsilon;
 }
 
 // =============================================================================
