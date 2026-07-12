@@ -1,0 +1,353 @@
+#include "navdog_core/trajectory_follower.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace navdog
+{
+
+namespace
+{
+
+constexpr double kEpsilon = 1e-9;
+constexpr double kPi = 3.14159265358979323846;
+
+double normalizeAngle(double angle) noexcept
+{
+  while (angle > kPi)
+    angle -= 2.0 * kPi;
+  while (angle < -kPi)
+    angle += 2.0 * kPi;
+  return angle;
+}
+
+}  // namespace
+
+// =============================================================================
+// Constructor
+// =============================================================================
+
+TrajectoryFollower::TrajectoryFollower(
+    const TrajectoryFollowerConfig& config)
+    : config_(config)
+{
+}
+
+// =============================================================================
+// reset
+// =============================================================================
+
+void TrajectoryFollower::reset() noexcept
+{
+  executing_ = false;
+  exec_start_sec_ = 0.0;
+}
+
+// =============================================================================
+// trajectoryTimeSec
+// =============================================================================
+
+double TrajectoryFollower::trajectoryTimeSec() const noexcept
+{
+  return executing_ ? exec_start_sec_ : 0.0;
+}
+
+// =============================================================================
+// sampleTrajectory
+// =============================================================================
+
+bool TrajectoryFollower::sampleTrajectory(
+    const LocalTrajectory& trajectory,
+    double t_eval,
+    double& out_x,
+    double& out_y,
+    double& out_vx,
+    double& out_vy,
+    double& out_yaw,
+    bool& out_has_yaw) const noexcept
+{
+  out_x = 0.0;
+  out_y = 0.0;
+  out_vx = 0.0;
+  out_vy = 0.0;
+  out_yaw = 0.0;
+  out_has_yaw = false;
+
+  const auto& points = trajectory.points;
+  if (points.empty())
+    return false;
+
+  if (points.size() == 1 || t_eval <= 0.0)
+  {
+    out_x = points.front().x;
+    out_y = points.front().y;
+    out_vx = points.front().vx;
+    out_vy = points.front().vy;
+    out_yaw = points.front().yaw;
+    out_has_yaw = points.front().has_yaw;
+    return true;
+  }
+
+  if (t_eval >= trajectory.duration_sec)
+  {
+    out_x = points.back().x;
+    out_y = points.back().y;
+    out_vx = points.back().vx;
+    out_vy = points.back().vy;
+    out_yaw = points.back().yaw;
+    out_has_yaw = points.back().has_yaw;
+    return true;
+  }
+
+  for (std::size_t i = 1; i < points.size(); ++i)
+  {
+    if (t_eval >= points[i - 1].time_from_start_sec &&
+        t_eval <= points[i].time_from_start_sec)
+    {
+      const double dt =
+          points[i].time_from_start_sec -
+          points[i - 1].time_from_start_sec;
+      if (dt < kEpsilon)
+      {
+        out_x = points[i].x;
+        out_y = points[i].y;
+        out_vx = points[i].vx;
+        out_vy = points[i].vy;
+        out_yaw = points[i].yaw;
+        out_has_yaw = points[i].has_yaw;
+        return true;
+      }
+
+      const double ratio =
+          (t_eval - points[i - 1].time_from_start_sec) / dt;
+      out_x = points[i - 1].x + ratio *
+          (points[i].x - points[i - 1].x);
+      out_y = points[i - 1].y + ratio *
+          (points[i].y - points[i - 1].y);
+      out_vx = points[i - 1].vx + ratio *
+          (points[i].vx - points[i - 1].vx);
+      out_vy = points[i - 1].vy + ratio *
+          (points[i].vy - points[i - 1].vy);
+
+      if (points[i - 1].has_yaw && points[i].has_yaw)
+      {
+        const double yaw_diff = normalizeAngle(
+            points[i].yaw - points[i - 1].yaw);
+        out_yaw = normalizeAngle(
+            points[i - 1].yaw + ratio * yaw_diff);
+        out_has_yaw = true;
+      }
+      else if (points[i].has_yaw)
+      {
+        out_yaw = points[i].yaw;
+        out_has_yaw = true;
+      }
+      else if (points[i - 1].has_yaw)
+      {
+        out_yaw = points[i - 1].yaw;
+        out_has_yaw = true;
+      }
+      else
+      {
+        out_yaw = std::atan2(
+            points[i].y - points[i - 1].y,
+            points[i].x - points[i - 1].x);
+        out_has_yaw = false;
+      }
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// =============================================================================
+// isYawAligned
+// =============================================================================
+
+bool TrajectoryFollower::isYawAligned(
+    double heading_error) const noexcept
+{
+  return std::abs(heading_error) <=
+         config_.heading_turn_only_threshold_rad;
+}
+
+// =============================================================================
+// update
+// =============================================================================
+
+VelocityCommand TrajectoryFollower::update(
+    const LocalTrajectory& trajectory,
+    const RobotState& robot,
+    double max_vx,
+    double max_vy,
+    double max_yaw_rate,
+    NavigationMode expected_mode,
+    std::uint64_t expected_task_sequence,
+    double now_sec)
+{
+  VelocityCommand cmd{};
+  cmd.stamp_sec = now_sec;
+  cmd.source = CommandSource::PLANNER;
+
+  if (!trajectory.valid ||
+      trajectory.points.empty() ||
+      !std::isfinite(trajectory.duration_sec) ||
+      trajectory.duration_sec <= 0.0 ||
+      trajectory.purpose != expected_mode ||
+      trajectory.task_sequence != expected_task_sequence ||
+      !std::isfinite(trajectory.source_stamp_sec) ||
+      !std::isfinite(now_sec))
+  {
+    executing_ = false;
+    cmd.valid = false;
+    cmd.source = CommandSource::TRACKING_STOP;
+    return cmd;
+  }
+
+  if (!executing_)
+  {
+    executing_ = true;
+    exec_start_sec_ = now_sec;
+  }
+
+  const double t_eval = now_sec - exec_start_sec_;
+
+  // Expired.
+  if (t_eval >= trajectory.duration_sec)
+  {
+    executing_ = false;
+    cmd.valid = false;
+    cmd.source = CommandSource::TRACKING_STOP;
+    return cmd;
+  }
+
+  double pos_des_x = 0.0;
+  double pos_des_y = 0.0;
+  double vel_des_x = 0.0;
+  double vel_des_y = 0.0;
+  double yaw_des = 0.0;
+  bool has_yaw = false;
+
+  if (!sampleTrajectory(
+          trajectory,
+          t_eval,
+          pos_des_x,
+          pos_des_y,
+          vel_des_x,
+          vel_des_y,
+          yaw_des,
+          has_yaw))
+  {
+    executing_ = false;
+    cmd.valid = false;
+    cmd.source = CommandSource::TRACKING_STOP;
+    return cmd;
+  }
+
+  if (has_yaw)
+  {
+    yaw_des = normalizeAngle(yaw_des);
+  }
+  else
+  {
+    // Look ahead for yaw.
+    double look_x = 0.0;
+    double look_y = 0.0;
+    double look_vx = 0.0;
+    double look_vy = 0.0;
+    double look_yaw = 0.0;
+    bool look_has_yaw = false;
+
+    const double t_look = std::min(
+        trajectory.duration_sec,
+        t_eval + config_.time_forward_sec);
+
+    if (sampleTrajectory(
+            trajectory,
+            t_look,
+            look_x,
+            look_y,
+            look_vx,
+            look_vy,
+            look_yaw,
+            look_has_yaw))
+    {
+      double dx = look_x - pos_des_x;
+      double dy = look_y - pos_des_y;
+      if (dx * dx + dy * dy < 1e-4)
+      {
+        dx = vel_des_x;
+        dy = vel_des_y;
+      }
+      if (dx * dx + dy * dy >= 1e-4)
+      {
+        yaw_des = std::atan2(dy, dx);
+        has_yaw = true;
+      }
+    }
+  }
+
+  const double yaw_err =
+      has_yaw ? normalizeAngle(yaw_des - robot.yaw) : 0.0;
+  const double vyaw_cmd =
+      std::max(-max_yaw_rate,
+          std::min(max_yaw_rate,
+              config_.kp_yaw * yaw_err));
+
+  const bool aligned = isYawAligned(yaw_err);
+
+  if (!aligned)
+  {
+    cmd.vx = 0.0;
+    cmd.vy = 0.0;
+    cmd.yaw_rate = vyaw_cmd;
+
+    // Freeze trajectory time while rotating in place.
+    exec_start_sec_ = now_sec - t_eval;
+    cmd.valid = true;
+    return cmd;
+  }
+
+  const double pos_err_x = pos_des_x - robot.x;
+  const double pos_err_y = pos_des_y - robot.y;
+
+  double vel_world_x = vel_des_x + config_.kp_pos * pos_err_x;
+  double vel_world_y = vel_des_y + config_.kp_pos * pos_err_y;
+
+  const double norm = std::hypot(vel_world_x, vel_world_y);
+  const double max_world_v = std::max(max_vx, max_vy);
+  if (norm > max_world_v && norm > kEpsilon)
+  {
+    vel_world_x = vel_world_x / norm * max_world_v;
+    vel_world_y = vel_world_y / norm * max_world_v;
+  }
+
+  const double c = std::cos(robot.yaw);
+  const double s = std::sin(robot.yaw);
+
+  cmd.vx = c * vel_world_x + s * vel_world_y;
+  cmd.vy = -s * vel_world_x + c * vel_world_y;
+  cmd.yaw_rate = vyaw_cmd;
+
+  // Clamp.
+  cmd.vx = std::max(-max_vx, std::min(max_vx, cmd.vx));
+  cmd.vy = std::max(-max_vy, std::min(max_vy, cmd.vy));
+  cmd.yaw_rate =
+      std::max(-max_yaw_rate, std::min(max_yaw_rate, cmd.yaw_rate));
+
+  if (!std::isfinite(cmd.vx))
+    cmd.vx = 0.0;
+  if (!std::isfinite(cmd.vy))
+    cmd.vy = 0.0;
+  if (!std::isfinite(cmd.yaw_rate))
+    cmd.yaw_rate = 0.0;
+
+  cmd.valid = true;
+
+  return cmd;
+}
+
+}  // namespace navdog

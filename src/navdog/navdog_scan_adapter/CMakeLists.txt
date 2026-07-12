@@ -7,6 +7,8 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   navdog_core
   plan_env
+  plan_manage_dmq
+  bspline_opt
 )
 
 find_package(Eigen3 REQUIRED)
@@ -16,7 +18,7 @@ find_package(OpenCV REQUIRED)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES navdog_scan_adapter
-  CATKIN_DEPENDS roscpp navdog_core plan_env
+  CATKIN_DEPENDS roscpp navdog_core plan_env plan_manage_dmq bspline_opt
 )
 
 include_directories(
@@ -34,6 +36,8 @@ add_definitions(${PCL_DEFINITIONS})
 add_library(navdog_scan_adapter
   src/scan_grid_map_query.cpp
   src/scan_route_corridor_evaluator_3d.cpp
+  src/scan_local_planner_adapter.cpp
+  src/occupancy_query_adapter.cpp
 )
 
 target_link_libraries(navdog_scan_adapter

@@ -164,6 +164,86 @@ struct NavigationModeConfig
 };
 
 // =============================================================================
+// 5.7c RouteFollowerConfig
+// =============================================================================
+
+struct RouteFollowerConfig
+{
+  double lookahead_distance_m{1.0};
+  double kp_x{0.8};
+  double kp_y{1.0};
+  double kp_yaw{1.2};
+
+  double heading_turn_only_threshold_rad{
+      0.8};
+
+  double max_vx{0.8};
+};
+
+// =============================================================================
+// 5.7d TrajectoryFollowerConfig
+// =============================================================================
+
+struct TrajectoryFollowerConfig
+{
+  double time_forward_sec{0.8};
+  double kp_pos{0.8};
+  double kp_yaw{1.5};
+
+  double heading_turn_only_threshold_rad{
+      0.8};
+};
+
+// =============================================================================
+// 5.7e RejoinTargetSelectorConfig
+// =============================================================================
+
+struct RejoinTargetSelectorConfig
+{
+  double default_forward_distance_m{2.5};
+  double min_forward_distance_m{1.0};
+  double max_forward_distance_m{3.0};
+
+  double route_yaw_tolerance_rad{
+      0.3490658503988659};  // 20 degrees
+};
+
+// =============================================================================
+// 5.7f GoalControllerConfig
+// =============================================================================
+
+struct GoalControllerConfig
+{
+  double near_goal_switch_dist{0.8};
+  double near_goal_kp_v{0.3};
+  double near_goal_min_v{0.10};
+  double near_goal_max_v{0.25};
+
+  double near_goal_turn_only_deg{88.0};
+  double near_goal_turn_only_rad{
+      1.53588974175801};  // 88 degrees
+
+  double near_goal_kp_w{1.2};
+  double near_goal_max_w{0.22};
+
+  double finish_dist{0.15};
+  double finish_yaw_tolerance_deg{5.0};
+  double finish_yaw_tolerance_rad{
+      0.08726646259971647};  // 5 degrees
+};
+
+// =============================================================================
+// 5.7g PlannerTriggerConfig
+// =============================================================================
+
+struct PlannerTriggerConfig
+{
+  double replan_retry_interval_sec{1.0};
+  double trajectory_expiry_margin_sec{0.2};
+  double min_remaining_duration_sec{0.3};
+};
+
+// =============================================================================
 // 5.8 总配置
 // =============================================================================
 
@@ -180,6 +260,11 @@ struct NavdogConfig
   SafetyConfig safety{};
   LimitConfig limits{};
   NavigationModeConfig navigation_mode{};
+  RouteFollowerConfig route_follower{};
+  TrajectoryFollowerConfig trajectory_follower{};
+  RejoinTargetSelectorConfig rejoin_target{};
+  GoalControllerConfig goal_controller{};
+  PlannerTriggerConfig planner_trigger{};
 };
 
 }  // namespace navdog

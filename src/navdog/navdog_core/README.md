@@ -103,13 +103,21 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - 模式诊断输出（NavigationModeStatus）
 - 浮点时间 epsilon 防边界误判
 
+已实现：
+- RouteFollower 路线跟踪
+- TrajectoryFollower B-spline 轨迹跟踪
+- RejoinTargetSelector 前向安全接回点选择
+- GoalController 近终点减速与到位对齐
+- SafetySupervisor 前障减速/停止与超时保护
+- LocalPlannerAdapter / LocalTrajectory 抽象协议
+- navdog_scan_adapter::ScanLocalPlannerAdapter 包装 SCANPlannerManager
+- navdog_scan_adapter::OccupancyQueryAdapter 提供三维占据查询注入
+- TRACKING 输出非零真实速度
+
 尚未实现：
-- SCAN 局部绕障轨迹
-- TRACKING planner_cmd 输出
-- 障碍物安全层
-- 终点控制
-- ROS1/ROS2 适配
+- ROS1/ROS2 节点适配（已预留内部接口）
 - MQTT 接入
+- 机器人私有控制协议
 
 注意：
 
@@ -156,8 +164,12 @@ TRACKING
     ├── 调用 RouteProgressTracker 计算路线进度
     ├── 路线进度有效后调用 RouteCorridorObservationGate
     ├── 调用 NavigationModeManager 决定导航子模式
-    ├── CLEAR / BLOCKED → 输出 TRACKING_STOP + route_progress + route_corridor + navigation_mode
-    ├── 观察缺失/过期/非法 → 输出 TRACKING_STOP（navigation_mode 保持当前模式）
+    ├── 根据模式调用执行器生成 raw_cmd
+    ├── LOCAL_AVOID / ROUTE_REJOIN 按需触发 SCAN 局部规划
+    ├── GoalController 处理近终点减速与对齐
+    ├── SafetySupervisor 前障减速/停止与超时保护
+    ├── 输出 final_cmd + route_progress + route_corridor + navigation_mode
+    ├── 等待 SCAN 轨迹 / 规划失败 / 轨迹过期 / 地图失效 / odom 失效 / 任务不一致 / 模式不一致 / 紧急停止 → 输出零速度
     └── INVALID_TIME / INVALID_CONFIG / INVALID_PROGRESS → FAILED
 
 NavigationModeManager 只回答：
@@ -168,8 +180,29 @@ NavigationModeManager 只回答：
 "应该向左绕还是向右绕？"
 "具体接回哪个路点？"
 
-本阶段只输出模式意图，不输出真实导航速度。
-所有 TRACKING 输出仍然为 TRACKING_STOP（vx=0, vy=0, yaw_rate=0）。
+TRACKING 根据 NavigationModeManager 输出的子模式，
+调用对应执行器生成真实导航速度，
+再经过 GoalController 与 SafetySupervisor 输出最终速度。
+
+TRACKING 完整流程：
+
+```text
+RouteProgressTracker
+→ RouteCorridorObservationGate
+→ NavigationModeManager
+→ 当前模式执行器
+→ GoalController
+→ SafetySupervisor
+→ final_cmd
+```
+
+模式执行器：
+- ROUTE_FOLLOW：RouteFollower
+- LOCAL_AVOID：TrajectoryFollower（跟踪 SCAN 局部轨迹）
+- ROUTE_REJOIN：TrajectoryFollower（跟踪 SCAN 接回轨迹）
+
+回到 ROUTE_FOLLOW 时立即清除局部轨迹，
+防止旧任务/旧模式轨迹被复用。
 
 ## 导航子模式状态机
 
@@ -271,10 +304,20 @@ navdog_scan_adapter 不可自行增加水平半径、
 z 膨胀或双圆柱偏移；这些已由 SCAN GridMap 内部处理。
 
 注意：
-START_ALIGN 仅输出 yaw_rate。
-vx 和 vy 始终为 0。
-TRACKING 当前仍然输出 TRACKING_STOP。
-无论路线 CLEAR 还是 BLOCKED，TRACKING 都不输出非零速度。
+START_ALIGN 仅输出 yaw_rate，vx 和 vy 始终为 0。
+TRACKING 现在可输出非零 vx / vy / yaw_rate，
+所有速度均经过 SafetySupervisor。
+
+SCAN 局部规划触发时机：
+- 进入 LOCAL_AVOID 或 ROUTE_REJOIN 时立即请求一次
+- 模式刚切换
+- 没有有效轨迹
+- 现轨迹碰撞
+- 现轨迹即将结束
+- 目标明显变化
+- 规划失败后的重试周期到达
+
+不得每帧调用 reboundReplan。
 
 CANCEL_TASK
     ↓
