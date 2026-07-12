@@ -31,6 +31,7 @@ public:
       std::uint64_t expected_task_sequence,
       double now_sec);
 
+  // 返回当前轨迹执行时间（从 0 开始）。
   double trajectoryTimeSec() const noexcept;
 
 private:
@@ -48,8 +49,13 @@ private:
 
   TrajectoryFollowerConfig config_{};
 
-  bool executing_{false};
-  double exec_start_sec_{0.0};
+  double exec_time_sec_{0.0};
+  double last_update_stamp_sec_{0.0};
+  bool has_last_update_stamp_{false};
+
+  std::uint64_t active_task_sequence_{0};
+  std::uint64_t active_plan_sequence_{0};
+  NavigationMode active_purpose_{NavigationMode::NONE};
 };
 
 }  // namespace navdog

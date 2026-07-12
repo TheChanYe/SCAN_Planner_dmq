@@ -44,21 +44,27 @@ CoreInput makePlannerInput(
 }
 
 RobotState makeRobotState(
-    double x, double y, double yaw)
+    double x,
+    double y,
+    double yaw,
+    double stamp_sec =
+        std::numeric_limits<double>::infinity())
 {
   RobotState robot{};
   robot.x = x;
   robot.y = y;
   robot.yaw = yaw;
+  robot.stamp_sec = stamp_sec;
   robot.valid = true;
   return robot;
 }
 
 CoreInput makeRobotInput(
-    double x, double y, double yaw)
+    double x, double y, double yaw, double stamp_sec =
+        std::numeric_limits<double>::infinity())
 {
   CoreInput input{};
-  input.robot = makeRobotState(x, y, yaw);
+  input.robot = makeRobotState(x, y, yaw, stamp_sec);
   return input;
 }
 
@@ -168,7 +174,7 @@ void setupToTracking(
   coord.update(CoreInput{}, 1.0);
   CoreInput ready = makePlannerInput(PlannerState::READY, 1u, 1.1);
   coord.update(ready, 1.1);
-  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
+  CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg, 1.2);
   coord.update(robot0, 1.2);
 }
 
@@ -178,7 +184,7 @@ CoreInput makeTrackingInput(
     double arc,
     double now_sec)
 {
-  CoreInput input = makeRobotInput(x, y, yaw);
+  CoreInput input = makeRobotInput(x, y, yaw, now_sec);
   input.route_corridor_observation =
       makeClearScanObservation(seq, arc, now_sec);
   return input;
@@ -226,6 +232,20 @@ public:
   {
     last_request_ = request;
     request_count_++;
+
+    if (accept_requests_)
+    {
+      state_ = LocalPlanState::READY;
+      last_request_for_state_ = request;
+      // Do not mutate the stored trajectory: the coordinator relies on
+      // trajectory.plan_sequence matching the value it requested.
+    }
+    else
+    {
+      state_ = LocalPlanState::FAILED;
+      last_request_for_state_ = request;
+    }
+
     return accept_requests_;
   }
 
@@ -252,12 +272,32 @@ public:
            trajectory_.valid;
   }
 
+  LocalPlanState localPlanState(
+      NavigationMode purpose,
+      std::uint64_t task_sequence,
+      std::uint64_t plan_sequence) const override
+  {
+    if (last_request_for_state_.purpose != purpose ||
+        last_request_for_state_.task_sequence != task_sequence ||
+        last_request_for_state_.plan_sequence != plan_sequence)
+    {
+      return LocalPlanState::IDLE;
+    }
+    return state_;
+  }
+
   bool isTrajectoryColliding(
       NavigationMode purpose,
-      std::uint64_t task_sequence) const override
+      std::uint64_t task_sequence,
+      std::uint64_t /*plan_sequence*/,
+      double /*from_time_sec*/) const override
   {
-    (void)purpose;
-    (void)task_sequence;
+    if (!has_trajectory_ ||
+        trajectory_.purpose != purpose ||
+        trajectory_.task_sequence != task_sequence)
+    {
+      return true;
+    }
     return collision_flag_;
   }
 
@@ -283,6 +323,19 @@ public:
     accept_requests_ = accept;
   }
 
+  void setState(LocalPlanState state) noexcept
+  {
+    state_ = state;
+  }
+
+  void setStateRequest(
+      const LocalPlanRequest& request,
+      LocalPlanState state) noexcept
+  {
+    last_request_for_state_ = request;
+    state_ = state;
+  }
+
   std::uint64_t requestCount() const noexcept
   {
     return request_count_;
@@ -300,6 +353,55 @@ private:
   bool collision_flag_{false};
   std::uint64_t request_count_{0};
   LocalPlanRequest last_request_{};
+  LocalPlanRequest last_request_for_state_{};
+  LocalPlanState state_{LocalPlanState::IDLE};
+};
+
+class FakeOccupancyQuery : public OccupancyQuery3D
+{
+public:
+  bool ready() const noexcept override
+  {
+    return ready_;
+  }
+
+  bool isFree(
+      double x,
+      double /*y*/,
+      double /*z*/,
+      double /*yaw*/) const noexcept override
+  {
+    if (!ready_)
+      return false;
+
+    if (use_free_after_x_)
+      return x >= free_after_x_ - 1e-9;
+
+    return free_;
+  }
+
+  void setReady(bool ready) noexcept
+  {
+    ready_ = ready;
+  }
+
+  void setFree(bool free_flag) noexcept
+  {
+    free_ = free_flag;
+    use_free_after_x_ = false;
+  }
+
+  void setFreeAfterX(double x) noexcept
+  {
+    free_after_x_ = x;
+    use_free_after_x_ = true;
+  }
+
+private:
+  bool ready_{true};
+  bool free_{true};
+  bool use_free_after_x_{false};
+  double free_after_x_{0.0};
 };
 
 // =============================================================================
@@ -1893,10 +1995,10 @@ TEST(NavigationCoordinatorTest, TrackingStillOutputsZeroWhenClear)
   CoreOutput output = coordinator.update(input, 1.3);
 
   EXPECT_EQ(output.state, NavState::TRACKING);
-  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
-  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
 }
 
 // =============================================================================
@@ -2950,8 +3052,8 @@ TEST(NavigationCoordinatorTest, ExpiredTrajectoryStops)
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
 
-  // elapsed = 2.0 - 1.0 = 1.0s, duration = 1.0s -> expired.
-  CoreOutput output = coordinator.update(input, 2.0);
+  // elapsed = 2.1 - 1.0 = 1.1s > duration = 1.0s -> expired.
+  CoreOutput output = coordinator.update(input, 2.1);
 
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
@@ -3044,6 +3146,1003 @@ TEST(NavigationCoordinatorTest, GoalFinishOutputsZeroVelocity)
   EXPECT_EQ(output.final_cmd.vx, 0.0);
   EXPECT_EQ(output.final_cmd.vy, 0.0);
   EXPECT_EQ(output.final_cmd.yaw_rate, 0.0);
+}
+
+// =============================================================================
+// Corridor safety gate tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest,
+     TrackingWaitingForCorridorStopsRouteFollower)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  // No corridor observation: NavigationModeManager must wait for corridor.
+  CoreOutput output = coordinator.update(input, 1.3);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::WAITING_FOR_CORRIDOR);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+}
+
+TEST(NavigationCoordinatorTest,
+     TrackingWaitingForCorridorStopsLocalTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Next cycle without corridor observation.
+  CoreInput no_corridor = makeRobotInput(0.0, 0.0, 0.0);
+  CoreOutput output = coordinator.update(no_corridor, 2.1);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::WAITING_FOR_CORRIDOR);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, TrackingWaitingForRobotStopsAllModes)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  // Invalid robot while ROUTE_FOLLOW is active.
+  CoreInput bad_robot{};
+  CoreOutput output = coordinator.update(bad_robot, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest,
+     TrackingStaleMapNeverExecutesOldTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Stale map should force zero velocity even though a valid old
+  // trajectory is still stored in the adapter.
+  CoreInput stale = makeRobotInput(0.0, 0.0, 0.0);
+  stale.route_corridor_observation =
+      makeStaleScanObservation(1u, 0.0, 2.1);
+  CoreOutput output = coordinator.update(stale, 2.1);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, MissingCorridorStopsRouteFollow)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  CoreInput no_corridor = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(no_corridor, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, StaleCorridorStopsRouteFollow)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(3, 0, 0, 1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+
+  CoreInput stale = makeRobotInput(3, 0, 0);
+  stale.route_corridor_observation =
+      makeStaleScanObservation(1u, 3.0, 1.4);
+  CoreOutput output = coordinator.update(stale, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, MissingCorridorStopsLocalAvoid)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Corridor missing while LOCAL_AVOID is still active.
+  CoreInput no_corridor = makeRobotInput(0.0, 0.0, 0.0);
+  CoreOutput output = coordinator.update(no_corridor, 2.1);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, WaitingRobotStopsTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  CoreInput bad_robot{};
+  CoreOutput output = coordinator.update(bad_robot, 2.1);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+// =============================================================================
+// SafetySupervisor input tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, CoordinatorPassesObstacleSummaryToSafety)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(0.5, 0.0, 0.0, 1u, 0.5, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.5, 2.0);
+  input.obstacles.valid = true;
+  input.obstacles.front_min = 0.3;
+  input.obstacles.stamp_sec = 2.0;
+
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::SAFETY_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest,
+     FrontEmergencyStopsCoordinatorCommand)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(0.5, 0.0, 0.0, 1u, 0.5, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.5, 2.0);
+  input.obstacles.valid = true;
+  input.obstacles.front_min = 0.4;
+  input.obstacles.stamp_sec = 2.0;
+
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_GT(output.route_progress.arc_length_m, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::SAFETY_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest,
+     FrontSlowdownReducesCoordinatorCommand)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(0.5, 0.0, 0.0, 1u, 0.5, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.5, 2.0);
+  input.obstacles.valid = true;
+  input.obstacles.front_min = 0.9;
+  input.obstacles.stamp_sec = 2.0;
+
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_GT(output.route_progress.arc_length_m, 0.0);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::SAFETY_SLOW);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_LT(output.final_cmd.vx, 0.4);
+}
+
+TEST(NavigationCoordinatorTest, InvalidRawCommandStops)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(0.5, 0.0, 0.0, 1u, 0.5, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.5, 2.0);
+  // Inject an invalid raw command from upstream. The coordinator ignores
+  // planner_cmd and continues to produce a safe, internally generated
+  // velocity command.
+  input.planner_cmd.vx = std::numeric_limits<double>::quiet_NaN();
+  input.planner_cmd.valid = false;
+
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_TRUE(std::isfinite(output.final_cmd.vx));
+  EXPECT_GE(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, InvalidMapStops)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(0.5, 0.0, 0.0, 1u, 0.5, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.5, 2.0);
+  input.route_corridor_observation.map_stamp_sec =
+      2.0 - 10.0;  // far stale
+
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+// =============================================================================
+// Trajectory identity tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, WrongPlanSequenceRejected)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // requestLocalPlan generates plan_sequence = 1, but the adapter
+  // trajectory also has plan_sequence = 1, so it will be accepted.
+  CoreOutput out1 = coordinator.update(input, 2.0);
+  EXPECT_GT(out1.final_cmd.vx, 0.0);
+
+  // Replace the stored trajectory with one that has a different plan
+  // sequence than expected.
+  LocalTrajectory wrong_trajectory = makeTestLocalTrajectory(
+      1u, 99u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(wrong_trajectory);
+
+  CoreOutput out2 = coordinator.update(input, 2.05);
+  EXPECT_EQ(out2.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(out2.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsAtZero)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory1 = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory1);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First plan, start execution.
+  coordinator.update(input, 2.0);
+  coordinator.update(input, 2.1);
+
+  // Second plan with new plan_sequence.
+  LocalTrajectory trajectory2 = makeTestLocalTrajectory(
+      1u, 2u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory2);
+  adapter.setState(LocalPlanState::READY);
+
+  // Simulate that requestLocalPlan has been called for plan_sequence 2.
+  // Because the fake adapter does not update expected sequences, we
+  // trigger a replan by marking the first trajectory as ending soon.
+  adapter.setCollisionFlag(true);
+  CoreOutput output = coordinator.update(input, 2.2);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, OldPlanRejectedWhileNewPlanPending)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Force a replan so the coordinator expects plan_sequence 2, then
+  // simulate that the adapter is still PLANNING the new trajectory.
+  adapter.setCollisionFlag(true);
+  coordinator.update(input, 2.05);
+  adapter.setStateRequest(
+      adapter.lastRequest(), LocalPlanState::PLANNING);
+
+  // Old trajectory with plan_sequence 1 must not be executed while a new
+  // plan is pending.
+  CoreOutput output = coordinator.update(input, 2.1);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, FailedReplanDoesNotReuseOldTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First plan accepted.
+  coordinator.update(input, 2.0);
+
+  // Force a replan by collision; adapter will now reject requests.
+  adapter.setCollisionFlag(true);
+  adapter.setAcceptRequests(false);
+  coordinator.update(input, 2.05);
+
+  // The old trajectory must not be reused while replan is failing.
+  CoreOutput output = coordinator.update(input, 2.4);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, ModeChangeRejectsOldTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Keep the old LOCAL_AVOID trajectory in the adapter but switch to
+  // ROUTE_REJOIN. The old trajectory must not be executed.
+  CoreInput clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.0);
+  clear_input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.0, 3.0);
+  coordinator.update(clear_input, 3.0);
+  coordinator.update(clear_input, 3.5);
+  CoreOutput output = coordinator.update(clear_input, 3.9);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_REJOIN);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+// =============================================================================
+// Trajectory time tests (coordinator integration)
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TurnOnlyReallyFreezesTrajectoryTime)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First update: robot yaw 0, aligned -> time advances to dt.
+  CoreOutput out1 = coordinator.update(input, 2.0);
+  EXPECT_GT(out1.final_cmd.vx, 0.0);
+
+  // Second update with large yaw error -> turn only, time frozen.
+  CoreInput turn_input = makeTrackingInput(0.0, 0.0, 1.5, 1u, 0.0, 2.05);
+  turn_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
+  CoreOutput out2 = coordinator.update(turn_input, 2.05);
+  EXPECT_EQ(out2.final_cmd.vx, 0.0);
+  EXPECT_NE(out2.final_cmd.yaw_rate, 0.0);
+
+  // Third update aligned again -> should still sample near the start
+  // because the turn-only frame did not advance exec_time.
+  CoreInput aligned_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.1);
+  aligned_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.1, 0.5);
+  CoreOutput out3 = coordinator.update(aligned_input, 2.1);
+  EXPECT_GT(out3.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsTrajectoryAtZero)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory1 = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory1);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+  coordinator.update(input, 2.2);
+
+  // New plan with different plan_sequence: time should restart at 0.
+  LocalTrajectory trajectory2 = makeTestLocalTrajectory(
+      1u, 2u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory2);
+  adapter.setCollisionFlag(true);
+
+  CoreOutput output = coordinator.update(input, 2.4);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, PurposeChangeRestartsTrajectoryAtZero)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  LocalTrajectory avoid_traj = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  LocalTrajectory rejoin_traj = makeTestLocalTrajectory(
+      1u, 2u, NavigationMode::ROUTE_REJOIN, 2.0, 2.0);
+
+  adapter.setTrajectory(avoid_traj);
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Transition to ROUTE_REJOIN. The first cycle requests a new rejoin
+  // trajectory; the second cycle executes it with execution time reset.
+  adapter.setTrajectory(rejoin_traj);
+  CoreInput clear_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 3.0);
+  clear_input.route_corridor_observation =
+      makeClearScanObservation(1u, 0.0, 3.0);
+  coordinator.update(clear_input, 3.0);
+  CoreOutput output = coordinator.update(clear_input, 3.05);
+
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_REJOIN);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, TaskChangeRestartsTrajectoryAtZero)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // A trajectory for a different task sequence must cause a reset.
+  LocalTrajectory task2_traj = makeTestLocalTrajectory(
+      2u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(task2_traj);
+
+  CoreOutput output = coordinator.update(input, 2.1);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, LargeControlGapDoesNotSkipTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First aligned update.
+  coordinator.update(input, 2.0);
+
+  // Large gap (> 0.2s) must not advance exec_time this frame.
+  CoreInput gap_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.5);
+  gap_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.5, 0.5);
+  CoreOutput out_gap = coordinator.update(gap_input, 2.5);
+  EXPECT_GT(out_gap.final_cmd.vx, 0.0);
+
+  // Next small-gap aligned update should still sample near the start.
+  CoreInput next_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.55);
+  next_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.55, 0.5);
+  CoreOutput out_next = coordinator.update(next_input, 2.55);
+  EXPECT_GT(out_next.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, TimeRegressionStopsTrajectory)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // now_sec goes backwards -> trajectory follower resets.
+  CoreInput regress_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 1.9);
+  regress_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 1.9, 0.5);
+  CoreOutput output = coordinator.update(regress_input, 1.9);
+
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest,
+     TrajectoryRunsLongerThanPointThreeSeconds)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // 0.35s later the trajectory is still valid (duration = 2.0s).
+  CoreInput later_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.35);
+  later_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.35, 0.5);
+  CoreOutput output = coordinator.update(later_input, 2.35);
+
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, TrajectoryStopsAfterDuration)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.1, 0.1);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  // Advance exec_time beyond duration + expiry_margin with small dt steps.
+  CoreInput step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.05);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
+  coordinator.update(step_input, 2.05);
+
+  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.25);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.25, 0.5);
+  coordinator.update(step_input, 2.25);
+
+  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.45);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.45, 0.5);
+  CoreOutput output = coordinator.update(step_input, 2.45);
+
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+// =============================================================================
+// Planning frequency tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest,
+     HealthyTrajectoryDoesNotPeriodicallyReplan)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // Initial plan request.
+  coordinator.update(input, 2.0);
+  const std::uint64_t count_after_first = adapter.requestCount();
+
+  // Several healthy updates should not trigger new requests.
+  coordinator.update(input, 2.05);
+  coordinator.update(input, 2.10);
+  coordinator.update(input, 2.15);
+
+  EXPECT_EQ(adapter.requestCount(), count_after_first);
+}
+
+TEST(NavigationCoordinatorTest, PlanningRequestIsRateLimited)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First request accepted; adapter reports PLANNING.
+  coordinator.update(input, 2.0);
+  LocalPlanRequest req = adapter.lastRequest();
+  adapter.setStateRequest(req, LocalPlanState::PLANNING);
+  const std::uint64_t count_after_first = adapter.requestCount();
+
+  // While PLANNING, no additional request should be issued.
+  coordinator.update(input, 2.05);
+  coordinator.update(input, 2.10);
+  EXPECT_EQ(adapter.requestCount(), count_after_first);
+}
+
+TEST(NavigationCoordinatorTest, OnlyOneOutstandingRequestExists)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  coordinator.update(input, 2.0);
+  LocalPlanRequest req = adapter.lastRequest();
+  adapter.setStateRequest(req, LocalPlanState::QUEUED);
+
+  const std::uint64_t count_after_first = adapter.requestCount();
+
+  // While QUEUED, no new request should be issued.
+  coordinator.update(input, 2.05);
+  EXPECT_EQ(adapter.requestCount(), count_after_first);
+}
+
+TEST(NavigationCoordinatorTest, TargetChangeTriggersReplan)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  // First plan request at arc = 0.
+  coordinator.update(input, 2.0);
+  const LocalPlanRequest first_request = adapter.lastRequest();
+  const std::uint64_t count_after_first = adapter.requestCount();
+
+  // Move robot forward to arc = 3.0; the preferred target moves by
+  // more than target_change_threshold_m (0.30m).
+  CoreInput moved_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 2.2);
+  moved_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.2, 0.5);
+  coordinator.update(moved_input, 2.2);
+
+  EXPECT_GT(adapter.requestCount(), count_after_first);
+  EXPECT_NE(adapter.lastRequest().target.x, first_request.target.x);
+}
+
+TEST(NavigationCoordinatorTest, CollisionTriggersReplan)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  LocalTrajectory trajectory = makeTestLocalTrajectory(
+      1u, 1u, NavigationMode::LOCAL_AVOID, 2.0, 2.0);
+  adapter.setTrajectory(trajectory);
+  coordinator.setLocalPlannerAdapter(&adapter);
+
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+  coordinator.update(input, 2.0);
+
+  const std::uint64_t count_after_first = adapter.requestCount();
+  adapter.setCollisionFlag(true);
+  coordinator.update(input, 2.05);
+
+  EXPECT_GT(adapter.requestCount(), count_after_first);
+}
+
+// =============================================================================
+// Near goal tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, NearGoalFollowsRouteInsteadOfDirectChord)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  // Robot is near the goal but laterally offset. It should still follow
+  // the route (vx > 0) rather than cutting directly toward the endpoint.
+  CoreInput input = makeTrackingInput(9.3, 0.3, 0.0, 1u, 9.3, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 9.3, 2.0);
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_LE(output.final_cmd.vx, 0.25);
+}
+
+TEST(NavigationCoordinatorTest, BlockedNearGoalStops)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeTrackingInput(9.0, 0.0, 0.0, 1u, 9.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.0, 2.0, 0.5);
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_TRUE(output.navigation_mode.route_blocked_near);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, RouteOnlyBlockedNearGoalStops)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator, TaskMode::ROUTE_ONLY);
+
+  CoreInput input = makeTrackingInput(9.0, 0.0, 0.0, 1u, 9.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 9.0, 2.0, 0.5);
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::ROUTE_ONLY_BLOCKED);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+}
+
+TEST(NavigationCoordinatorTest, GoalYawAlignOnlyAfterPositionReached)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  // Within near_goal_switch_dist but outside finish_dist, with small yaw
+  // error. Route follower should still drive forward; yaw-only alignment
+  // must not be engaged before position is reached.
+  constexpr double kDeg = 3.14159265358979323846 / 180.0;
+  CoreInput input = makeTrackingInput(9.7, 0.0, 10.0 * kDeg, 1u, 9.7, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 9.7, 2.0);
+  CoreOutput output = coordinator.update(input, 2.0);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
+}
+
+// =============================================================================
+// Local avoid target selection tests
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, LocalAvoidSkipsOccupiedFirstCandidate)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  // Robot at x = 3.0, arc = 3.0.
+  CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
+  coordinator.update(clear_input, 1.3);
+
+  // Immediate block ahead -> LOCAL_AVOID. The preferred target is at
+  // arc = 3.0 + default_forward_distance_m (2.5) = 5.5.
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  blocked_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+
+  // Mark everything before x = 5.7 as occupied. The selector must skip
+  // the preferred candidate at 5.5 and pick the first free one at 5.7.
+  occupancy.setFreeAfterX(5.7);
+
+  coordinator.update(blocked_input, 1.4);
+
+  EXPECT_EQ(adapter.lastRequest().purpose, NavigationMode::LOCAL_AVOID);
+  EXPECT_GE(adapter.lastRequest().target.x, 5.7 - 1e-6);
+}
+
+TEST(NavigationCoordinatorTest, LocalAvoidFindsLaterFreeCandidate)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
+  coordinator.update(clear_input, 1.3);
+
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  blocked_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+
+  // With max_forward_distance_m = 3.0, the farthest reachable candidate
+  // is at x = 6.0. Make that the first free cell.
+  occupancy.setFreeAfterX(6.0);
+
+  CoreOutput output = coordinator.update(blocked_input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(adapter.lastRequest().purpose, NavigationMode::LOCAL_AVOID);
+  EXPECT_GE(adapter.lastRequest().target.x, 6.0 - 1e-6);
+}
+
+TEST(NavigationCoordinatorTest, LocalAvoidWaitsWhenMapNotReady)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  FakeOccupancyQuery occupancy;
+  coordinator.setLocalPlannerAdapter(&adapter);
+  coordinator.setOccupancyQuery(&occupancy);
+
+  CoreInput clear_input = makeTrackingInput(3.0, 0.0, 0.0, 1u, 3.0, 1.3);
+  coordinator.update(clear_input, 1.3);
+
+  CoreInput blocked_input = makeRobotInput(3.0, 0.0, 0.0);
+  blocked_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+
+  // Occupancy map not ready -> target selection must fail and no plan
+  // request should be submitted.
+  occupancy.setReady(false);
+
+  CoreOutput output = coordinator.update(blocked_input, 1.4);
+
+  EXPECT_EQ(output.navigation_mode.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_EQ(adapter.requestCount(), 0u);
 }
 
 }  // namespace

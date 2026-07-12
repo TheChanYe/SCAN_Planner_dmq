@@ -383,14 +383,6 @@ NavigationModeOutput NavigationModeManager::update(
     // obstacle can still enter LOCAL_AVOID in the same update.
   }
 
-  // Preserve the initialization diagnostic reason unless the
-  // current frame performs another real mode transition.
-  const NavigationMode mode_after_initialization =
-      status_.mode;
-
-  const NavigationModeReason initialization_reason =
-      status_.reason;
-
   // Update task-related fields.
   status_.task_sequence = task.sequence;
   status_.avoidance_allowed =
@@ -763,20 +755,6 @@ NavigationModeOutput NavigationModeManager::update(
   }
 
   // --- 10. Finalize ---
-
-  // initializeForTask() sets INITIALIZED or TASK_CHANGED.
-  // ROUTE_FOLLOW processing may overwrite it with ROUTE_CLEAR,
-  // BLOCK_CONFIRMING, or BLOCKED_FAR_AHEAD in the same update.
-  //
-  // Keep the task-initialization reason when no second mode
-  // transition occurred. If the current frame really changed
-  // ROUTE_FOLLOW -> LOCAL_AVOID, preserve BLOCK_IMMEDIATE or
-  // BLOCK_CONFIRMED instead.
-  if (initialized_this_update &&
-      status_.mode == mode_after_initialization)
-  {
-    status_.reason = initialization_reason;
-  }
 
   status_.stamp_sec = now_sec;
   status_.valid = status_.initialized;

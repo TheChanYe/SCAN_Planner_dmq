@@ -11,6 +11,7 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kSearchStepM = 0.20;
 
 double normalizeAngle(double angle) noexcept
 {
@@ -34,27 +35,11 @@ RejoinTargetSelector::RejoinTargetSelector(
 }
 
 // =============================================================================
-// isRouteYawAcceptable
-// =============================================================================
-
-bool RejoinTargetSelector::isRouteYawAcceptable(
-    double route_yaw,
-    double target_yaw) const noexcept
-{
-  if (!std::isfinite(route_yaw) || !std::isfinite(target_yaw))
-    return false;
-
-  const double diff = std::abs(normalizeAngle(target_yaw - route_yaw));
-  return diff <= config_.route_yaw_tolerance_rad;
-}
-
-// =============================================================================
 // evaluateTarget
 // =============================================================================
 
 bool RejoinTargetSelector::evaluateTarget(
     const RoutePoint& target,
-    const RobotState& robot,
     const OccupancyQuery3D* occupancy) const noexcept
 {
   if (!std::isfinite(target.x) ||
@@ -64,9 +49,15 @@ bool RejoinTargetSelector::evaluateTarget(
     return false;
   }
 
-  if (occupancy && occupancy->ready())
+  if (!std::isfinite(target.yaw))
+    return false;
+
+  if (occupancy)
   {
-    const double yaw = target.has_yaw ? target.yaw : robot.yaw;
+    if (!occupancy->ready())
+      return false;
+
+    const double yaw = target.has_yaw ? target.yaw : 0.0;
     if (!occupancy->isFree(target.x, target.y, target.z, yaw))
       return false;
   }
@@ -159,11 +150,14 @@ RejoinTargetSelector::Result RejoinTargetSelector::select(
     const RobotState& robot,
     const OccupancyQuery3D* occupancy) const
 {
+  (void)robot;
+
   Result result{};
 
   if (task.points.size() < 2 ||
       !progress.valid ||
       !std::isfinite(progress.arc_length_m) ||
+      !std::isfinite(progress.total_length_m) ||
       !mode_status.has_rejoin_anchor ||
       !std::isfinite(mode_status.rejoin_min_arc_length_m))
   {
@@ -174,56 +168,72 @@ RejoinTargetSelector::Result RejoinTargetSelector::select(
       mode_status.rejoin_min_arc_length_m,
       progress.arc_length_m + kEpsilon);
 
-  const double preferred_arc =
-      progress.arc_length_m +
-      config_.default_forward_distance_m;
+  const double search_start = std::max(
+      min_arc,
+      progress.arc_length_m + config_.min_forward_distance_m);
 
-  const double target_arc = std::max(
+  const double search_end = std::min(
+      progress.total_length_m,
+      progress.arc_length_m + config_.max_forward_distance_m);
+
+  if (search_start > search_end)
+    return result;
+
+  // Prefer default distance, then search forward/backward in steps.
+  const double preferred_arc = std::max(
       min_arc,
       std::min(
-          preferred_arc,
           progress.arc_length_m +
-              config_.max_forward_distance_m));
+              config_.default_forward_distance_m,
+          progress.total_length_m));
 
-  RoutePoint target{};
-  if (!interpolateRoutePoint(task, target_arc, target))
-    return result;
+  // Build candidate arcs: start from preferred, then forward, then backward.
+  std::vector<double> candidate_arcs;
+  candidate_arcs.reserve(64);
 
-  if (!isRouteYawAcceptable(progress.route_yaw, target.yaw))
+  // Forward sweep from preferred to search_end.
+  double arc = preferred_arc;
+  while (arc <= search_end + kEpsilon)
   {
-    // Try to adjust by searching forward for a yaw-consistent point.
-    bool adjusted = false;
-    for (double delta = config_.min_forward_distance_m;
-         delta <= config_.max_forward_distance_m;
-         delta += 0.2)
-    {
-      const double candidate_arc =
-          progress.arc_length_m + delta;
-      if (candidate_arc <= min_arc)
-        continue;
-
-      RoutePoint candidate{};
-      if (!interpolateRoutePoint(task, candidate_arc, candidate))
-        break;
-
-      if (isRouteYawAcceptable(progress.route_yaw, candidate.yaw) &&
-          evaluateTarget(candidate, robot, occupancy))
-      {
-        target = candidate;
-        adjusted = true;
-        break;
-      }
-    }
-
-    if (!adjusted)
-      return result;
+    candidate_arcs.push_back(arc);
+    arc += kSearchStepM;
   }
 
-  if (!evaluateTarget(target, robot, occupancy))
-    return result;
+  // Backward sweep from preferred - step down to search_start.
+  arc = preferred_arc - kSearchStepM;
+  while (arc >= search_start - kEpsilon)
+  {
+    candidate_arcs.push_back(arc);
+    arc -= kSearchStepM;
+  }
 
-  result.target = target;
-  result.valid = true;
+  // Ensure search_start and search_end are included.
+  candidate_arcs.push_back(search_start);
+  if (search_end > search_start + kEpsilon)
+    candidate_arcs.push_back(search_end);
+
+  for (double candidate_arc : candidate_arcs)
+  {
+    if (candidate_arc <= progress.arc_length_m)
+      continue;
+    if (candidate_arc < min_arc - kEpsilon)
+      continue;
+    if (candidate_arc > progress.total_length_m + kEpsilon)
+      continue;
+
+    RoutePoint target{};
+    if (!interpolateRoutePoint(task, candidate_arc, target))
+      continue;
+
+    if (!evaluateTarget(target, occupancy))
+      continue;
+
+    result.target = target;
+    result.target_arc_length_m = candidate_arc;
+    result.valid = true;
+    return result;
+  }
+
   return result;
 }
 

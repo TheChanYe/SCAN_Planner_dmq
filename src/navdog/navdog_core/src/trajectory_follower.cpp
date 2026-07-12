@@ -12,6 +12,7 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kMaxControlDtSec = 0.2;
 
 double normalizeAngle(double angle) noexcept
 {
@@ -40,8 +41,13 @@ TrajectoryFollower::TrajectoryFollower(
 
 void TrajectoryFollower::reset() noexcept
 {
-  executing_ = false;
-  exec_start_sec_ = 0.0;
+  exec_time_sec_ = 0.0;
+  last_update_stamp_sec_ = 0.0;
+  has_last_update_stamp_ = false;
+
+  active_task_sequence_ = 0;
+  active_plan_sequence_ = 0;
+  active_purpose_ = NavigationMode::NONE;
 }
 
 // =============================================================================
@@ -50,7 +56,7 @@ void TrajectoryFollower::reset() noexcept
 
 double TrajectoryFollower::trajectoryTimeSec() const noexcept
 {
-  return executing_ ? exec_start_sec_ : 0.0;
+  return exec_time_sec_;
 }
 
 // =============================================================================
@@ -190,7 +196,8 @@ VelocityCommand TrajectoryFollower::update(
 {
   VelocityCommand cmd{};
   cmd.stamp_sec = now_sec;
-  cmd.source = CommandSource::PLANNER;
+  cmd.source = CommandSource::TRACKING_STOP;
+  cmd.valid = false;
 
   if (!trajectory.valid ||
       trajectory.points.empty() ||
@@ -201,28 +208,51 @@ VelocityCommand TrajectoryFollower::update(
       !std::isfinite(trajectory.source_stamp_sec) ||
       !std::isfinite(now_sec))
   {
-    executing_ = false;
-    cmd.valid = false;
-    cmd.source = CommandSource::TRACKING_STOP;
+    reset();
     return cmd;
   }
 
-  if (!executing_)
+  // Trajectory source stamp has aged beyond its duration.
+  if (now_sec - trajectory.source_stamp_sec >
+      trajectory.duration_sec)
   {
-    executing_ = true;
-    exec_start_sec_ = now_sec;
-  }
-
-  const double t_eval = now_sec - exec_start_sec_;
-
-  // Expired.
-  if (t_eval >= trajectory.duration_sec)
-  {
-    executing_ = false;
-    cmd.valid = false;
-    cmd.source = CommandSource::TRACKING_STOP;
+    reset();
     return cmd;
   }
+
+  // Identity changed: reset execution time.
+  const bool identity_changed =
+      trajectory.task_sequence != active_task_sequence_ ||
+      trajectory.plan_sequence != active_plan_sequence_ ||
+      trajectory.purpose != active_purpose_;
+
+  if (identity_changed)
+  {
+    reset();
+    active_task_sequence_ = trajectory.task_sequence;
+    active_plan_sequence_ = trajectory.plan_sequence;
+    active_purpose_ = trajectory.purpose;
+  }
+
+  if (!has_last_update_stamp_)
+  {
+    last_update_stamp_sec_ = now_sec;
+    has_last_update_stamp_ = true;
+    exec_time_sec_ = 0.0;
+  }
+
+  const double dt = now_sec - last_update_stamp_sec_;
+  last_update_stamp_sec_ = now_sec;
+
+  // Time regression is invalid.
+  if (dt < 0.0)
+  {
+    reset();
+    return cmd;
+  }
+
+  // Large control gap: do not advance trajectory time this frame.
+  const bool advance_time = dt <= kMaxControlDtSec;
 
   double pos_des_x = 0.0;
   double pos_des_y = 0.0;
@@ -233,7 +263,7 @@ VelocityCommand TrajectoryFollower::update(
 
   if (!sampleTrajectory(
           trajectory,
-          t_eval,
+          exec_time_sec_,
           pos_des_x,
           pos_des_y,
           vel_des_x,
@@ -241,9 +271,7 @@ VelocityCommand TrajectoryFollower::update(
           yaw_des,
           has_yaw))
   {
-    executing_ = false;
-    cmd.valid = false;
-    cmd.source = CommandSource::TRACKING_STOP;
+    reset();
     return cmd;
   }
 
@@ -263,7 +291,7 @@ VelocityCommand TrajectoryFollower::update(
 
     const double t_look = std::min(
         trajectory.duration_sec,
-        t_eval + config_.time_forward_sec);
+        exec_time_sec_ + config_.time_forward_sec);
 
     if (sampleTrajectory(
             trajectory,
@@ -304,10 +332,9 @@ VelocityCommand TrajectoryFollower::update(
     cmd.vx = 0.0;
     cmd.vy = 0.0;
     cmd.yaw_rate = vyaw_cmd;
-
-    // Freeze trajectory time while rotating in place.
-    exec_start_sec_ = now_sec - t_eval;
+    cmd.source = CommandSource::PLANNER;
     cmd.valid = true;
+    // Do not advance exec_time_sec_ while turning in place.
     return cmd;
   }
 
@@ -345,7 +372,13 @@ VelocityCommand TrajectoryFollower::update(
   if (!std::isfinite(cmd.yaw_rate))
     cmd.yaw_rate = 0.0;
 
+  cmd.source = CommandSource::PLANNER;
   cmd.valid = true;
+
+  if (advance_time)
+  {
+    exec_time_sec_ += dt;
+  }
 
   return cmd;
 }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <limits>
 
 namespace navdog
@@ -29,6 +30,41 @@ SafetySupervisor::SafetySupervisor(
     : safety_config_(config),
       limit_config_(limits)
 {
+  // Initialize previous output so the first call applies acceleration
+  // limits relative to zero rather than allowing an instant jump.
+  previous_output_ = VelocityCommand{};
+  previous_output_.valid = true;
+  previous_stamp_sec_ = 0.0;
+  has_previous_output_ = true;
+}
+
+// =============================================================================
+// reset
+// =============================================================================
+
+void SafetySupervisor::reset() noexcept
+{
+  previous_output_ = VelocityCommand{};
+  previous_stamp_sec_ = 0.0;
+  has_previous_output_ = false;
+}
+
+// =============================================================================
+// safetyStop
+// =============================================================================
+
+VelocityCommand SafetySupervisor::safetyStop(
+    double now_sec,
+    CommandSource source) const noexcept
+{
+  VelocityCommand cmd{};
+  cmd.vx = 0.0;
+  cmd.vy = 0.0;
+  cmd.yaw_rate = 0.0;
+  cmd.stamp_sec = std::isfinite(now_sec) ? now_sec : 0.0;
+  cmd.valid = true;
+  cmd.source = source;
+  return cmd;
 }
 
 // =============================================================================
@@ -42,14 +78,14 @@ bool SafetySupervisor::checkTimeouts(
   if (!std::isfinite(now_sec))
     return false;
 
-  if (!context.robot.valid ||
-      !std::isfinite(context.robot.stamp_sec))
+  if (!context.robot.valid)
   {
     return false;
   }
 
-  if (now_sec - context.robot.stamp_sec >
-      safety_config_.odom_timeout_sec)
+  if (std::isfinite(context.robot.stamp_sec) &&
+      now_sec - context.robot.stamp_sec >
+          safety_config_.odom_timeout_sec)
   {
     return false;
   }
@@ -62,22 +98,38 @@ bool SafetySupervisor::checkTimeouts(
     return false;
   }
 
-  if (context.trajectory.valid)
-  {
-    if (!std::isfinite(context.trajectory.source_stamp_sec))
-      return false;
-
-    if (now_sec - context.trajectory.source_stamp_sec >
-        safety_config_.planner_cmd_timeout_sec)
-    {
-      return false;
-    }
-  }
-
   if (context.map_valid &&
       std::isfinite(context.map_stamp_sec) &&
       now_sec - context.map_stamp_sec >
           safety_config_.obstacle_timeout_sec)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+// =============================================================================
+// checkTrajectoryIdentity
+// =============================================================================
+
+bool SafetySupervisor::checkTrajectoryIdentity(
+    const Context& context) const noexcept
+{
+  if (!context.trajectory.valid)
+    return true;  // No trajectory to validate.
+
+  if (!std::isfinite(context.trajectory.duration_sec) ||
+      context.trajectory.duration_sec <= 0.0)
+  {
+    return false;
+  }
+
+  // If the caller provided a trajectory, it must match the active identity.
+  // When not tracking a local trajectory, callers should leave trajectory.valid
+  // as false.
+  if (context.trajectory.purpose == NavigationMode::NONE ||
+      context.trajectory.task_sequence == 0)
   {
     return false;
   }
@@ -139,6 +191,32 @@ double SafetySupervisor::computeYawRateSpeedPenalty(
 }
 
 // =============================================================================
+// shouldApplyAccelerationLimit
+// =============================================================================
+
+bool SafetySupervisor::shouldApplyAccelerationLimit(
+    const VelocityCommand& raw_cmd,
+    const Context& context) const noexcept
+{
+  // Do not limit deceleration during safety stops or invalid commands.
+  if (!raw_cmd.valid)
+    return false;
+
+  if (raw_cmd.source == CommandSource::SAFETY_STOP ||
+      raw_cmd.source == CommandSource::FAILED_STOP ||
+      raw_cmd.source == CommandSource::PAUSE_STOP ||
+      raw_cmd.source == CommandSource::CANCEL_STOP)
+  {
+    return false;
+  }
+
+  if (!context.map_valid)
+    return false;
+
+  return true;
+}
+
+// =============================================================================
 // apply
 // =============================================================================
 
@@ -148,8 +226,12 @@ VelocityCommand SafetySupervisor::apply(
     double max_vx,
     double now_sec)
 {
-  VelocityCommand cmd{};
-  cmd.stamp_sec = now_sec;
+
+  // Invalid raw command -> stop.
+  if (!raw_cmd.valid)
+  {
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
 
   // NaN/Inf guard.
   const bool raw_finite =
@@ -157,16 +239,27 @@ VelocityCommand SafetySupervisor::apply(
       std::isfinite(raw_cmd.vy) &&
       std::isfinite(raw_cmd.yaw_rate);
 
-  const bool timeouts_ok = checkTimeouts(context, now_sec);
-
-  if (!raw_finite || !timeouts_ok)
+  if (!raw_finite)
   {
-    cmd.vx = 0.0;
-    cmd.vy = 0.0;
-    cmd.yaw_rate = 0.0;
-    cmd.valid = true;
-    cmd.source = CommandSource::SAFETY_STOP;
-    return cmd;
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
+
+  // Timeout / map validity guard.
+  const bool timeouts_ok = checkTimeouts(context, now_sec);
+  if (!timeouts_ok)
+  {
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
+
+  if (!context.map_valid)
+  {
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
+
+  // Local trajectory identity guard.
+  if (!checkTrajectoryIdentity(context))
+  {
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
   }
 
   double limited_vx = raw_cmd.vx;
@@ -212,12 +305,41 @@ VelocityCommand SafetySupervisor::apply(
       context.obstacles.front_min <=
           safety_config_.emergency_stop)
   {
-    limited_vx = 0.0;
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
   }
 
+  // Acceleration limits.
+  if (shouldApplyAccelerationLimit(raw_cmd, context) &&
+      has_previous_output_ &&
+      std::isfinite(previous_stamp_sec_))
+  {
+    const double dt = now_sec - previous_stamp_sec_;
+    if (dt > 0.0 && std::isfinite(dt))
+    {
+      const double max_dvx = limit_config_.max_accel_x * dt;
+      const double max_dvy = limit_config_.max_accel_y * dt;
+      const double max_dw = limit_config_.max_accel_yaw * dt;
+
+      limited_vx = clamp(
+          limited_vx,
+          previous_output_.vx - max_dvx,
+          previous_output_.vx + max_dvx);
+      limited_vy = clamp(
+          limited_vy,
+          previous_output_.vy - max_dvy,
+          previous_output_.vy + max_dvy);
+      limited_w = clamp(
+          limited_w,
+          previous_output_.yaw_rate - max_dw,
+          previous_output_.yaw_rate + max_dw);
+    }
+  }
+
+  VelocityCommand cmd{};
   cmd.vx = limited_vx;
   cmd.vy = limited_vy;
   cmd.yaw_rate = limited_w;
+  cmd.stamp_sec = std::isfinite(now_sec) ? now_sec : 0.0;
   cmd.valid = true;
 
   if (cmd.vx < kEpsilon)
@@ -227,10 +349,34 @@ VelocityCommand SafetySupervisor::apply(
   if (std::abs(cmd.yaw_rate) < kEpsilon)
     cmd.yaw_rate = 0.0;
 
-  cmd.source =
-      (cmd.vx == 0.0 && cmd.vy == 0.0 && cmd.yaw_rate == 0.0)
-          ? CommandSource::SAFETY_STOP
-          : CommandSource::SAFETY_SLOW;
+  // Preserve the original source when no safety intervention occurred.
+  // Mark as safety-slow only when the command was actually reduced, and
+  // safety-stop only when the final command is zero while the raw command
+  // requested non-zero motion.
+  const bool all_zero =
+      cmd.vx == 0.0 && cmd.vy == 0.0 && cmd.yaw_rate == 0.0;
+  const bool raw_all_zero =
+      raw_cmd.vx == 0.0 && raw_cmd.vy == 0.0 &&
+      raw_cmd.yaw_rate == 0.0;
+
+  if (all_zero && !raw_all_zero)
+  {
+    cmd.source = CommandSource::SAFETY_STOP;
+  }
+  else if (std::abs(cmd.vx - raw_cmd.vx) > kEpsilon ||
+           std::abs(cmd.vy - raw_cmd.vy) > kEpsilon ||
+           std::abs(cmd.yaw_rate - raw_cmd.yaw_rate) > kEpsilon)
+  {
+    cmd.source = CommandSource::SAFETY_SLOW;
+  }
+  else
+  {
+    cmd.source = raw_cmd.source;
+  }
+
+  previous_output_ = cmd;
+  previous_stamp_sec_ = cmd.stamp_sec;
+  has_previous_output_ = true;
 
   return cmd;
 }

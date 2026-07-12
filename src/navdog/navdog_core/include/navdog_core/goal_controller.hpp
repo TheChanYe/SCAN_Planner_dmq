@@ -38,8 +38,6 @@ public:
       const RouteProgress& progress) const noexcept;
 
 private:
-  RoutePoint finalGoal() const noexcept;
-
   GoalControllerConfig config_{};
 };
 

@@ -21,6 +21,7 @@ public:
   struct Result
   {
     RoutePoint target{};
+    double target_arc_length_m{0.0};
     bool valid{false};
   };
 
@@ -32,13 +33,8 @@ public:
       const OccupancyQuery3D* occupancy) const;
 
 private:
-  bool isRouteYawAcceptable(
-      double route_yaw,
-      double target_yaw) const noexcept;
-
   bool evaluateTarget(
       const RoutePoint& target,
-      const RobotState& robot,
       const OccupancyQuery3D* occupancy) const noexcept;
 
   bool interpolateRoutePoint(

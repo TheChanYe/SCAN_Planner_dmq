@@ -238,9 +238,23 @@ struct GoalControllerConfig
 
 struct PlannerTriggerConfig
 {
-  double replan_retry_interval_sec{1.0};
+  // 规划失败后再次请求的最小间隔。
+  double replan_retry_interval_sec{0.30};
+
+  // 轨迹过期裕量：exec_time > duration + margin 才视为失效。
   double trajectory_expiry_margin_sec{0.2};
+
+  // 轨迹剩余时间小于此值时触发重规划。
   double min_remaining_duration_sec{0.3};
+
+  // 局部轨迹 source_stamp 允许的最大年龄（仅在接受新轨迹时检查一次）。
+  double trajectory_source_max_age_sec{0.30};
+
+  // 局部轨迹 source_stamp 允许的未来容差（仅在接受新轨迹时检查一次）。
+  double trajectory_future_tolerance_sec{0.05};
+
+  // 目标点变化超过此阈值时触发重规划。
+  double target_change_threshold_m{0.30};
 };
 
 // =============================================================================

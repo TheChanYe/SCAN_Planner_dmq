@@ -73,7 +73,7 @@ private:
 
   void enterFailedState() noexcept;
 
-  void resetStartAlign() noexcept;
+  void clearLocalPlanningContext() noexcept;
 
   VelocityCommand makeZeroCommand(
       CommandSource source,
@@ -84,6 +84,9 @@ private:
       const RobotState& robot,
       const RouteProgress& progress,
       const NavigationModeStatus& mode_status,
+      const ObstacleSummary& obstacles,
+      const RouteCorridorAssessment& corridor,
+      bool corridor_available,
       double max_vx,
       double now_sec);
 
@@ -91,6 +94,7 @@ private:
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
+      const NavigationModeStatus& mode_status,
       double max_vx,
       double now_sec);
 
@@ -122,9 +126,31 @@ private:
       const RouteProgress& progress,
       double now_sec) const;
 
+  bool isTrajectoryHealthy(
+      NavigationMode mode,
+      const RouteProgress& progress,
+      double now_sec) const;
+
   bool trajectoryEndingSoon(
       const LocalTrajectory& trajectory,
-      double now_sec) const noexcept;
+      double exec_time_sec) const noexcept;
+
+  bool isTrajectoryExecutable(
+      const LocalTrajectory& trajectory,
+      NavigationMode expected_mode,
+      std::uint64_t expected_task_sequence,
+      std::uint64_t expected_plan_sequence) const noexcept;
+
+  bool interpolateRoutePoint(
+      const NavigationTask& task,
+      double target_arc_length_m,
+      RoutePoint& out) const noexcept;
+
+  bool selectLocalAvoidTarget(
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      RoutePoint& out_target) const;
 
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
@@ -145,11 +171,11 @@ private:
 
   NavigationModeManager navigation_mode_manager_{};
 
-  RouteFollower route_follower_{};
-  TrajectoryFollower trajectory_follower_{};
-  RejoinTargetSelector rejoin_target_selector_{};
-  GoalController goal_controller_{};
-  SafetySupervisor safety_supervisor_{};
+  RouteFollower route_follower_;
+  TrajectoryFollower trajectory_follower_;
+  RejoinTargetSelector rejoin_target_selector_;
+  GoalController goal_controller_;
+  SafetySupervisor safety_supervisor_;
 
   LocalPlannerAdapter* local_planner_adapter_{nullptr};
   OccupancyQuery3D* occupancy_query_{nullptr};
@@ -159,6 +185,17 @@ private:
   std::uint64_t last_local_plan_plan_sequence_{0};
   double last_local_plan_request_stamp_sec_{0.0};
   bool local_plan_request_pending_{false};
+  bool last_local_plan_failed_{false};
+
+  std::uint64_t expected_local_plan_sequence_{0};
+  std::uint64_t expected_local_plan_task_sequence_{0};
+  NavigationMode expected_local_plan_purpose_{NavigationMode::NONE};
+
+  // Last requested target for change detection.
+  double last_request_target_x_{0.0};
+  double last_request_target_y_{0.0};
+
+  bool force_replan_{false};
 };
 
 }  // namespace navdog

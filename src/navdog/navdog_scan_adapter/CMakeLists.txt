@@ -63,6 +63,19 @@ if(CATKIN_ENABLE_TESTING)
       ${catkin_LIBRARIES}
     )
   endif()
+
+  catkin_add_gtest(
+    test_scan_local_planner_adapter
+    test/test_scan_local_planner_adapter.cpp
+  )
+
+  if(TARGET test_scan_local_planner_adapter)
+    target_link_libraries(
+      test_scan_local_planner_adapter
+      navdog_scan_adapter
+      ${catkin_LIBRARIES}
+    )
+  endif()
 endif()
 
 install(

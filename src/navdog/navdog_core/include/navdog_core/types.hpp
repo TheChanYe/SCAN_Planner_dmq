@@ -527,41 +527,23 @@ struct LocalPlanRequest
 };
 
 // =============================================================================
-// 4.16g 局部规划适配器抽象接口
-//
-// navdog_core 不直接依赖 SCANPlannerManager / GridMap / Eigen。
-// 由 navdog_scan_adapter 等包提供具体实现并注入到 Coordinator。
+// 4.16g 局部规划状态
 // =============================================================================
 
-class LocalPlannerAdapter
+enum class LocalPlanState
 {
-public:
-  virtual ~LocalPlannerAdapter() = default;
-
-  // 异步请求一次局部规划。返回 true 表示请求已成功提交。
-  virtual bool requestLocalPlan(
-      const LocalPlanRequest& request) = 0;
-
-  // 获取当前最新轨迹。调用方负责匹配 task_sequence / purpose。
-  virtual LocalTrajectory getLocalTrajectory(
-      NavigationMode purpose,
-      std::uint64_t task_sequence) const = 0;
-
-  virtual bool hasValidTrajectory(
-      NavigationMode purpose,
-      std::uint64_t task_sequence) const = 0;
-
-  // 检查当前轨迹是否与三维膨胀占据发生碰撞。
-  // 没有轨迹或查询不可用时返回 false。
-  virtual bool isTrajectoryColliding(
-      NavigationMode purpose,
-      std::uint64_t task_sequence) const = 0;
+  IDLE = 0,
+  QUEUED,
+  PLANNING,
+  READY,
+  FAILED
 };
 
 // =============================================================================
 // 4.16h 局部轨迹
 //
 // SCAN LocalTrajData 经 adapter 采样后得到的通用轨迹描述。
+// 必须定义在 LocalPlannerAdapter 之前，因为接口使用 LocalTrajectory。
 // =============================================================================
 
 struct LocalTrajectory
@@ -578,6 +560,46 @@ struct LocalTrajectory
   double duration_sec{0.0};
 
   bool valid{false};
+};
+
+// =============================================================================
+// 4.16i 局部规划适配器抽象接口
+//
+// navdog_core 不直接依赖 SCANPlannerManager / GridMap / Eigen。
+// 由 navdog_scan_adapter 等包提供具体实现并注入到 Coordinator。
+// =============================================================================
+
+class LocalPlannerAdapter
+{
+public:
+  virtual ~LocalPlannerAdapter() = default;
+
+  // 异步请求一次局部规划。返回 true 表示请求已成功提交到适配器队列。
+  virtual bool requestLocalPlan(
+      const LocalPlanRequest& request) = 0;
+
+  // 获取当前最新轨迹。调用方负责匹配 task_sequence / purpose / plan_sequence。
+  virtual LocalTrajectory getLocalTrajectory(
+      NavigationMode purpose,
+      std::uint64_t task_sequence) const = 0;
+
+  virtual bool hasValidTrajectory(
+      NavigationMode purpose,
+      std::uint64_t task_sequence) const = 0;
+
+  // 查询指定请求的当前规划状态。
+  virtual LocalPlanState localPlanState(
+      NavigationMode purpose,
+      std::uint64_t task_sequence,
+      std::uint64_t plan_sequence) const = 0;
+
+  // 检查当前轨迹从 from_time_sec 开始是否与三维膨胀占据发生碰撞。
+  // 没有轨迹、查询不可用或地图外时返回 true（视为不可执行）。
+  virtual bool isTrajectoryColliding(
+      NavigationMode purpose,
+      std::uint64_t task_sequence,
+      std::uint64_t plan_sequence,
+      double from_time_sec) const = 0;
 };
 
 // =============================================================================

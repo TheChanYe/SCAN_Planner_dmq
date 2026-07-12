@@ -14,6 +14,7 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kSampleDtSec = 0.05;
+constexpr double kCollisionLookBehindSec = 0.05;
 
 double rosTimeToSec(const ros::Time& t)
 {
@@ -36,6 +37,27 @@ ScanLocalPlannerAdapter::ScanLocalPlannerAdapter(
       grid_query_(grid_query),
       planner_manager_(planner_manager)
 {
+  worker_thread_ = std::thread(
+      &ScanLocalPlannerAdapter::planningLoop, this);
+}
+
+// =============================================================================
+// Destructor
+// =============================================================================
+
+ScanLocalPlannerAdapter::~ScanLocalPlannerAdapter()
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    shutdown_ = true;
+    has_pending_request_ = false;
+  }
+  cv_.notify_all();
+
+  if (worker_thread_.joinable())
+  {
+    worker_thread_.join();
+  }
 }
 
 // =============================================================================
@@ -53,26 +75,111 @@ bool ScanLocalPlannerAdapter::requestLocalPlan(
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(mutex_);
-
-  if (!shouldReplan(request))
   {
-    return true;
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Newest-wins: overwrite any pending request.
+    pending_request_ = request;
+    has_pending_request_ = true;
+    state_ = navdog::LocalPlanState::QUEUED;
   }
 
-  Eigen::Vector3d start_pt(request.start.x, request.start.y, request.robot_z);
+  cv_.notify_one();
+  return true;
+}
+
+// =============================================================================
+// planningLoop
+// =============================================================================
+
+void ScanLocalPlannerAdapter::planningLoop()
+{
+  while (true)
+  {
+    navdog::LocalPlanRequest request{};
+    bool has_request = false;
+
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      cv_.wait(lock, [this]() {
+        return shutdown_ || has_pending_request_;
+      });
+
+      if (shutdown_)
+        return;
+
+      if (has_pending_request_)
+      {
+        request = pending_request_;
+        has_request = true;
+        has_pending_request_ = false;
+        state_ = navdog::LocalPlanState::PLANNING;
+      }
+    }
+
+    if (!has_request)
+      continue;
+
+    const bool ok = doReboundReplan(request);
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+
+      if (shutdown_)
+        return;
+
+      if (ok)
+      {
+        last_request_ = request;
+        last_plan_stamp_sec_ = rosTimeToSec(ros::Time::now());
+        cached_trajectory_ = sampleLocalTrajData(
+            request.task_sequence,
+            request.plan_sequence,
+            request.purpose);
+        state_ = cached_trajectory_.valid
+                     ? navdog::LocalPlanState::READY
+                     : navdog::LocalPlanState::FAILED;
+      }
+      else
+      {
+        // Invalidate cached trajectory if it belongs to the same identity.
+        if (cached_trajectory_.purpose == request.purpose &&
+            cached_trajectory_.task_sequence == request.task_sequence &&
+            cached_trajectory_.plan_sequence == request.plan_sequence)
+        {
+          cached_trajectory_ = navdog::LocalTrajectory{};
+        }
+        state_ = navdog::LocalPlanState::FAILED;
+      }
+    }
+  }
+}
+
+// =============================================================================
+// doReboundReplan
+// =============================================================================
+
+bool ScanLocalPlannerAdapter::doReboundReplan(
+    const navdog::LocalPlanRequest& request)
+{
+  if (!planner_manager_)
+    return false;
+
+  Eigen::Vector3d start_pt(
+      request.start.x, request.start.y, request.robot_z);
   Eigen::Vector3d start_vel(
       request.start_vel.x, request.start_vel.y, 0.0);
   Eigen::Vector3d start_acc(0.0, 0.0, 0.0);
 
-  Eigen::Vector3d end_pt(request.target.x, request.target.y, request.robot_z);
+  Eigen::Vector3d end_pt(
+      request.target.x, request.target.y, request.robot_z);
   Eigen::Vector3d end_vel(
       request.target_vel.x, request.target_vel.y, 0.0);
 
   const bool flag_poly_init = true;
   const bool flag_random_poly_traj = false;
 
-  const bool ok = planner_manager_->reboundReplan(
+  return planner_manager_->reboundReplan(
       start_pt,
       start_vel,
       start_acc,
@@ -80,23 +187,6 @@ bool ScanLocalPlannerAdapter::requestLocalPlan(
       end_vel,
       flag_poly_init,
       flag_random_poly_traj);
-
-  if (ok)
-  {
-    last_request_ = request;
-    last_plan_stamp_sec_ = rosTimeToSec(ros::Time::now());
-    planning_in_progress_ = false;
-    cached_trajectory_ = sampleLocalTrajData(
-        request.task_sequence,
-        request.plan_sequence,
-        request.purpose);
-  }
-  else
-  {
-    planning_in_progress_ = false;
-  }
-
-  return ok;
 }
 
 // =============================================================================
@@ -212,22 +302,54 @@ bool ScanLocalPlannerAdapter::hasValidTrajectory(
 }
 
 // =============================================================================
+// localPlanState
+// =============================================================================
+
+navdog::LocalPlanState ScanLocalPlannerAdapter::localPlanState(
+    navdog::NavigationMode purpose,
+    std::uint64_t task_sequence,
+    std::uint64_t plan_sequence) const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (has_pending_request_ &&
+      pending_request_.purpose == purpose &&
+      pending_request_.task_sequence == task_sequence)
+  {
+    return navdog::LocalPlanState::QUEUED;
+  }
+
+  if (last_request_.purpose != purpose ||
+      last_request_.task_sequence != task_sequence ||
+      last_request_.plan_sequence != plan_sequence)
+  {
+    return navdog::LocalPlanState::IDLE;
+  }
+
+  return state_;
+}
+
+// =============================================================================
 // isTrajectoryColliding
 // =============================================================================
 
 bool ScanLocalPlannerAdapter::isTrajectoryColliding(
     navdog::NavigationMode purpose,
-    std::uint64_t task_sequence) const
+    std::uint64_t task_sequence,
+    std::uint64_t plan_sequence,
+    double from_time_sec) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (last_request_.task_sequence != task_sequence ||
-      last_request_.purpose != purpose)
+      last_request_.purpose != purpose ||
+      last_request_.plan_sequence != plan_sequence)
   {
-    return false;
+    return true;
   }
 
-  return checkTrajectoryCollision(cached_trajectory_);
+  return checkTrajectoryCollision(
+      cached_trajectory_, from_time_sec);
 }
 
 // =============================================================================
@@ -235,13 +357,20 @@ bool ScanLocalPlannerAdapter::isTrajectoryColliding(
 // =============================================================================
 
 bool ScanLocalPlannerAdapter::checkTrajectoryCollision(
-    const navdog::LocalTrajectory& trajectory) const
+    const navdog::LocalTrajectory& trajectory,
+    double from_time_sec) const
 {
   if (!grid_query_ || !grid_query_->ready())
-    return false;
+    return true;
+
+  const double t_start =
+      std::max(0.0, from_time_sec - kCollisionLookBehindSec);
 
   for (const auto& point : trajectory.points)
   {
+    if (point.time_from_start_sec < t_start)
+      continue;
+
     const InflatedGridQueryResult result = grid_query_->query(
         point.x,
         point.y,
@@ -254,55 +383,6 @@ bool ScanLocalPlannerAdapter::checkTrajectoryCollision(
     {
       return true;
     }
-  }
-
-  return false;
-}
-
-// =============================================================================
-// shouldReplan
-// =============================================================================
-
-bool ScanLocalPlannerAdapter::shouldReplan(
-    const navdog::LocalPlanRequest& request) const
-{
-  if (last_request_.purpose != request.purpose ||
-      last_request_.task_sequence != request.task_sequence ||
-      last_request_.plan_sequence != request.plan_sequence)
-  {
-    return true;
-  }
-
-  if (last_request_.task_sequence != request.task_sequence ||
-      last_request_.purpose != request.purpose ||
-      !cached_trajectory_.valid ||
-      cached_trajectory_.duration_sec <= kEpsilon)
-  {
-    return true;
-  }
-
-  const double now = rosTimeToSec(ros::Time::now());
-
-  if (now - last_plan_stamp_sec_ > config_.replan_retry_interval_sec)
-    return true;
-
-  const navdog::LocalTrajectory& traj = cached_trajectory_;
-
-  if (traj.valid)
-  {
-    if (traj.duration_sec - request.start.time_from_start_sec <=
-        config_.min_remaining_duration_sec)
-    {
-      return true;
-    }
-
-    if (checkTrajectoryCollision(traj))
-      return true;
-
-    const double dx = request.target.x - last_request_.target.x;
-    const double dy = request.target.y - last_request_.target.y;
-    if (std::hypot(dx, dy) > 0.3)
-      return true;
   }
 
   return false;
