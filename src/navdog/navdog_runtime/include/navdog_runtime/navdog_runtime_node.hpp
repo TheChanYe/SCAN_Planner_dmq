@@ -38,9 +38,9 @@ public:
   static geometry_msgs::Twist toTwist(const navdog::VelocityCommand& command);
   static navdog::PlannerFeedback feedbackForAction(
       const navdog::PlannerAction& action, double now_sec);
+  static navdog::NavdogConfig loadNavdogConfig(ros::NodeHandle& nh);
 
 private:
-  static navdog::NavdogConfig loadNavdogConfig(ros::NodeHandle& nh);
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
   void controlCallback(const ros::TimerEvent&);
   void publisherCheckCallback(const ros::TimerEvent&);

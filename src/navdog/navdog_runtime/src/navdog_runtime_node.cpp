@@ -408,8 +408,9 @@ bool NavdogRuntimeNode::initialize()
                                  mqtt_config.pause_topic);
   private_nh_.param<std::string>("mqtt/status_topic", mqtt_config.status_topic,
                                  mqtt_config.status_topic);
-  private_nh_.param("mqtt/max_queue_size", mqtt_config.max_queue_size,
-                    mqtt_config.max_queue_size);
+  int max_queue_size_int = static_cast<int>(mqtt_config.max_queue_size);
+  private_nh_.param("mqtt/max_queue_size", max_queue_size_int, max_queue_size_int);
+  mqtt_config.max_queue_size = static_cast<std::size_t>(max_queue_size_int);
   private_nh_.param("default_route_z", mqtt_config.default_route_z, 0.3);
   private_nh_.param("default_max_vx", mqtt_config.default_max_vx, 0.4);
 
