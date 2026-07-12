@@ -31,7 +31,6 @@ void NavigationModeManager::reset() noexcept
 {
   status_ = NavigationModeStatus{};
   active_task_sequence_ = 0;
-  active_task_mode_ = TaskMode::NORMAL_AVOID;
   has_last_update_stamp_ = false;
   last_update_stamp_sec_ = 0.0;
   resetBlockedEvidence();
@@ -123,6 +122,19 @@ bool NavigationModeManager::isProgressValid(
   if (progress.task_sequence != task.sequence)
     return false;
 
+  if (!std::isfinite(progress.arc_length_m) ||
+      progress.arc_length_m < 0.0)
+    return false;
+
+  if (!std::isfinite(progress.lateral_error_m))
+    return false;
+
+  if (!std::isfinite(progress.route_yaw))
+    return false;
+
+  if (!std::isfinite(progress.stamp_sec))
+    return false;
+
   return true;
 }
 
@@ -168,12 +180,11 @@ void NavigationModeManager::initializeForTask(
     const NavigationTask& task,
     double now_sec)
 {
-  const NavigationMode old_mode = status_.mode;
   const bool was_initialized = status_.initialized;
 
   status_ = NavigationModeStatus{};
   status_.mode = NavigationMode::ROUTE_FOLLOW;
-  status_.previous_mode = old_mode;
+  status_.previous_mode = NavigationMode::NONE;
   status_.reference_intent = ReferenceIntent::GLOBAL_ROUTE;
   status_.reason = was_initialized
       ? NavigationModeReason::TASK_CHANGED
@@ -186,7 +197,6 @@ void NavigationModeManager::initializeForTask(
   status_.avoidance_cycle_count = 0;
 
   active_task_sequence_ = task.sequence;
-  active_task_mode_ = task.mode;
 
   resetBlockedEvidence();
   resetClearEvidence();
@@ -373,7 +383,6 @@ NavigationModeOutput NavigationModeManager::update(
   status_.task_sequence = task.sequence;
   status_.avoidance_allowed =
       taskAllowsAvoidance(task.mode);
-  active_task_mode_ = task.mode;
 
   // --- 5. Progress validation ---
 
@@ -423,6 +432,8 @@ NavigationModeOutput NavigationModeManager::update(
 
     // Transient corridor unavailable.
     status_.corridor_available = false;
+    status_.route_blocked = false;
+    status_.route_blocked_near = false;
     resetBlockedEvidence();
     resetClearEvidence();
     resetRejoinEvidence();
@@ -520,34 +531,28 @@ NavigationModeOutput NavigationModeManager::update(
             {
               blocked_since_sec_ = now_sec;
               blocked_timer_active_ = true;
-              status_.blocked_confirm_elapsed_sec = 0.0;
-              status_.reason =
+            }
+
+            const double elapsed =
+                now_sec - blocked_since_sec_;
+            status_.blocked_confirm_elapsed_sec =
+                elapsed;
+
+            if (elapsed + kTimeEpsilonSec >=
+                config_.avoid_block_confirm_sec)
+            {
+              transitionTo(
+                  NavigationMode::LOCAL_AVOID,
                   NavigationModeReason::
-                      BLOCK_CONFIRMING;
+                      BLOCK_CONFIRMED,
+                  progress,
+                  now_sec);
             }
             else
             {
-              const double elapsed =
-                  now_sec - blocked_since_sec_;
-              status_.blocked_confirm_elapsed_sec =
-                  elapsed;
-
-              if (elapsed + kTimeEpsilonSec >=
-                  config_.avoid_block_confirm_sec)
-              {
-                transitionTo(
-                    NavigationMode::LOCAL_AVOID,
-                    NavigationModeReason::
-                        BLOCK_CONFIRMED,
-                    progress,
-                    now_sec);
-              }
-              else
-              {
-                status_.reason =
-                    NavigationModeReason::
-                        BLOCK_CONFIRMING;
-              }
+              status_.reason =
+                  NavigationModeReason::
+                      BLOCK_CONFIRMING;
             }
           }
         }
@@ -668,6 +673,9 @@ NavigationModeOutput NavigationModeManager::update(
       }
       else  // is_clear
       {
+        // CLEAR breaks continuity of any previous blocked evidence.
+        resetBlockedEvidence();
+
         // Check robot validity.
         if (!robot.valid)
         {

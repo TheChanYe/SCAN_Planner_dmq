@@ -101,7 +101,6 @@ private:
   NavigationModeStatus status_{};
 
   std::uint64_t active_task_sequence_{0};
-  TaskMode active_task_mode_{TaskMode::NORMAL_AVOID};
 
   double last_update_stamp_sec_{0.0};
   bool has_last_update_stamp_{false};

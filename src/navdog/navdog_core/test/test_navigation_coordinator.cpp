@@ -2634,6 +2634,110 @@ TEST(NavigationCoordinatorTest, NewTaskDoesNotReuseRejoinAnchor)
   EXPECT_FALSE(output.navigation_mode.has_rejoin_anchor);
 }
 
+// =============================================================================
+// 29.20 TrackingUnavailableCorridorClearsBlockedFlags
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingUnavailableCorridorClearsBlockedFlags)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.3, 1.0);
+  coordinator.update(input, 1.3);
+
+  // Next frame: no corridor observation.
+  CoreInput no_corridor = makeRobotInput(3, 0, 0);
+  CoreOutput output = coordinator.update(no_corridor, 1.4);
+
+  EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_FALSE(output.navigation_mode.corridor_available);
+  EXPECT_FALSE(output.navigation_mode.route_blocked);
+  EXPECT_FALSE(output.navigation_mode.route_blocked_near);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source,
+            CommandSource::TRACKING_STOP);
+}
+
+// =============================================================================
+// 29.21 TrackingRejoinBlockClearBlockRequiresFreshConfirmation
+// =============================================================================
+
+TEST(NavigationCoordinatorTest, TrackingRejoinBlockClearBlockRequiresFreshConfirmation)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  CoreInput input = makeRobotInput(3, 0, 0);
+
+  // Init + immediate block → LOCAL_AVOID.
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 1.3);
+  coordinator.update(input, 1.3);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 1.4, 0.5);
+  coordinator.update(input, 1.4);
+
+  // CLEAR → ROUTE_REJOIN.
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.0);
+  coordinator.update(input, 2.0);
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.4);
+  coordinator.update(input, 2.4);
+  // Extra update to start rejoin timer.
+  coordinator.update(input, 2.4);
+
+  // ROUTE_REJOIN: near BLOCKED at 1.0m — start blocked timer.
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.5, 1.0);
+  coordinator.update(input, 2.5);
+
+  // CLEAR — resets blocked timer.
+  input.route_corridor_observation =
+      makeClearScanObservation(1u, 3.0, 2.6);
+  coordinator.update(input, 2.6);
+
+  // BLOCKED again at 1.0m — timer should start fresh.
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.7, 1.0);
+  CoreOutput output = coordinator.update(input, 2.7);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_REJOIN);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::BLOCK_CONFIRMING);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source,
+            CommandSource::TRACKING_STOP);
+
+  // Continue BLOCKED — only 0.1s since fresh start, not enough.
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.8, 1.0);
+  output = coordinator.update(input, 2.8);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::ROUTE_REJOIN);
+
+  // 0.2s continuous — should enter LOCAL_AVOID.
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 3.0, 2.9, 1.0);
+  output = coordinator.update(input, 2.9);
+  EXPECT_EQ(output.navigation_mode.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.navigation_mode.reason,
+            NavigationModeReason::REJOIN_BLOCKED);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.vy, 0.0);
+  EXPECT_DOUBLE_EQ(output.final_cmd.yaw_rate, 0.0);
+  EXPECT_EQ(output.final_cmd.source,
+            CommandSource::TRACKING_STOP);
+}
+
 }  // namespace
 }  // namespace navdog
 

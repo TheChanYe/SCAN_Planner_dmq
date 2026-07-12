@@ -1121,6 +1121,240 @@ TEST(NavigationModeManagerTest, FatalCorridorReturnsInvalidResult)
                 INVALID_CORRIDOR_RESULT);
 }
 
+// =============================================================================
+// Fix: ROUTE_REJOIN blocked confirmation continuity
+// =============================================================================
+
+TEST(NavigationModeManagerTest, RejoinClearResetsBlockedConfirmation)
+{
+  NavigationModeManager manager;
+  enterRouteRejoin(manager);
+  NavigationTask task = makeValidTask();
+  // Lateral error 0.5m > 0.2m to avoid completing rejoin.
+  RouteProgress progress =
+      makeProgress(1, 1.0, 0.5, 0.0);
+
+  // t=2.10: BLOCKED at 1.0m, start blocked timer.
+  manager.update(task, makeRobot(), progress,
+                 makeBlockedCorridor(1, 1.0), 2.10);
+
+  // t=2.20: CLEAR, not aligned — blocked timer should be reset.
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 2.20);
+
+  // t=2.30: BLOCKED again — timer starts fresh, elapsed=0.
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), progress,
+      makeBlockedCorridor(1, 1.0), 2.30);
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::ROUTE_REJOIN);
+  EXPECT_EQ(output.status.reason,
+            NavigationModeReason::BLOCK_CONFIRMING);
+  EXPECT_DOUBLE_EQ(
+      output.status.blocked_confirm_elapsed_sec, 0.0);
+
+  // t=2.40: continue BLOCKED, elapsed=0.10 < 0.20.
+  output = manager.update(
+      task, makeRobot(), progress,
+      makeBlockedCorridor(1, 1.0), 2.40);
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::ROUTE_REJOIN);
+
+  // t=2.50: continuous BLOCKED reaches 0.20s → LOCAL_AVOID.
+  output = manager.update(
+      task, makeRobot(), progress,
+      makeBlockedCorridor(1, 1.0), 2.50);
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason,
+            NavigationModeReason::REJOIN_BLOCKED);
+}
+
+// =============================================================================
+// Fix: Zero confirm time same-cycle switch
+// =============================================================================
+
+TEST(NavigationModeManagerTest, ZeroBlockConfirmEntersAvoidSameCycle)
+{
+  NavigationModeConfig config;
+  config.avoid_block_confirm_sec = 0.0;
+  NavigationModeManager manager(config);
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+
+  // Init with CLEAR.
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  // BLOCKED at 1.0m (> 0.8m, <= 1.5m), confirm=0 → same cycle.
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), progress,
+      makeBlockedCorridor(1, 1.0), 2.0);
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason,
+            NavigationModeReason::BLOCK_CONFIRMED);
+  EXPECT_EQ(output.status.avoidance_cycle_count, 1u);
+}
+
+// =============================================================================
+// Fix: RouteProgress numeric validation
+// =============================================================================
+
+TEST(NavigationModeManagerTest, RejectsNaNProgressArcLength)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  RouteProgress bad = makeProgress(1, 0.0);
+  bad.arc_length_m =
+      std::numeric_limits<double>::quiet_NaN();
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), bad,
+      makeClearCorridor(1), 2.0);
+  EXPECT_EQ(output.result,
+            NavigationModeUpdateResult::INVALID_PROGRESS);
+}
+
+TEST(NavigationModeManagerTest, RejectsNegativeProgressArcLength)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  RouteProgress bad = makeProgress(1, 0.0);
+  bad.arc_length_m = -1.0;
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), bad,
+      makeClearCorridor(1), 2.0);
+  EXPECT_EQ(output.result,
+            NavigationModeUpdateResult::INVALID_PROGRESS);
+}
+
+TEST(NavigationModeManagerTest, RejectsNaNProgressLateralError)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  RouteProgress bad = makeProgress(1, 0.0);
+  bad.lateral_error_m =
+      std::numeric_limits<double>::quiet_NaN();
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), bad,
+      makeClearCorridor(1), 2.0);
+  EXPECT_EQ(output.result,
+            NavigationModeUpdateResult::INVALID_PROGRESS);
+}
+
+TEST(NavigationModeManagerTest, RejectsNaNProgressRouteYaw)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  RouteProgress bad = makeProgress(1, 0.0);
+  bad.route_yaw =
+      std::numeric_limits<double>::quiet_NaN();
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), bad,
+      makeClearCorridor(1), 2.0);
+  EXPECT_EQ(output.result,
+            NavigationModeUpdateResult::INVALID_PROGRESS);
+}
+
+TEST(NavigationModeManagerTest, RejectsNonFiniteProgressStamp)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  RouteProgress bad = makeProgress(1, 0.0);
+  bad.stamp_sec =
+      std::numeric_limits<double>::infinity();
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), bad,
+      makeClearCorridor(1), 2.0);
+  EXPECT_EQ(output.result,
+            NavigationModeUpdateResult::INVALID_PROGRESS);
+}
+
+// =============================================================================
+// Fix: Corridor unavailable clears blocked flags
+// =============================================================================
+
+TEST(NavigationModeManagerTest, UnavailableCorridorClearsBlockedFlags)
+{
+  NavigationModeManager manager;
+  NavigationTask task = makeValidTask();
+  RouteProgress progress = makeProgress(1, 0.0);
+
+  // Init with CLEAR.
+  manager.update(task, makeRobot(), progress,
+                 makeClearCorridor(1), 1.0);
+
+  // BLOCKED → route_blocked = true.
+  manager.update(task, makeRobot(), progress,
+                 makeBlockedCorridor(1, 1.0), 2.0);
+  EXPECT_TRUE(manager.status().route_blocked);
+
+  // Unavailable corridor → flags cleared.
+  NavigationModeOutput output = manager.update(
+      task, makeRobot(), progress,
+      makeUnavailableCorridor(), 3.0);
+  EXPECT_FALSE(output.status.corridor_available);
+  EXPECT_FALSE(output.status.route_blocked);
+  EXPECT_FALSE(output.status.route_blocked_near);
+  EXPECT_EQ(output.status.reason,
+            NavigationModeReason::WAITING_FOR_CORRIDOR);
+  // Mode stays the same (ROUTE_FOLLOW).
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::ROUTE_FOLLOW);
+}
+
+// =============================================================================
+// Fix: New task previous_mode is NONE
+// =============================================================================
+
+TEST(NavigationModeManagerTest, NewTaskPreviousModeIsNone)
+{
+  NavigationModeManager manager;
+  NavigationTask task1 = makeValidTask();
+  RouteProgress p1 = makeProgress(1, 1.0);
+
+  // Task 1: enter LOCAL_AVOID.
+  manager.update(task1, makeRobot(), p1,
+                 makeBlockedCorridor(1, 0.5), 1.0);
+  EXPECT_EQ(manager.status().mode,
+            NavigationMode::LOCAL_AVOID);
+
+  // Task 2: new sequence.
+  NavigationTask task2 = makeValidTask(2);
+  RouteProgress p2 = makeProgress(2, 0.0);
+  NavigationModeOutput output = manager.update(
+      task2, makeRobot(), p2,
+      makeClearCorridor(2), 2.0);
+  EXPECT_EQ(output.status.mode,
+            NavigationMode::ROUTE_FOLLOW);
+  EXPECT_EQ(output.status.previous_mode,
+            NavigationMode::NONE);
+  EXPECT_EQ(output.status.reason,
+            NavigationModeReason::TASK_CHANGED);
+  EXPECT_EQ(output.status.avoidance_cycle_count, 0u);
+  EXPECT_FALSE(output.status.has_rejoin_anchor);
+}
+
 }  // namespace
 }  // namespace navdog
 

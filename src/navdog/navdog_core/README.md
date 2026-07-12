@@ -196,6 +196,12 @@ ROUTE_FOLLOW
 ROUTE_REJOIN 途中重新 BLOCKED
 → 返回 LOCAL_AVOID（avoidance_cycle_count +1）
 
+普通阻塞确认必须连续成立。
+ROUTE_REJOIN 中任何 CLEAR 帧都会清除之前的 blocked confirmation。
+
+确认时间配置为 0 时，
+条件首次满足即可在同一 update 完成切换。
+
 ROUTE_ONLY
 → 不进入 LOCAL_AVOID
 → 始终保持 ROUTE_FOLLOW
@@ -208,7 +214,9 @@ CHARGING
 
 Corridor 暂时不可用（WAITING_FOR_OBSERVATION / STALE_MAP 等）
 → 保持当前模式
-→ 清零所有确认计时器
+→ 清除所有连续确认计时器
+→ route_blocked 和 route_blocked_near 置 false
+→ 不清除当前任务和绕障轮次
 → 不进入 FAILED
 
 Corridor 内部错误（INVALID_TIME / INVALID_CONFIG / INVALID_PROGRESS）
