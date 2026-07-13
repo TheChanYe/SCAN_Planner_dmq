@@ -580,17 +580,6 @@ navdog::PlannerFeedback NavdogRuntimeNode::feedbackForAction(
 
 void NavdogRuntimeNode::publisherCheckCallback(const ros::TimerEvent&)
 {
-  // A temporary ROS Master outage must never block the single-threaded
-  // control/MQTT callback queue or latch a false cmd_vel conflict.
-  if (!ros::master::check())
-  {
-    ROS_WARN_THROTTLE(
-        5.0,
-        "ROS Master temporarily unavailable; "
-        "skip cmd_vel publisher check");
-    return;
-  }
-
   if (!hasUniqueCmdVelPublisher())
   {
     if (!cmd_vel_conflict_latched_)
@@ -882,7 +871,7 @@ bool NavdogRuntimeNode::hasUniqueCmdVelPublisher()
   const std::string resolved = nh_.resolveName(cmd_vel_topic_);
   XmlRpc::XmlRpcValue args, result, payload;
   args[0] = ros::this_node::getName();
-  if (!ros::master::execute("getSystemState", args, result, payload, false) ||
+  if (!ros::master::execute("getSystemState", args, result, payload, true) ||
       payload.getType() != XmlRpc::XmlRpcValue::TypeArray || payload.size() < 1)
     return false;
   const auto& publishers = payload[0];
