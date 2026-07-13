@@ -871,25 +871,6 @@ namespace scan_planner
 
     getLocalTarget();
 
-    // Never pass NaN/Inf into SCAN optimizer.
-    if (!start_pt_.allFinite() ||
-        !start_vel_.allFinite() ||
-        !start_acc_.allFinite() ||
-        !local_target_pt_.allFinite() ||
-        !local_target_vel_.allFinite())
-    {
-      ROS_ERROR_THROTTLE(
-          1.0,
-          "[SCANReplanFSM] Invalid planning state: "
-          "start=(%.3f %.3f %.3f), "
-          "target=(%.3f %.3f %.3f)",
-          start_pt_(0), start_pt_(1), start_pt_(2),
-          local_target_pt_(0),
-          local_target_pt_(1),
-          local_target_pt_(2));
-      return false;
-    }
-
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     have_new_target_ = false;
@@ -971,180 +952,78 @@ namespace scan_planner
 
   void SCANReplanFSM::getLocalTarget()
   {
-    auto &global_data = planner_manager_->global_data_;
+    double t;
 
-    const double duration = global_data.global_duration_;
-    const double max_vel = planner_manager_->pp_.max_vel_;
-
-    // Always initialize outputs to finite fallback values.
-    local_target_pt_ = end_pt_;
-    local_target_vel_.setZero();
-
-    if (!start_pt_.allFinite() ||
-        !end_pt_.allFinite() ||
-        !std::isfinite(duration) ||
-        duration <= 1e-6 ||
-        !std::isfinite(max_vel) ||
-        max_vel <= 1e-6 ||
-        !std::isfinite(planning_horizon_) ||
-        planning_horizon_ <= 0.0)
+    double t_step = planning_horizon_ / 20 / planner_manager_->pp_.max_vel_;
+    double dist_min = 9999, dist_min_t = 0.0;
+    double target_t = planner_manager_->global_data_.global_duration_;
+    for (t = planner_manager_->global_data_.last_progress_time_; t < planner_manager_->global_data_.global_duration_; t += t_step)
     {
-      ROS_ERROR_THROTTLE(
-          1.0,
-          "[getLocalTarget] invalid global trajectory or parameters");
-      return;
-    }
+      Eigen::Vector3d pos_t = planner_manager_->global_data_.getPosition(t);
+      double dist = (pos_t - start_pt_).norm();
 
-    const double t_step = std::max(
-        0.02,
-        planning_horizon_ / 20.0 / max_vel);
-
-    double progress_t = global_data.last_progress_time_;
-
-    if (!std::isfinite(progress_t))
-      progress_t = 0.0;
-
-    progress_t = std::max(
-        0.0,
-        std::min(progress_t, duration));
-
-    double dist_min = 1e100;
-    double dist_min_t = progress_t;
-    double target_t = duration;
-    bool target_selected = false;
-
-    for (double t = progress_t;
-         t < duration - 1e-6;
-         t += t_step)
-    {
-      const double eval_t = std::max(
-          0.0,
-          std::min(t, duration));
-
-      const Eigen::Vector3d pos_t =
-          global_data.getPosition(eval_t);
-
-      if (!pos_t.allFinite())
-        continue;
-
-      const double dist = (pos_t - start_pt_).norm();
-
-      if (!std::isfinite(dist))
-        continue;
-
+      if (t < planner_manager_->global_data_.last_progress_time_ + 1e-5 && dist > planning_horizon_)
+      {
+        ROS_ERROR_STREAM("[getLocalTarget] last_progress_time mismatch: "
+                         << "dist_to_progress_pt=" << dist
+                         << ", planning_horizon=" << planning_horizon_
+                         << ", last_progress_time=" << planner_manager_->global_data_.last_progress_time_);
+        local_target_pt_ = pos_t;
+        target_t = t;
+        planner_manager_->global_data_.last_progress_time_ = t;
+        break;
+      }
       if (dist < dist_min)
       {
         dist_min = dist;
-        dist_min_t = eval_t;
+        dist_min_t = t;
       }
-
       if (dist >= planning_horizon_)
       {
         local_target_pt_ = pos_t;
-        target_t = eval_t;
-        global_data.last_progress_time_ = dist_min_t;
-        target_selected = true;
+        target_t = t;
+        planner_manager_->global_data_.last_progress_time_ = dist_min_t;
         break;
       }
     }
-
-    // The old code used `t > duration`, which misses t == duration.
-    if (!target_selected)
+    if (t > planner_manager_->global_data_.global_duration_) // Last global point
     {
       local_target_pt_ = end_pt_;
-      target_t = duration;
-      global_data.last_progress_time_ = dist_min_t;
+      target_t = planner_manager_->global_data_.global_duration_;
     }
 
-    auto sampleGlobalPosition =
-        [&](double query_t, Eigen::Vector3d &point) -> bool
-    {
-      if (!std::isfinite(query_t))
-        return false;
-
-      query_t = std::max(
-          0.0,
-          std::min(query_t, duration));
-
-      if (query_t >= duration - 1e-6)
-        point = end_pt_;
-      else
-        point = global_data.getPosition(query_t);
-
-      return point.allFinite();
+    auto targetOccupancy = [&](const Eigen::Vector3d &pt) {
+      return planner_manager_->grid_map_->getInflateOccupancy(pt, estimateYawFromSegment(odom_pos_, pt));
     };
 
-    auto targetIsFree =
-        [&](const Eigen::Vector3d &point) -> bool
-    {
-      if (!point.allFinite() ||
-          !planner_manager_->grid_map_)
-      {
-        return false;
-      }
-
-      const double yaw =
-          estimateYawFromSegment(odom_pos_, point);
-
-      if (!std::isfinite(yaw))
-        return false;
-
-      return planner_manager_->grid_map_
-                 ->getInflateOccupancy(point, yaw) == 0;
-    };
-
-    bool target_adjusted = false;
-
-    if (!targetIsFree(local_target_pt_))
+    if (targetOccupancy(local_target_pt_) != 0)
     {
       bool found_free_target = false;
       double adjusted_t = target_t;
 
-      const double lower_t = std::max(
-          0.0,
-          std::min(dist_min_t, duration));
-
-      const int max_steps = std::max(
-          1,
-          static_cast<int>(
-              std::ceil(duration / t_step)) + 2);
-
-      for (int i = 0; i <= max_steps; ++i)
+      for (double dt = 0.0; dt <= planner_manager_->global_data_.global_duration_; dt += t_step)
       {
-        const double dt =
-            static_cast<double>(i) * t_step;
-
-        const double forward_t = target_t + dt;
-
-        if (forward_t <= duration + 1e-6)
+        double t_forward = target_t + dt;
+        if (t_forward <= planner_manager_->global_data_.global_duration_)
         {
-          Eigen::Vector3d candidate;
-
-          if (sampleGlobalPosition(
-                  forward_t, candidate) &&
-              targetIsFree(candidate))
+          Eigen::Vector3d pt = planner_manager_->global_data_.getPosition(t_forward);
+          if (targetOccupancy(pt) == 0)
           {
-            local_target_pt_ = candidate;
-            adjusted_t = std::min(
-                forward_t, duration);
+            local_target_pt_ = pt;
+            adjusted_t = t_forward;
             found_free_target = true;
             break;
           }
         }
 
-        const double backward_t = target_t - dt;
-
-        if (backward_t >= lower_t - 1e-6)
+        double t_backward = target_t - dt;
+        if (t_backward >= std::max(0.0, dist_min_t))
         {
-          Eigen::Vector3d candidate;
-
-          if (sampleGlobalPosition(
-                  backward_t, candidate) &&
-              targetIsFree(candidate))
+          Eigen::Vector3d pt = planner_manager_->global_data_.getPosition(t_backward);
+          if (targetOccupancy(pt) == 0)
           {
-            local_target_pt_ = candidate;
-            adjusted_t = std::max(
-                backward_t, lower_t);
+            local_target_pt_ = pt;
+            adjusted_t = t_backward;
             found_free_target = true;
             break;
           }
@@ -1153,73 +1032,25 @@ namespace scan_planner
 
       if (found_free_target)
       {
+        ROS_WARN_THROTTLE(1.0, "Local target in collision, adjusted to a nearby collision-free point.");
         target_t = adjusted_t;
-        target_adjusted = true;
-
-        ROS_WARN_THROTTLE(
-            1.0,
-            "[getLocalTarget] occupied target adjusted "
-            "to finite free target: "
-            "(%.3f %.3f %.3f), t=%.3f",
-            local_target_pt_(0),
-            local_target_pt_(1),
-            local_target_pt_(2),
-            target_t);
       }
       else
       {
-        ROS_ERROR_THROTTLE(
-            1.0,
-            "[getLocalTarget] no finite collision-free "
-            "target found; keep finite fallback");
+        ROS_WARN_THROTTLE(1.0, "Local target in collision and no nearby collision-free target was found.");
       }
     }
 
-    const double braking_distance =
-        max_vel * max_vel /
-        (2.0 * planner_manager_->pp_.max_acc_);
-
-    const double remaining =
-        (end_pt_ - local_target_pt_).norm();
-
-    if (!std::isfinite(remaining) ||
-        remaining <= braking_distance ||
-        target_t >= duration - 1e-6)
+    if ((end_pt_ - local_target_pt_).norm() < (planner_manager_->pp_.max_vel_ * planner_manager_->pp_.max_vel_) / (2 * planner_manager_->pp_.max_acc_))
     {
-      local_target_vel_.setZero();
+      // local_target_vel_ = (end_pt_ - init_pt_).normalized() * planner_manager_->pp_.max_vel_ * (( end_pt_ - local_target_pt_ ).norm() / ((planner_manager_->pp_.max_vel_*planner_manager_->pp_.max_vel_)/(2*planner_manager_->pp_.max_acc_)));
+      // cout << "A" << endl;
+      local_target_vel_ = Eigen::Vector3d::Zero();
     }
     else
     {
-      const double velocity_t = std::max(
-          0.0,
-          std::min(target_t, duration - 1e-6));
-
-      const Eigen::Vector3d target_velocity =
-          global_data.getVelocity(velocity_t);
-
-      if (target_velocity.allFinite())
-        local_target_vel_ = target_velocity;
-      else
-        local_target_vel_.setZero();
-    }
-
-    // An adjusted collision-free endpoint may stop safely.
-    if (target_adjusted &&
-        !local_target_vel_.allFinite())
-    {
-      local_target_vel_.setZero();
-    }
-
-    // Final fail-closed finite guarantee.
-    if (!local_target_pt_.allFinite())
-    {
-      ROS_ERROR_THROTTLE(
-          1.0,
-          "[getLocalTarget] generated invalid point; "
-          "fallback to final route target");
-
-      local_target_pt_ = end_pt_;
-      local_target_vel_.setZero();
+      local_target_vel_ = planner_manager_->global_data_.getVelocity(target_t);
+      // cout << "AA" << endl;
     }
   }
 
