@@ -95,6 +95,7 @@ namespace scan_planner
     ros::param::param<std::string>("/body_pose_topic", body_pose_topic, std::string("/quad_0/body_pose"));
     odom_sub_ = nh.subscribe(body_pose_topic, 1, &SCANReplanFSM::odometryCallback, this);
     go2_execution_frozen_sub_ = nh.subscribe("/planning/go2_execution_frozen", 10, &SCANReplanFSM::go2ExecutionFrozenCallback, this);
+    reset_sub_ = nh.subscribe("/native_scan/reset", 1, &SCANReplanFSM::resetCallback, this);
 
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
     data_disp_pub_ = nh.advertise<scan_planner::DataDisp>("/planning/data_display", 100);
@@ -371,7 +372,9 @@ namespace scan_planner
       Eigen::Vector3d wp;
       wp(0) = pose_stamped.pose.position.x;
       wp(1) = pose_stamped.pose.position.y;
-      wp(2) = pose_stamped.pose.position.z + body_height_; // Adjust for body height
+      // Reference-path navigation is planar. Keep every waypoint on the
+      // robot's current odometry height; do not add body height a second time.
+      wp(2) = odom_pos_(2);
       waypoints.push_back(wp);
     }
     bool success = planGlobalTrajByWaypoints(waypoints);
@@ -394,6 +397,19 @@ namespace scan_planner
     {
       ROS_ERROR("❌ Unable to generate global trajectory!");
     }
+  }
+
+  void SCANReplanFSM::resetCallback(const std_msgs::EmptyConstPtr &)
+  {
+    trigger_ = false;
+    have_target_ = false;
+    have_new_target_ = false;
+    active_waypoints_.clear();
+    current_wp_ = 0;
+    replan_fail_count_ = 0;
+    need_hover_stop_ = false;
+    exec_state_ = WAIT_TARGET;
+    ROS_WARN("[SCANReplanFSM] native takeover state reset");
   }
 
   void SCANReplanFSM::odometryCallback(const nav_msgs::OdometryConstPtr &msg)

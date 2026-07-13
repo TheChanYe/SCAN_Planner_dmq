@@ -5,6 +5,7 @@
 #include <tf/transform_datatypes.h>
 #include <xmlrpcpp/XmlRpcValue.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -371,7 +372,9 @@ bool NavdogRuntimeNode::initialize()
   status_rate_hz_ = config.runtime.status_rate_hz;
 
   private_nh_.param<std::string>("odom_topic", odom_topic_, "/quad_0/body_pose");
-  private_nh_.param<std::string>("cmd_vel_topic", cmd_vel_topic_, "/cmd_vel");
+  private_nh_.param<std::string>("cmd_vel_topic", cmd_vel_topic_,
+                                 "/navdog/route_cmd_vel");
+  private_nh_.param("native_scan_takeover", native_scan_takeover_, true);
   private_nh_.param("odom_twist_in_world_frame", odom_twist_in_world_frame_, true);
 
   planner_manager_ = std::make_shared<scan_planner::SCANPlannerManager>();
@@ -386,8 +389,11 @@ bool NavdogRuntimeNode::initialize()
   grid_query_ = std::make_shared<navdog_scan_adapter::ScanGridMapQuery>(
       planner_manager_->grid_map_);
   occupancy_query_ = std::make_shared<navdog_scan_adapter::OccupancyQueryAdapter>(grid_query_);
-  local_planner_adapter_.reset(new navdog_scan_adapter::ScanLocalPlannerAdapter(
-      coordinator_.config().planner_trigger, grid_query_, planner_manager_));
+  if (!native_scan_takeover_)
+  {
+    local_planner_adapter_.reset(new navdog_scan_adapter::ScanLocalPlannerAdapter(
+        coordinator_.config().planner_trigger, grid_query_, planner_manager_));
+  }
   corridor_evaluator_.reset(new navdog_scan_adapter::ScanRouteCorridorEvaluator3D(
       coordinator_.config().route_corridor, grid_query_));
   obstacle_evaluator_.reset(new navdog_scan_adapter::ScanObstacleSummaryEvaluator3D(
@@ -463,6 +469,13 @@ bool NavdogRuntimeNode::initialize()
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
   final_cmd_publisher_ = nh_.advertise<geometry_msgs::TwistStamped>("/navdog/final_cmd", 1);
+  control_owner_publisher_ =
+      nh_.advertise<std_msgs::UInt8>("/navdog/control_owner", 1, true);
+  native_scan_path_publisher_ =
+      nh_.advertise<nav_msgs::Path>("/native_scan/initial_path", 1, false);
+  native_scan_reset_publisher_ =
+      nh_.advertise<std_msgs::Empty>("/native_scan/reset", 1);
+  setControlOwner(0);
   control_timer_ = nh_.createTimer(ros::Duration(1.0 / control_rate_hz_),
       &NavdogRuntimeNode::controlCallback, this);
 
@@ -510,6 +523,8 @@ void NavdogRuntimeNode::processEvents()
     const auto result = coordinator_.handleEvent(event);
     if (result == navdog::TaskHandleResult::STARTED)
     {
+      resetNativeScanTakeover(true);
+      setControlOwner(1);
       last_route_progress_ = navdog::RouteProgress{};
       navdog::NavigationTask active_task{};
       if (coordinator_.copyActiveTask(active_task)) publishRoute(active_task);
@@ -518,14 +533,22 @@ void NavdogRuntimeNode::processEvents()
     }
     else if (result == navdog::TaskHandleResult::CANCELLED)
     {
+      setControlOwner(0);
+      resetNativeScanTakeover(true);
       last_route_progress_ = navdog::RouteProgress{};
       pending_planner_feedback_ = navdog::PlannerFeedback{};
       ROS_INFO("task cancelled");
     }
     else if (result == navdog::TaskHandleResult::PAUSED)
+    {
+      setControlOwner(0);
       ROS_INFO("navigation paused");
+    }
     else if (result == navdog::TaskHandleResult::RESUMED)
+    {
+      setControlOwner(scan_takeover_active_ ? 2 : 1);
       ROS_INFO("navigation resumed");
+    }
     else if (result != navdog::TaskHandleResult::NONE)
       ROS_WARN("navigation event result=%u", static_cast<unsigned>(result));
   }
@@ -593,6 +616,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   navdog::CoreOutput output = coordinator_.update(input, now_sec);
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
+  updateControlOwner(output, input.robot);
 
   // Compute effective command: start from final_cmd, override on conflict
   effective_command_ = output.final_cmd;
@@ -677,6 +701,134 @@ void NavdogRuntimeNode::publishRoute(const navdog::NavigationTask& task)
     path.poses.push_back(pose);
   }
   route_publisher_.publish(path);
+}
+
+bool NavdogRuntimeNode::publishNativeScanTakeoverPath(
+    const navdog::NavigationTask& task,
+    const navdog::RobotState& robot,
+    const navdog::RouteProgress& progress)
+{
+  if (!robot.valid || !progress.valid || task.points.empty() ||
+      progress.task_sequence != task.sequence ||
+      progress.segment_index >= task.points.size())
+  {
+    ROS_ERROR("cannot build native SCAN takeover path for task_sequence=%lu",
+              static_cast<unsigned long>(task.sequence));
+    return false;
+  }
+
+  nav_msgs::Path path;
+  path.header.stamp = ros::Time::now();
+  path.header.frame_id = "world";
+
+  const auto append_point = [&path, &robot](double x, double y)
+  {
+    geometry_msgs::PoseStamped pose;
+    pose.header = path.header;
+    pose.pose.position.x = x;
+    pose.pose.position.y = y;
+    pose.pose.position.z = robot.z;
+    pose.pose.orientation.w = 1.0;
+    path.poses.push_back(pose);
+  };
+
+  append_point(robot.x, robot.y);
+  const std::size_t next_index = std::min(
+      progress.segment_index + 1, task.points.size() - 1);
+  for (std::size_t i = next_index; i < task.points.size(); ++i)
+    append_point(task.points[i].x, task.points[i].y);
+
+  const auto& goal = task.points.back();
+  if (path.poses.back().pose.position.x != goal.x ||
+      path.poses.back().pose.position.y != goal.y)
+    append_point(goal.x, goal.y);
+
+  // Latch ownership before handing the route to SCAN. The mux emits a zero
+  // frame on this transition, so Navdog cannot keep driving while SCAN plans.
+  scan_takeover_active_ = true;
+  scan_takeover_task_sequence_ = task.sequence;
+  setControlOwner(2);
+  native_scan_path_publisher_.publish(path);
+  ROS_WARN("NATIVE_SCAN_TAKEOVER task_sequence=%lu remaining_points=%lu "
+           "start=(%.3f, %.3f, %.3f) goal=(%.3f, %.3f, %.3f)",
+           static_cast<unsigned long>(task.sequence),
+           static_cast<unsigned long>(path.poses.size()),
+           robot.x, robot.y, robot.z, goal.x, goal.y, robot.z);
+  return true;
+}
+
+void NavdogRuntimeNode::setControlOwner(std::uint8_t owner)
+{
+  if (owner > 2) owner = 0;
+  if (control_owner_ != owner)
+  {
+    static const char* names[] = {"STOP", "ROUTE", "SCAN"};
+    ROS_WARN("CONTROL_OWNER %s -> %s", names[control_owner_], names[owner]);
+    control_owner_ = owner;
+  }
+  std_msgs::UInt8 message;
+  message.data = control_owner_;
+  control_owner_publisher_.publish(message);
+}
+
+void NavdogRuntimeNode::resetNativeScanTakeover(bool publish_reset)
+{
+  scan_takeover_active_ = false;
+  scan_takeover_task_sequence_ = 0;
+  if (publish_reset)
+    native_scan_reset_publisher_.publish(std_msgs::Empty{});
+}
+
+void NavdogRuntimeNode::updateControlOwner(
+    const navdog::CoreOutput& output,
+    const navdog::RobotState& robot)
+{
+  if (output.state == navdog::NavState::PAUSED)
+  {
+    setControlOwner(0);
+    return;
+  }
+
+  if (output.state == navdog::NavState::IDLE ||
+      output.state == navdog::NavState::SUCCEEDED ||
+      output.state == navdog::NavState::FAILED ||
+      output.state == navdog::NavState::EMERGENCY_STOP)
+  {
+    setControlOwner(0);
+    if (scan_takeover_active_ || scan_takeover_task_sequence_ != 0)
+      resetNativeScanTakeover(true);
+    return;
+  }
+
+  navdog::NavigationTask task{};
+  const bool have_task = coordinator_.copyActiveTask(task);
+  if (native_scan_takeover_ && !scan_takeover_active_ && have_task &&
+      output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
+  {
+    if (!publishNativeScanTakeoverPath(task, robot, last_route_progress_))
+    {
+      setControlOwner(0);
+    }
+    return;
+  }
+
+  if (scan_takeover_active_)
+  {
+    // Ownership is latched for the rest of this task. ROUTE_REJOIN and
+    // ROUTE_FOLLOW transitions must never return velocity control to Navdog.
+    if (!have_task || task.sequence != scan_takeover_task_sequence_)
+    {
+      setControlOwner(0);
+      resetNativeScanTakeover(true);
+    }
+    else
+    {
+      setControlOwner(2);
+    }
+    return;
+  }
+
+  setControlOwner(have_task ? 1 : 0);
 }
 
 void NavdogRuntimeNode::statusForOutput(

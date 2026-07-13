@@ -34,6 +34,9 @@ add_dependencies(navdog_runtime ${catkin_EXPORTED_TARGETS})
 add_executable(navdog_runtime_node src/main.cpp)
 target_link_libraries(navdog_runtime_node navdog_runtime)
 
+add_executable(cmd_vel_owner_mux src/cmd_vel_owner_mux.cpp)
+target_link_libraries(cmd_vel_owner_mux ${catkin_LIBRARIES})
+
 if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(test_mqtt_bridge test/test_mqtt_bridge.cpp)
   if(TARGET test_mqtt_bridge)
@@ -49,7 +52,7 @@ if(CATKIN_ENABLE_TESTING)
   endif()
 endif()
 
-install(TARGETS navdog_runtime navdog_runtime_node
+install(TARGETS navdog_runtime navdog_runtime_node cmd_vel_owner_mux
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

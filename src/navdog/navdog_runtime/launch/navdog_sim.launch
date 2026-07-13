@@ -25,6 +25,14 @@
     <arg name="init_z" value="$(arg init_z)"/>
   </include>
 
+  <include file="$(find scan_planner_dmq)/launch/native_scan_takeover.launch"/>
+
+  <node pkg="navdog_runtime" type="cmd_vel_owner_mux"
+        name="cmd_vel_owner_mux" output="screen">
+    <param name="route_cmd_timeout" value="0.30"/>
+    <param name="scan_cmd_timeout" value="0.30"/>
+  </node>
+
   <node pkg="navdog_runtime" type="navdog_runtime_node"
         name="navdog_runtime" output="screen">
     <rosparam command="load" file="$(find navdog_runtime)/config/navdog_sim.yaml"/>

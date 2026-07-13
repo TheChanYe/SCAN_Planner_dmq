@@ -15,6 +15,7 @@
 #include <nav_msgs/Path.h>
 #include <plan_manage_dmq/planner_manager.h>
 #include <ros/ros.h>
+#include <std_msgs/Empty.h>
 #include <std_msgs/UInt8.h>
 
 #include <memory>
@@ -49,6 +50,14 @@ private:
   void publishDebug(const navdog::CoreOutput& output, double now_sec,
                     const navdog::VelocityCommand& effective_cmd);
   void publishRoute(const navdog::NavigationTask& task);
+  bool publishNativeScanTakeoverPath(
+      const navdog::NavigationTask& task,
+      const navdog::RobotState& robot,
+      const navdog::RouteProgress& progress);
+  void setControlOwner(std::uint8_t owner);
+  void resetNativeScanTakeover(bool publish_reset);
+  void updateControlOwner(const navdog::CoreOutput& output,
+                          const navdog::RobotState& robot);
   void publishMqttStatus(const navdog::CoreOutput& output);
   bool hasUniqueCmdVelPublisher();
   bool hasUniqueCmdVelPublisherCached() const;
@@ -71,6 +80,9 @@ private:
   ros::Publisher state_publisher_;
   ros::Publisher mode_publisher_;
   ros::Publisher final_cmd_publisher_;
+  ros::Publisher control_owner_publisher_;
+  ros::Publisher native_scan_path_publisher_;
+  ros::Publisher native_scan_reset_publisher_;
   ros::Timer control_timer_;
   ros::Timer publisher_check_timer_;
 
@@ -86,6 +98,11 @@ private:
   navdog::VelocityCommand effective_command_{};
   bool cmd_vel_conflict_{false};
   bool cmd_vel_conflict_latched_{false};
+
+  bool native_scan_takeover_{true};
+  bool scan_takeover_active_{false};
+  std::uint64_t scan_takeover_task_sequence_{0};
+  std::uint8_t control_owner_{0};
 
   std::string odom_topic_;
   std::string cmd_vel_topic_;
