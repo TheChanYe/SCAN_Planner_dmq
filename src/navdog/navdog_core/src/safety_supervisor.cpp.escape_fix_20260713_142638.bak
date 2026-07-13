@@ -362,19 +362,9 @@ VelocityCommand SafetySupervisor::apply(
       context.obstacles.front_min <=
           safety_config_.emergency_stop;
 
-  const bool local_escape_active =
-      context.trajectory.valid &&
-      context.trajectory.purpose ==
-          NavigationMode::LOCAL_AVOID &&
-      context.trajectory.task_sequence != 0;
-
-  constexpr double kLocalEscapeForwardCapMps = 0.06;
-
-  if (front_emergency_stop && raw_cmd.vx > 0.0)
+  if (front_emergency_stop && limited_vx > 0.0)
   {
-    limited_vx = local_escape_active
-        ? std::min(raw_cmd.vx, kLocalEscapeForwardCapMps)
-        : 0.0;
+    limited_vx = 0.0;
   }
 
   // Acceleration limits.
@@ -409,11 +399,9 @@ VelocityCommand SafetySupervisor::apply(
 
   // Acceleration limiting must never reintroduce positive
   // forward velocity while the front emergency condition exists.
-  if (front_emergency_stop && raw_cmd.vx > 0.0)
+  if (front_emergency_stop && limited_vx > 0.0)
   {
-    limited_vx = local_escape_active
-        ? std::min(raw_cmd.vx, kLocalEscapeForwardCapMps)
-        : 0.0;
+    limited_vx = 0.0;
   }
 
   VelocityCommand cmd{};

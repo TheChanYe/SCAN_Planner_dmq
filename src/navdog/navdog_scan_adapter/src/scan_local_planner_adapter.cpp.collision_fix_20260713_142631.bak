@@ -14,12 +14,7 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kSampleDtSec = 0.05;
-
-// Ignore the trajectory's immediate start section. The robot's current
-// footprint can already overlap the conservative inflated layer when
-// LOCAL_AVOID starts. Checking t=0 would reject every escape trajectory.
-constexpr double kCollisionStartGraceSec = 0.30;
-constexpr double kCollisionLookAheadSec = 0.05;
+constexpr double kCollisionLookBehindSec = 0.05;
 
 double rosTimeToSec(const ros::Time& t)
 {
@@ -428,11 +423,8 @@ bool ScanLocalPlannerAdapter::checkTrajectoryCollision(
   if (!grid_query_ || !grid_query_->ready())
     return true;
 
-  // Check only the future part of the trajectory. Do not repeatedly
-  // reject the current robot footprint or already executed samples.
-  const double t_start = std::max(
-      kCollisionStartGraceSec,
-      from_time_sec + kCollisionLookAheadSec);
+  const double t_start =
+      std::max(0.0, from_time_sec - kCollisionLookBehindSec);
 
   for (const auto& point : trajectory.points)
   {
