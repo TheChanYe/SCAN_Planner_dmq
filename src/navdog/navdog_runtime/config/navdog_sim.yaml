@@ -80,3 +80,13 @@ trajectory_follower:
 planner_trigger:
   replan_retry_interval_sec: 0.3
   target_change_threshold_m: 0.5
+route_corridor_observation:
+  map_timeout_sec: 1.5
+  max_progress_lag_m: 0.5
+safety:
+  slow_down_front: 1.5
+  emergency_stop: 0.45
+  odom_timeout_sec: 0.5
+  obstacle_timeout_sec: 1.5
+  planner_cmd_timeout_sec: 0.3
+  future_tolerance_sec: 0.05
