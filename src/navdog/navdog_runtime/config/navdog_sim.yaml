@@ -5,7 +5,6 @@ cmd_vel_topic: /cmd_vel
 odom_twist_in_world_frame: true
 default_route_z: 0.3
 default_max_vx: 0.4
-
 mqtt:
   enabled: true
   host: 127.0.0.1
@@ -13,7 +12,6 @@ mqtt:
   keepalive_sec: 30
   client_id: navdog_runtime
   qos: 1
-
 manager:
   max_vel: 0.75
   max_acc: 0.5
@@ -21,7 +19,6 @@ manager:
   control_points_distance: 0.2
   feasibility_tolerance: 0.5
   planning_horizon: 7.5
-
 optimization:
   lambda_smooth: 1.0
   lambda_collision: 1.0
@@ -32,7 +29,6 @@ optimization:
   vel_tolerance: 1.0
   max_acc: 0.5
   acc_tolerance: 1.0
-
 grid_map:
   need_extrinsic: false
   sensor_type: lidar
@@ -47,9 +43,40 @@ grid_map:
   obstacles_inflation_z_up: 0.1
   obstacles_inflation_z_down: 0.4
   p_hit: 0.85
-  p_miss: 0.30
+  p_miss: 0.3
   p_min: 0.12
   p_max: 0.98
-  p_occ: 0.80
+  p_occ: 0.8
   max_ray_length: 5.0
   vis_height: 0.3
+limits:
+  max_vx: 0.5
+  max_vy: 0.12
+  max_yaw_rate: 0.65
+  max_accel_x: 0.5
+  max_accel_y: 0.25
+  max_accel_yaw: 0.8
+navigation_mode:
+  avoid_enter_distance_m: 1.5
+  avoid_immediate_distance_m: 1.5
+  avoid_block_confirm_sec: 0.01
+  local_avoid_min_hold_sec: 0.5
+  route_clear_confirm_sec: 0.4
+  rejoin_lateral_tolerance_m: 0.2
+  rejoin_heading_tolerance_rad: 0.20944
+  rejoin_confirm_sec: 0.3
+route_follower:
+  lookahead_distance_m: 0.6
+  kp_x: 0.8
+  kp_y: 0.6
+  kp_yaw: 1.2
+  heading_turn_only_threshold_rad: 0.2
+  max_vx: 0.5
+trajectory_follower:
+  time_forward_sec: 0.5
+  kp_pos: 0.8
+  kp_yaw: 1.5
+  heading_turn_only_threshold_rad: 0.2
+planner_trigger:
+  replan_retry_interval_sec: 0.3
+  target_change_threshold_m: 0.5

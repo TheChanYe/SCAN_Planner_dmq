@@ -61,7 +61,14 @@
       <param name="width_max"       type="double" value="0.8"/>
       <param name="height_min"      type="double" value="2.0"/>
       <param name="height_max"      type="double" value="2.0"/>
-      <param name="obstacle_number" type="int"    value="500"/>
+      <!-- 仿真阶段先保持中等障碍密度，避免随机地图完全封死。 -->
+      <param name="obstacle_number" type="int"    value="150"/>
+
+      <!-- 机器人出生点周围禁止生成障碍。 -->
+      <param name="spawn_clear_x" value="$(arg init_x)"/>
+      <param name="spawn_clear_y" value="$(arg init_y)"/>
+      <param name="spawn_clear_radius" type="double" value="1.5"/>
+
       <param name="surface_resolution" type="double" value="0.05"/>
 
   </node>

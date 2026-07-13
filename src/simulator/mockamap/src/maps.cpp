@@ -1,6 +1,7 @@
 #include "maps.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <random>
 #include <vector>
@@ -29,11 +30,22 @@ Maps::randomMapGenerate()
   double _w_l, _w_h;
   int    _ObsNum;
 
+  double spawn_clear_x = 0.0;
+  double spawn_clear_y = 0.0;
+  double spawn_clear_radius = 1.5;
+
   info.nh_private->param("width_min", _w_l, 0.6);
   info.nh_private->param("width_max", _w_h, 1.5);
   info.nh_private->param("height_min", _h_l, _h_l);
   info.nh_private->param("height_max", _h_h, _h_h);
   info.nh_private->param("obstacle_number", _ObsNum, 10);
+  info.nh_private->param("spawn_clear_x", spawn_clear_x, 0.0);
+  info.nh_private->param("spawn_clear_y", spawn_clear_y, 0.0);
+  info.nh_private->param(
+      "spawn_clear_radius", spawn_clear_radius, 1.5);
+
+  spawn_clear_radius = std::max(0.0, spawn_clear_radius);
+
   double surface_resolution;
   info.nh_private->param("surface_resolution", surface_resolution, _resolution * 0.5);
 
@@ -53,8 +65,14 @@ Maps::randomMapGenerate()
   rand_w = std::uniform_real_distribution<double>(_w_l, _w_h);
   rand_h = std::uniform_real_distribution<double>(_h_l, _h_h);
 
-  for (int i = 0; i < _ObsNum; i++)
+  int generated = 0;
+  int attempts = 0;
+  const int max_attempts = std::max(1000, _ObsNum * 200);
+
+  while (generated < _ObsNum && attempts < max_attempts)
   {
+    ++attempts;
+
     double x, y;
     x = rand_x(eng);
     y = rand_y(eng);
@@ -64,6 +82,24 @@ Maps::randomMapGenerate()
     h = rand_h(eng);
 
     const double half_w = w * 0.5;
+
+    // 障碍矩形与出生安全圆相交时，丢弃该障碍。
+    const double nearest_x = std::max(
+        x - half_w,
+        std::min(spawn_clear_x, x + half_w));
+    const double nearest_y = std::max(
+        y - half_w,
+        std::min(spawn_clear_y, y + half_w));
+
+    const double clear_dx = spawn_clear_x - nearest_x;
+    const double clear_dy = spawn_clear_y - nearest_y;
+
+    if (std::hypot(clear_dx, clear_dy) <
+        spawn_clear_radius)
+    {
+      continue;
+    }
+
     const double x_min = x - half_w;
     const double x_max = x + half_w;
     const double y_min = y - half_w;
@@ -103,7 +139,25 @@ Maps::randomMapGenerate()
         pushPoint(px, py, 0.0);
         pushPoint(px, py, h);
       }
+
+    ++generated;
   }
+
+  if (generated < _ObsNum)
+  {
+    ROS_WARN(
+        "Only generated %d/%d obstacles after %d attempts.",
+        generated,
+        _ObsNum,
+        attempts);
+  }
+
+  ROS_INFO(
+      "Spawn clear zone: center=(%.2f, %.2f), radius=%.2f, obstacles=%d",
+      spawn_clear_x,
+      spawn_clear_y,
+      spawn_clear_radius,
+      generated);
 
   info.cloud->width    = info.cloud->points.size();
   info.cloud->height   = 1;
