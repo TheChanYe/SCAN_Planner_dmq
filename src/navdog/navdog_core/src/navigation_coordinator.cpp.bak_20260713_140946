@@ -1575,65 +1575,11 @@ CoreOutput NavigationCoordinator::update(
               output.route_progress =
                   progress_output.progress;
 
-              RouteCorridorObservationOutput obs_output =
+              const RouteCorridorObservationOutput obs_output =
                   route_corridor_observation_gate_.evaluate(
                       progress_output.progress,
                       input.route_corridor_observation,
                       now_sec);
-
-              // Keep the avoidance trigger consistent with the safety
-              // obstacle summary. The safety layer scans a wider front
-              // sector than the route-center corridor. Without this
-              // fallback it can stop the robot while the mode manager
-              // remains in ROUTE_FOLLOW forever.
-              const bool front_obstacle_near =
-                  input.obstacles.valid &&
-                  std::isfinite(input.obstacles.front_min) &&
-                  input.obstacles.front_min >= 0.0 &&
-                  input.obstacles.front_min <=
-                      config_.navigation_mode.avoid_enter_distance_m;
-
-              const bool corridor_classified =
-                  obs_output.result ==
-                      RouteCorridorObservationResult::CLEAR ||
-                  obs_output.result ==
-                      RouteCorridorObservationResult::BLOCKED;
-
-              if (front_obstacle_near && corridor_classified)
-              {
-                const double front_distance =
-                    input.obstacles.front_min;
-
-                const bool front_is_nearer =
-                    obs_output.result ==
-                        RouteCorridorObservationResult::CLEAR ||
-                    !std::isfinite(
-                        obs_output.assessment
-                            .first_blocked_distance_ahead_m) ||
-                    front_distance <
-                        obs_output.assessment
-                            .first_blocked_distance_ahead_m;
-
-                if (front_is_nearer)
-                {
-                  obs_output.result =
-                      RouteCorridorObservationResult::BLOCKED;
-
-                  auto& assessment = obs_output.assessment;
-
-                  assessment.valid = true;
-                  assessment.blocked = true;
-                  assessment.out_of_map = false;
-
-                  assessment.first_blocked_distance_ahead_m =
-                      front_distance;
-                  assessment.first_blocked_arc_length_m =
-                      progress_output.progress.arc_length_m +
-                      front_distance;
-                  assessment.checked_distance_m =
-                      front_distance;
-                }
-              }
 
               // Output route_corridor for CLEAR/BLOCKED.
               if (obs_output.result ==

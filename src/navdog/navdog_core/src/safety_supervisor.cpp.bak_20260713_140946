@@ -352,19 +352,13 @@ VelocityCommand SafetySupervisor::apply(
           std::min(limit_config_.max_yaw_rate, 0.65));
   limited_w = clamp(limited_w, -effective_max_w, effective_max_w);
 
-  // A front emergency obstacle must stop positive forward
-  // motion immediately, but an omnidirectional robot must still
-  // be allowed to rotate, move laterally, or reverse along a
-  // collision-checked LOCAL_AVOID trajectory.
-  const bool front_emergency_stop =
-      context.obstacles.valid &&
+  // Hard forward stop when emergency distance breached.
+  if (context.obstacles.valid &&
       std::isfinite(context.obstacles.front_min) &&
       context.obstacles.front_min <=
-          safety_config_.emergency_stop;
-
-  if (front_emergency_stop && limited_vx > 0.0)
+          safety_config_.emergency_stop)
   {
-    limited_vx = 0.0;
+    return safetyStop(now_sec, CommandSource::SAFETY_STOP);
   }
 
   // Acceleration limits.
@@ -395,13 +389,6 @@ VelocityCommand SafetySupervisor::apply(
           previous_output_.yaw_rate - max_dw,
           previous_output_.yaw_rate + max_dw);
     }
-  }
-
-  // Acceleration limiting must never reintroduce positive
-  // forward velocity while the front emergency condition exists.
-  if (front_emergency_stop && limited_vx > 0.0)
-  {
-    limited_vx = 0.0;
   }
 
   VelocityCommand cmd{};

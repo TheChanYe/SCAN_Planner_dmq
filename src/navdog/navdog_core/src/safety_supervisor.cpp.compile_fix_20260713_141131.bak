@@ -75,6 +75,13 @@ VelocityCommand SafetySupervisor::safetyStop(
     double now_sec,
     CommandSource source) noexcept
 {
+  // Acceleration limiting must never reintroduce positive
+  // forward velocity while the front emergency condition exists.
+  if (front_emergency_stop && limited_vx > 0.0)
+  {
+    limited_vx = 0.0;
+  }
+
   VelocityCommand cmd{};
   cmd.vx = 0.0;
   cmd.vy = 0.0;
@@ -395,13 +402,6 @@ VelocityCommand SafetySupervisor::apply(
           previous_output_.yaw_rate - max_dw,
           previous_output_.yaw_rate + max_dw);
     }
-  }
-
-  // Acceleration limiting must never reintroduce positive
-  // forward velocity while the front emergency condition exists.
-  if (front_emergency_stop && limited_vx > 0.0)
-  {
-    limited_vx = 0.0;
   }
 
   VelocityCommand cmd{};
