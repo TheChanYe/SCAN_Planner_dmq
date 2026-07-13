@@ -90,3 +90,10 @@ safety:
   obstacle_timeout_sec: 1.5
   planner_cmd_timeout_sec: 0.3
   future_tolerance_sec: 0.05
+start_align:
+  enter_deg: 15.0
+  exit_deg: 5.0
+  max_hold_sec: 8.0
+  kp_yaw: 1.5
+  max_yaw_rate: 0.65
+  target_min_dist_m: 0.2
