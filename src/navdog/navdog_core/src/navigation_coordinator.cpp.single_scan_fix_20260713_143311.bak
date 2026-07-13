@@ -620,15 +620,7 @@ bool NavigationCoordinator::isTrajectoryHealthy(
   if (trajectoryEndingSoon(trajectory, exec_time_sec))
     return false;
 
-  // LOCAL_AVOID 的轨迹已经由 SCAN 使用同一张三维障碍地图完成
-  // 碰撞优化。这里不能再使用 Navdog 的另一套双圆足迹判据反复
-  // 否决 SCAN，否则会形成：
-  //   SCAN成功 -> 判碰撞 -> 再规划 -> 跟踪器清零 -> 永久停车。
-  //
-  // ROUTE_REJOIN 仍保留额外检查，因为接回阶段需要更严格地保护
-  // 原路线入口。
-  if (mode == NavigationMode::ROUTE_REJOIN &&
-      local_planner_adapter_->isTrajectoryColliding(
+  if (local_planner_adapter_->isTrajectoryColliding(
           mode,
           progress.task_sequence,
           expected_local_plan_sequence_,
