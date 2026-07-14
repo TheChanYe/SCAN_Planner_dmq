@@ -66,14 +66,19 @@ namespace scan_planner
     nh.param("fsm/fail_safe", enable_fail_safe_, true);
     nh.param("fsm/max_replan_fail_count", max_replan_fail_count_, 30);
     nh.param("fsm/replan_retry_interval_sec", replan_retry_interval_sec_, 0.20);
+    nh.param("fsm/safety_replan_cooldown_sec",
+             safety_replan_cooldown_sec_, 0.50);
     if (!std::isfinite(replan_retry_interval_sec_) ||
-        replan_retry_interval_sec_ < 0.05)
+        replan_retry_interval_sec_ < 0.05 ||
+        !std::isfinite(safety_replan_cooldown_sec_) ||
+        safety_replan_cooldown_sec_ < 0.10)
     {
-      ROS_FATAL("[SCANReplanFSM] invalid replan_retry_interval_sec");
+      ROS_FATAL("[SCANReplanFSM] invalid replanning interval");
       ros::shutdown();
       return;
     }
     next_replan_attempt_time_ = ros::Time(0);
+    last_safety_replan_time_ = ros::Time(0);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
@@ -390,10 +395,10 @@ namespace scan_planner
       return;
     }
 
-    trigger_ = true;
-
     std::vector<Eigen::Vector3d> waypoints;
     waypoints.reserve(msg->poses.size());
+    constexpr double kDuplicatePointDistanceM = 0.01;
+    std::size_t removed_point_count = 0;
 
     for (const auto& pose_stamped : msg->poses)
     {
@@ -403,8 +408,36 @@ namespace scan_planner
       // Reference-path navigation is planar. Keep every waypoint on the
       // robot's current odometry height; do not add body height a second time.
       wp(2) = odom_pos_(2);
+      if (!wp.allFinite())
+      {
+        ++removed_point_count;
+        continue;
+      }
+      const bool duplicates_start =
+          waypoints.empty() &&
+          (wp - odom_pos_).head<2>().norm() < kDuplicatePointDistanceM;
+      const bool duplicates_previous =
+          !waypoints.empty() &&
+          (wp - waypoints.back()).head<2>().norm() <
+              kDuplicatePointDistanceM;
+      if (duplicates_start || duplicates_previous)
+      {
+        ++removed_point_count;
+        continue;
+      }
       waypoints.push_back(wp);
     }
+
+    if (waypoints.empty())
+    {
+      ROS_ERROR("[pathCallback] No usable waypoint after removing %zu "
+                "duplicate/invalid points.", removed_point_count);
+      return;
+    }
+
+    trigger_ = true;
+    ROS_INFO("SCAN_PATH_SANITIZED received=%zu kept=%zu removed=%zu",
+             msg->poses.size(), waypoints.size(), removed_point_count);
     bool success = planGlobalTrajByWaypoints(waypoints);
 
     if (success)
@@ -440,6 +473,7 @@ namespace scan_planner
     last_escape_side_ = 0;
     need_hover_stop_ = false;
     next_replan_attempt_time_ = ros::Time(0);
+    last_safety_replan_time_ = ros::Time(0);
     exec_state_ = WAIT_TARGET;
     ROS_WARN("[SCANReplanFSM] native takeover state reset");
   }
@@ -839,7 +873,12 @@ namespace scan_planner
       start_acc_.setZero();
     }
 
-    if (!planner_manager_->planGlobalTraj(
+    // In reference-path mode global_data_ is the remaining MQTT route.  Do
+    // not replace it with a straight odom-to-goal line during a safety
+    // replan: doing so loses route progress and can make the next escape
+    // target jump behind the robot.
+    if (navi_mode_ != NAVI_MODE::REFERENCE_PATH &&
+        !planner_manager_->planGlobalTraj(
             start_pt_,
             start_vel_,
             start_acc_,
@@ -898,12 +937,18 @@ namespace scan_planner
     LocalTrajData *info = &planner_manager_->local_data_;
     auto map = planner_manager_->grid_map_;
 
-    if (exec_state_ == WAIT_TARGET || info->start_time_.toSec() < 1e-5)
+    // Only an actively executing trajectory may trigger a safety replan.
+    // In particular, never inspect the stationary emergency-stop spline and
+    // recursively turn it into another moving trajectory.
+    if (exec_state_ != EXEC_TRAJ || info->start_time_.toSec() < 1e-5 ||
+        info->duration_ <= 1e-5)
       return;
 
     /* ---------- check trajectory ---------- */
     constexpr double time_step = 0.01;
-    double t_cur = (ros::Time::now() - info->start_time_).toSec();
+    const ros::Time now = ros::Time::now();
+    double t_cur = (now - info->start_time_).toSec();
+    t_cur = std::min(std::max(t_cur, 0.0), info->duration_);
     double t_2_3 = info->duration_ * 2 / 3;
     for (double t = t_cur; t < info->duration_; t += time_step)
     {
@@ -914,6 +959,24 @@ namespace scan_planner
       Eigen::Vector3d pos_next = info->position_traj_.evaluateDeBoorT(std::min(t + time_step, info->duration_));
       if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
       {
+        const double collision_time_ahead = t - t_cur;
+        if (!last_safety_replan_time_.isZero() &&
+            (now - last_safety_replan_time_).toSec() <
+                safety_replan_cooldown_sec_)
+        {
+          ROS_WARN_THROTTLE(
+              1.0,
+              "SCAN_SAFETY_REPLAN_SUPPRESSED trajectory_id=%d "
+              "collision_time_ahead=%.2f cooldown=%.2f",
+              info->traj_id_, collision_time_ahead,
+              safety_replan_cooldown_sec_);
+          return;
+        }
+
+        last_safety_replan_time_ = now;
+        ROS_WARN("SCAN_SAFETY_REPLAN trajectory_id=%d "
+                 "collision_time_ahead=%.2f",
+                 info->traj_id_, collision_time_ahead);
         if (planFromCurrentTraj()) // Make a chance
         {
           changeFSMExecState(EXEC_TRAJ, "SAFETY");
@@ -1169,6 +1232,26 @@ namespace scan_planner
       return map->getInflateOccupancy(point, yaw) == 0;
     };
 
+    const auto pathIsFree = [&](const Eigen::Vector3d &candidate) -> bool
+    {
+      const double distance =
+          (candidate - start_pt_).head<2>().norm();
+      const int steps = std::max(
+          2, static_cast<int>(std::ceil(distance / 0.10)));
+      const double yaw = estimateYawFromSegment(start_pt_, candidate);
+      if (!std::isfinite(yaw))
+        return false;
+      for (int step = 1; step <= steps; ++step)
+      {
+        const double ratio = static_cast<double>(step) / steps;
+        const Eigen::Vector3d point =
+            start_pt_ + ratio * (candidate - start_pt_);
+        if (map->getInflateOccupancy(point, yaw) != 0)
+          return false;
+      }
+      return true;
+    };
+
     // --- Phase 2: route target search (backward from planning_horizon_) -
     const double min_target_dist = 0.8;
     const double max_target_dist = planning_horizon_;
@@ -1176,6 +1259,7 @@ namespace scan_planner
     // Find the farthest free sample within [min_target_dist, max_target_dist].
     // Walk backward so we pick the farthest free point first.
     bool found_route_target = false;
+    bool route_path_blocked = false;
     for (int i = static_cast<int>(samples.size()) - 1; i >= 0; --i)
     {
       if (!std::isfinite(samples[i].dist))
@@ -1187,17 +1271,34 @@ namespace scan_planner
       if (samples[i].dist < min_target_dist - 1e-6)
         break;  // all remaining samples are too close
 
-      if (targetIsFree(samples[i].pos))
+      if (!targetIsFree(samples[i].pos))
       {
-        local_target_pt_ = samples[i].pos;
-        local_target_vel_.setZero();
-        found_route_target = true;
+        route_path_blocked = true;
+        continue;
+      }
+
+      if (route_path_blocked || !pathIsFree(samples[i].pos))
+      {
+        route_path_blocked = true;
         break;
       }
+
+      local_target_pt_ = samples[i].pos;
+      local_target_vel_.setZero();
+      found_route_target = true;
+      break;
     }
 
     if (found_route_target)
       return true;
+
+    if (route_path_blocked)
+    {
+      ROS_WARN_THROTTLE(
+          1.0,
+          "[getLocalTarget] route target or connecting path blocked; "
+          "search lateral escape");
+    }
 
     // --- Phase 3: lateral escape search (robot-centred) ----------------
     // Only reached when every route sample in [0.8, planning_horizon_] is
@@ -1206,10 +1307,15 @@ namespace scan_planner
     // Compute a route direction for the escape scoring heuristics.
     double route_yaw;
     {
-      const double lookahead_t = std::min(progress_t + 0.5, duration);
+      // Use the tangent of the original route at the robot projection.  A
+      // vector from an off-route robot pose to a stale progress point can
+      // point backwards and make consecutive escape targets oscillate.
+      const double lookahead_t = std::min(dist_min_t + 0.5, duration);
+      const Eigen::Vector3d route_pt = global_data.getPosition(dist_min_t);
       const Eigen::Vector3d lookahead_pt = global_data.getPosition(lookahead_t);
-      if (lookahead_pt.allFinite())
-        route_yaw = estimateYawFromSegment(start_pt_, lookahead_pt);
+      if (route_pt.allFinite() && lookahead_pt.allFinite() &&
+          (lookahead_pt - route_pt).head<2>().norm() > 1e-3)
+        route_yaw = estimateYawFromSegment(route_pt, lookahead_pt);
       else
         route_yaw = estimateYawFromSegment(start_pt_, end_pt_);
     }
@@ -1261,23 +1367,6 @@ namespace scan_planner
         }
       }
       return std::isfinite(lateral_distance);
-    };
-
-    const auto pathIsFree = [&](const Eigen::Vector3d &candidate) -> bool
-    {
-      const double distance =
-          (candidate - start_pt_).head<2>().norm();
-      const int steps = std::max(2, static_cast<int>(std::ceil(distance / 0.20)));
-      for (int step = 1; step <= steps; ++step)
-      {
-        const double ratio = static_cast<double>(step) / steps;
-        const Eigen::Vector3d point =
-            start_pt_ + ratio * (candidate - start_pt_);
-        if (map->getInflateOccupancy(
-                point, estimateYawFromSegment(start_pt_, candidate)) != 0)
-          return false;
-      }
-      return true;
     };
 
     bool found_escape = false;

@@ -80,6 +80,8 @@ namespace scan_planner
     ros::Time last_freeze_update_time_;
     double replan_retry_interval_sec_{0.20};
     ros::Time next_replan_attempt_time_;
+    double safety_replan_cooldown_sec_{0.50};
+    ros::Time last_safety_replan_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;

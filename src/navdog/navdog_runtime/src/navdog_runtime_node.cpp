@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -389,11 +390,17 @@ bool NavdogRuntimeNode::initialize()
                     native_scan_rejoin_min_progress_improvement_m_, 0.10);
   private_nh_.param("native_scan_rejoin/max_republish_count",
                     native_scan_rejoin_max_republish_count_, 2);
+  private_nh_.param("native_scan_rejoin/release_front_clearance_m",
+                    native_scan_release_front_clearance_m_, 2.0);
+  private_nh_.param("native_scan_rejoin/release_side_clearance_m",
+                    native_scan_release_side_clearance_m_, 0.5);
   if (!std::isfinite(native_scan_rejoin_min_forward_distance_m_) ||
       !std::isfinite(native_scan_rejoin_preferred_forward_distance_m_) ||
       !std::isfinite(native_scan_rejoin_max_forward_distance_m_) ||
       !std::isfinite(native_scan_rejoin_no_progress_timeout_sec_) ||
       !std::isfinite(native_scan_rejoin_min_progress_improvement_m_) ||
+      !std::isfinite(native_scan_release_front_clearance_m_) ||
+      !std::isfinite(native_scan_release_side_clearance_m_) ||
       native_scan_rejoin_min_forward_distance_m_ <= 0.0 ||
       native_scan_rejoin_preferred_forward_distance_m_ <
           native_scan_rejoin_min_forward_distance_m_ ||
@@ -401,6 +408,8 @@ bool NavdogRuntimeNode::initialize()
           native_scan_rejoin_preferred_forward_distance_m_ ||
       native_scan_rejoin_no_progress_timeout_sec_ <= 0.0 ||
       native_scan_rejoin_min_progress_improvement_m_ <= 0.0 ||
+      native_scan_release_front_clearance_m_ <= 0.0 ||
+      native_scan_release_side_clearance_m_ <= 0.0 ||
       native_scan_rejoin_max_republish_count_ < 0)
   {
     ROS_ERROR("invalid native_scan_rejoin parameters");
@@ -699,7 +708,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   navdog::CoreOutput output = coordinator_.update(input, now_sec);
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
-  updateControlOwner(output, input.robot);
+  updateControlOwner(output, input.robot, input.obstacles);
 
   // Compute effective command: start from final_cmd, override on conflict
   effective_command_ = output.final_cmd;
@@ -1013,6 +1022,7 @@ void NavdogRuntimeNode::setControlOwner(std::uint8_t owner)
 void NavdogRuntimeNode::resetNativeScanTakeover(bool publish_reset)
 {
   scan_takeover_active_ = false;
+  scan_rejoin_complete_pending_ = false;
   scan_takeover_task_sequence_ = 0;
   resetRejoinMonitoring();
   if (publish_reset)
@@ -1030,7 +1040,8 @@ void NavdogRuntimeNode::resetRejoinMonitoring() noexcept
 void NavdogRuntimeNode::releaseNativeScanToRoute(
     const navdog::NavigationTask& task,
     const navdog::RobotState& robot,
-    const navdog::CoreOutput& output)
+    const navdog::CoreOutput& output,
+    const navdog::ObstacleSummary& obstacles)
 {
   const navdog::RouteProgress& progress = output.route_progress;
   const double heading_error = progress.valid && robot.valid
@@ -1039,17 +1050,20 @@ void NavdogRuntimeNode::releaseNativeScanToRoute(
       : 0.0;
   ROS_WARN("NATIVE_SCAN_RELEASE_TO_ROUTE task_sequence=%lu "
            "lateral_error=%.3f route_yaw=%.3f robot_yaw=%.3f "
-           "heading_error=%.3f reason=REJOIN_COMPLETE",
+           "heading_error=%.3f front_clearance=%.3f left_clearance=%.3f "
+           "right_clearance=%.3f reason=REJOIN_COMPLETE_AND_SURROUNDING_CLEAR",
            static_cast<unsigned long>(task.sequence),
            progress.lateral_error_m, progress.route_yaw, robot.yaw,
-           heading_error);
+           heading_error, obstacles.front_min, obstacles.left_min,
+           obstacles.right_min);
   resetNativeScanTakeover(true);
   setControlOwner(1);
 }
 
 void NavdogRuntimeNode::updateControlOwner(
     const navdog::CoreOutput& output,
-    const navdog::RobotState& robot)
+    const navdog::RobotState& robot,
+    const navdog::ObstacleSummary& obstacles)
 {
   if (output.state == navdog::NavState::PAUSED)
   {
@@ -1076,6 +1090,7 @@ void NavdogRuntimeNode::updateControlOwner(
       output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
   {
     scan_takeover_active_ = true;
+    scan_rejoin_complete_pending_ = false;
     scan_takeover_task_sequence_ = task.sequence;
 
     // Switch ownership first.  The mux clears the previous owner's cached
@@ -1118,6 +1133,7 @@ void NavdogRuntimeNode::updateControlOwner(
     }
     else if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
+      scan_rejoin_complete_pending_ = false;
       if (output.navigation_mode.transitioned &&
           output.navigation_mode.previous_mode ==
               navdog::NavigationMode::ROUTE_REJOIN)
@@ -1126,6 +1142,7 @@ void NavdogRuntimeNode::updateControlOwner(
     }
     else if (output.navigation_mode.mode == navdog::NavigationMode::ROUTE_REJOIN)
     {
+      scan_rejoin_complete_pending_ = false;
       const double now_sec = ros::Time::now().toSec();
       if (output.navigation_mode.transitioned &&
           output.navigation_mode.previous_mode ==
@@ -1197,13 +1214,67 @@ void NavdogRuntimeNode::updateControlOwner(
       setControlOwner(2);
     }
     else if (output.navigation_mode.valid &&
-             output.navigation_mode.mode == navdog::NavigationMode::ROUTE_FOLLOW &&
-             output.navigation_mode.reason ==
-                 navdog::NavigationModeReason::REJOIN_COMPLETE &&
-             output.navigation_mode.corridor_available &&
-             !output.navigation_mode.route_blocked)
+             output.navigation_mode.mode == navdog::NavigationMode::ROUTE_FOLLOW)
     {
-      releaseNativeScanToRoute(task, robot, output);
+      if (output.navigation_mode.reason ==
+          navdog::NavigationModeReason::REJOIN_COMPLETE)
+      {
+        scan_rejoin_complete_pending_ = true;
+      }
+
+      const auto clearanceSatisfied = [](double distance,
+                                         double required) -> bool
+      {
+        return !std::isnan(distance) && distance >= required;
+      };
+      const bool corridor_clear =
+          output.navigation_mode.corridor_available &&
+          !output.navigation_mode.route_blocked;
+      const double heading_error = output.route_progress.valid && robot.valid
+          ? std::atan2(
+                std::sin(robot.yaw - output.route_progress.route_yaw),
+                std::cos(robot.yaw - output.route_progress.route_yaw))
+          : std::numeric_limits<double>::infinity();
+      const bool alignment_ok = output.route_progress.valid && robot.valid &&
+          std::isfinite(output.route_progress.lateral_error_m) &&
+          std::fabs(output.route_progress.lateral_error_m) <=
+              coordinator_.config().navigation_mode
+                  .rejoin_lateral_tolerance_m &&
+          std::isfinite(heading_error) &&
+          std::fabs(heading_error) <=
+              coordinator_.config().navigation_mode
+                  .rejoin_heading_tolerance_rad;
+      const bool surroundings_clear = obstacles.valid &&
+          clearanceSatisfied(obstacles.front_min,
+                             native_scan_release_front_clearance_m_) &&
+          clearanceSatisfied(obstacles.left_min,
+                             native_scan_release_side_clearance_m_) &&
+          clearanceSatisfied(obstacles.right_min,
+                             native_scan_release_side_clearance_m_);
+
+      if (scan_rejoin_complete_pending_ && corridor_clear && alignment_ok &&
+          surroundings_clear)
+      {
+        releaseNativeScanToRoute(task, robot, output, obstacles);
+      }
+      else
+      {
+        ROS_WARN_THROTTLE(
+            1.0,
+            "NATIVE_SCAN_RELEASE_WAIT task_sequence=%lu "
+            "rejoin_complete=%d corridor_clear=%d alignment_ok=%d "
+            "lateral_error=%.3f heading_error=%.3f obstacle_valid=%d "
+            "front=%.3f/%.3f left=%.3f/%.3f right=%.3f/%.3f",
+            static_cast<unsigned long>(task.sequence),
+            scan_rejoin_complete_pending_ ? 1 : 0,
+            corridor_clear ? 1 : 0, alignment_ok ? 1 : 0,
+            output.route_progress.lateral_error_m, heading_error,
+            obstacles.valid ? 1 : 0,
+            obstacles.front_min, native_scan_release_front_clearance_m_,
+            obstacles.left_min, native_scan_release_side_clearance_m_,
+            obstacles.right_min, native_scan_release_side_clearance_m_);
+        setControlOwner(2);
+      }
     }
     else
     {

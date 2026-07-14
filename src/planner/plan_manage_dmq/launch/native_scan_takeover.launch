@@ -43,6 +43,7 @@
     <param name="fsm/planning_horizon" value="3.0" type="double"/>
     <param name="fsm/max_replan_fail_count" value="30" type="int"/>
     <param name="fsm/replan_retry_interval_sec" value="0.20" type="double"/>
+    <param name="fsm/safety_replan_cooldown_sec" value="0.50" type="double"/>
     <param name="fsm/escape_min_radius" value="0.5" type="double"/>
     <param name="fsm/escape_max_radius" value="2.5" type="double"/>
     <param name="fsm/escape_radius_step" value="0.25" type="double"/>

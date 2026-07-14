@@ -1,5 +1,6 @@
 // #include <fstream>
 #include <plan_manage_dmq/planner_manager.h>
+#include <cmath>
 #include <thread>
 
 namespace scan_planner
@@ -330,12 +331,25 @@ namespace scan_planner
     if (waypoints.empty())
       return false;
 
+    constexpr double kDuplicatePointDistanceM = 0.01;
     vector<Eigen::Vector3d> points;
     points.push_back(start_pos);
 
     for (size_t wp_i = 0; wp_i < waypoints.size(); wp_i++)
     {
+      if (!waypoints[wp_i].allFinite())
+        continue;
+      if ((waypoints[wp_i] - points.back()).head<2>().norm() <
+          kDuplicatePointDistanceM)
+        continue;
       points.push_back(waypoints[wp_i]);
+    }
+
+    if (points.size() < 2 || !std::isfinite(pp_.max_vel_) ||
+        pp_.max_vel_ <= 1e-6)
+    {
+      ROS_ERROR("[planGlobalTrajWaypoints] no non-degenerate path segment");
+      return false;
     }
 
     double total_len = 0;
@@ -384,6 +398,12 @@ namespace scan_planner
     for (int i = 0; i < pt_num - 1; ++i)
     {
       time(i) = (pos.col(i + 1) - pos.col(i)).norm() / (pp_.max_vel_);
+      if (!std::isfinite(time(i)) || time(i) <= 1e-6)
+      {
+        ROS_ERROR("[planGlobalTrajWaypoints] invalid segment duration at %d: %.9f",
+                  i, time(i));
+        return false;
+      }
     }
 
     time(0) *= 2.0;

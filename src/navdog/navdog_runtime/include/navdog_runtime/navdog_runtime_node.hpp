@@ -63,9 +63,11 @@ private:
   void resetNativeScanTakeover(bool publish_reset);
   void releaseNativeScanToRoute(const navdog::NavigationTask& task,
                                 const navdog::RobotState& robot,
-                                const navdog::CoreOutput& output);
+                                const navdog::CoreOutput& output,
+                                const navdog::ObstacleSummary& obstacles);
   void updateControlOwner(const navdog::CoreOutput& output,
-                          const navdog::RobotState& robot);
+                          const navdog::RobotState& robot,
+                          const navdog::ObstacleSummary& obstacles);
   void publishMqttStatus(const navdog::CoreOutput& output);
   bool hasUniqueCmdVelPublisher();
   bool hasUniqueCmdVelPublisherCached() const;
@@ -109,6 +111,7 @@ private:
 
   bool native_scan_takeover_{true};
   bool scan_takeover_active_{false};
+  bool scan_rejoin_complete_pending_{false};
   std::uint64_t scan_takeover_task_sequence_{0};
   std::uint8_t control_owner_{0};
 
@@ -118,6 +121,8 @@ private:
   double native_scan_rejoin_no_progress_timeout_sec_{3.0};
   double native_scan_rejoin_min_progress_improvement_m_{0.10};
   int native_scan_rejoin_max_republish_count_{2};
+  double native_scan_release_front_clearance_m_{2.0};
+  double native_scan_release_side_clearance_m_{0.5};
   double best_rejoin_lateral_error_{0.0};
   double rejoin_enter_stamp_sec_{0.0};
   double last_rejoin_republish_stamp_sec_{0.0};

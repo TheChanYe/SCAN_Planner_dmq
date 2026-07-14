@@ -10,6 +10,8 @@ native_scan_rejoin:
   no_progress_timeout_sec: 3.0
   min_progress_improvement_m: 0.10
   max_republish_count: 2
+  release_front_clearance_m: 2.0
+  release_side_clearance_m: 0.5
 odom_twist_in_world_frame: true
 default_route_z: 0.3
 default_max_vx: 0.4
