@@ -35,18 +35,29 @@
       <arg name="cy" value="243.44969177246094"/>
       <arg name="fx" value="387.229248046875"/>
       <arg name="fy" value="387.229248046875"/>
+
+      <!-- Keep the quadruped speed cap, but restore a longer planning view.
+           Upstream uses 7.5 m at 0.75 m/s. 5.0 m is a conservative match for
+           the current 0.22 m/s platform and 10 m sliding map. -->
       <arg name="max_vel" value="0.22"/>
-      <arg name="planning_horizon" value="3.0"/>
+      <arg name="planning_horizon" value="5.0"/>
     </include>
 
     <node pkg="scan_planner_dmq" type="closed_loop_controller_dmq"
           name="closed_loop_controller" output="screen">
       <param name="max_vx" value="0.22"/>
-      <param name="max_vy" value="0.12"/>
+      <param name="max_vy" value="0.18"/>
       <param name="max_vyaw" value="0.65"/>
-      <param name="time_forward" value="0.5"/>
-      <param name="heading_error_threshold" value="0.35"/>
-      <param name="kp_pos" value="0.8"/>
+
+      <!-- Upstream looks 0.8 s ahead and allows about 46 deg before a hard
+           turn-in-place. Keep a slightly stricter 37 deg limit for the robot,
+           with a lower resume threshold to prevent stop/go chattering. -->
+      <param name="time_forward" value="0.8"/>
+      <param name="heading_error_threshold" value="0.65"/>
+      <param name="heading_resume_threshold" value="0.35"/>
+      <param name="min_heading_speed_scale" value="0.35"/>
+
+      <param name="kp_pos" value="0.70"/>
       <param name="kp_yaw" value="1.5"/>
       <param name="finish_dist" value="0.15"/>
     </node>
