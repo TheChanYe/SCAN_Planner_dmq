@@ -849,6 +849,9 @@ bool NavdogRuntimeNode::publishNativeScanTakeoverPath(
     append_point(goal.x, goal.y);
 
   native_scan_path_publisher_.publish(path);
+  ROS_WARN("NATIVE_SCAN_PATH_PUBLISHED task_sequence=%lu point_count=%lu owner=SCAN",
+           static_cast<unsigned long>(task.sequence),
+           static_cast<unsigned long>(path.poses.size()));
   return true;
 }
 
@@ -1072,32 +1075,37 @@ void NavdogRuntimeNode::updateControlOwner(
   if (native_scan_takeover_ && !scan_takeover_active_ && have_task &&
       output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
   {
-    // Every takeover starts from a clean SCAN controller.  The mux clears its
-    // cached SCAN velocity when ownership changes, so no previous trajectory
-    // can drive during this handoff.
-    resetNativeScanTakeover(true);
+    scan_takeover_active_ = true;
+    scan_takeover_task_sequence_ = task.sequence;
+
+    // Switch ownership first.  The mux clears the previous owner's cached
+    // velocity so zero velocity is held until SCAN produces its first cmd.
+    // Do NOT publish /native_scan/reset here — SCAN is already clean from
+    // the task-boundary reset, and publishing reset concurrently with the
+    // path below creates a race where reset can arrive after the path and
+    // clear have_target_, leaving the robot permanently stopped.
+    setControlOwner(2);
+
     if (!publishNativeScanTakeoverPath(task, robot, last_route_progress_))
     {
+      ROS_ERROR("NATIVE_SCAN_TAKEOVER failed task_sequence=%lu",
+                static_cast<unsigned long>(task.sequence));
+
+      resetNativeScanTakeover(false);
       setControlOwner(0);
+      return;
     }
-    else
-    {
-      scan_takeover_active_ = true;
-      scan_takeover_task_sequence_ = task.sequence;
-      ROS_WARN("ROUTE_CORRIDOR_BLOCKED task_sequence=%lu distance_ahead=%.3f "
-               "route_arc=%.3f mode=LOCAL_AVOID",
-               static_cast<unsigned long>(task.sequence),
-               output.route_corridor.first_blocked_distance_ahead_m,
-               output.route_corridor.first_blocked_arc_length_m);
-      ROS_WARN("NATIVE_SCAN_TAKEOVER task_sequence=%lu remaining_points=%lu "
-               "blocked_distance=%.3f",
-               static_cast<unsigned long>(task.sequence),
-               static_cast<unsigned long>(task.points.size() -
-                                          std::min(last_route_progress_.segment_index + 1,
-                                                   task.points.size() - 1) + 1),
-               output.route_corridor.first_blocked_distance_ahead_m);
-      setControlOwner(2);
-    }
+
+    ROS_WARN("ROUTE_CORRIDOR_BLOCKED task_sequence=%lu distance_ahead=%.3f "
+             "route_arc=%.3f mode=LOCAL_AVOID",
+             static_cast<unsigned long>(task.sequence),
+             output.route_corridor.first_blocked_distance_ahead_m,
+             output.route_corridor.first_blocked_arc_length_m);
+
+    ROS_WARN("NATIVE_SCAN_TAKEOVER task_sequence=%lu blocked_distance=%.3f",
+             static_cast<unsigned long>(task.sequence),
+             output.route_corridor.first_blocked_distance_ahead_m);
+
     return;
   }
 
@@ -1130,7 +1138,9 @@ void NavdogRuntimeNode::updateControlOwner(
         rejoin_enter_stamp_sec_ = now_sec;
         last_rejoin_republish_stamp_sec_ = now_sec;
         rejoin_republish_count_ = 0;
-        native_scan_reset_publisher_.publish(std_msgs::Empty{});
+        // Do NOT publish reset before the rejoin path — SCAN's pathCallback()
+        // can already transition to REPLAN_TRAJ from EXEC_TRAJ without a
+        // reset, and publishing both topics in the same callback races.
         publishNativeScanRejoinPath(task, robot, output.route_progress);
         const double heading_error = output.route_progress.valid && robot.valid
             ? std::atan2(std::sin(robot.yaw - output.route_progress.route_yaw),
@@ -1168,7 +1178,9 @@ void NavdogRuntimeNode::updateControlOwner(
           if (rejoin_republish_count_ <
               native_scan_rejoin_max_republish_count_)
           {
-            native_scan_reset_publisher_.publish(std_msgs::Empty{});
+            // Do NOT publish reset before the rejoin path — same race as the
+            // initial rejoin handoff: reset arriving after the path would
+            // clear have_target_ and leave SCAN without a trajectory.
             publishNativeScanRejoinPath(task, robot, output.route_progress);
             ++rejoin_republish_count_;
           }
