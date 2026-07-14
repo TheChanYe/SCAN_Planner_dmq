@@ -75,9 +75,11 @@ namespace scan_planner
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
-    int max_replan_fail_count_{1000};
+    int max_replan_fail_count_{30};
     int last_escape_side_{0};
     ros::Time last_freeze_update_time_;
+    double replan_retry_interval_sec_{0.20};
+    ros::Time next_replan_attempt_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;
@@ -112,7 +114,7 @@ namespace scan_planner
     bool planNextWaypoint();
     bool isWaypointSequenceMode() const;
     bool adjustGlobalTargetIfOccupied();
-    void getLocalTarget();
+    bool getLocalTarget();
     void finishProcess();
     void publishSelfInflationMarker();
     double getOdomYaw() const;
