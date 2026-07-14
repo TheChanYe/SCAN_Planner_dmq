@@ -3,6 +3,13 @@ status_rate_hz: 10.0
 odom_topic: /quad_0/body_pose
 cmd_vel_topic: /navdog/route_cmd_vel
 native_scan_takeover: true
+native_scan_rejoin:
+  min_forward_distance_m: 0.8
+  preferred_forward_distance_m: 1.2
+  max_forward_distance_m: 2.0
+  no_progress_timeout_sec: 3.0
+  min_progress_improvement_m: 0.10
+  max_republish_count: 2
 odom_twist_in_world_frame: true
 default_route_z: 0.3
 default_max_vx: 0.4

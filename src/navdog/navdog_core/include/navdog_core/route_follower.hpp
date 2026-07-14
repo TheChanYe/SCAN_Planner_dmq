@@ -27,6 +27,13 @@ public:
       double now_sec);
 
 private:
+  VelocityCommand updatePointGoal(
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      double max_vx,
+      double now_sec) const;
+
   bool interpolateRoutePoint(
       const NavigationTask& task,
       double target_arc_length_m,

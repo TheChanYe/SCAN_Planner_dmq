@@ -165,6 +165,53 @@ TEST(RouteFollowerTest, OutputsNonZeroVelocity)
   EXPECT_EQ(cmd.source, CommandSource::PLANNER);
 }
 
+TEST(RouteFollowerTest, FollowsSinglePointGoal)
+{
+  RouteFollowerConfig config{};
+  config.heading_turn_only_threshold_rad = 0.8;
+  RouteFollower follower(config);
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.4;
+  RoutePoint target{};
+  target.x = 5.0;
+  task.points.push_back(target);
+
+  RouteProgress progress = makeProgress(1, 0.0, 0.0, 0.0);
+  progress.total_length_m = 0.0;
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.0, 0.0, 0.0), progress, 0.4, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_EQ(cmd.source, CommandSource::PLANNER);
+  EXPECT_GT(cmd.vx, 0.0);
+}
+
+TEST(RouteFollowerTest, FollowsRepeatedPointGoal)
+{
+  RouteFollowerConfig config{};
+  config.heading_turn_only_threshold_rad = 0.8;
+  RouteFollower follower(config);
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.4;
+  RoutePoint target{};
+  target.x = 5.0;
+  target.y = 5.0;
+  task.points = {target, target, target};
+
+  RouteProgress progress = makeProgress(1, 0.0, 0.0, 0.0);
+  progress.total_length_m = 0.0;
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.0, 0.0, 0.0), progress, 0.4, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_EQ(cmd.source, CommandSource::PLANNER);
+  EXPECT_NE(cmd.yaw_rate, 0.0);
+}
+
 TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
 {
   RouteFollowerConfig config{};

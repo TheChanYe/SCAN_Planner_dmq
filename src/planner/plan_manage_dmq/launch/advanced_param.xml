@@ -35,6 +35,10 @@
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
     <param name="fsm/fail_safe" value="true" type="bool"/> 
     <param name="fsm/max_replan_fail_count" value="1000" type="int"/>
+    <param name="fsm/escape_min_radius" value="0.5" type="double"/>
+    <param name="fsm/escape_max_radius" value="2.0" type="double"/>
+    <param name="fsm/escape_radius_step" value="0.25" type="double"/>
+    <param name="fsm/escape_max_lateral_from_route" value="1.2" type="double"/>
     <param name="fsm/is_real_world" value="$(arg is_real_world)" type="bool"/>
 
     <!-- sliding map -->

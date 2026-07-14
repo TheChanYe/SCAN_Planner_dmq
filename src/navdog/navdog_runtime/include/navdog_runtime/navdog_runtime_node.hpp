@@ -54,6 +54,11 @@ private:
       const navdog::NavigationTask& task,
       const navdog::RobotState& robot,
       const navdog::RouteProgress& progress);
+  bool publishNativeScanRejoinPath(
+      const navdog::NavigationTask& task,
+      const navdog::RobotState& robot,
+      const navdog::RouteProgress& progress);
+  void resetRejoinMonitoring() noexcept;
   void setControlOwner(std::uint8_t owner);
   void resetNativeScanTakeover(bool publish_reset);
   void releaseNativeScanToRoute(const navdog::NavigationTask& task,
@@ -106,6 +111,17 @@ private:
   bool scan_takeover_active_{false};
   std::uint64_t scan_takeover_task_sequence_{0};
   std::uint8_t control_owner_{0};
+
+  double native_scan_rejoin_min_forward_distance_m_{0.8};
+  double native_scan_rejoin_preferred_forward_distance_m_{1.2};
+  double native_scan_rejoin_max_forward_distance_m_{2.0};
+  double native_scan_rejoin_no_progress_timeout_sec_{3.0};
+  double native_scan_rejoin_min_progress_improvement_m_{0.10};
+  int native_scan_rejoin_max_republish_count_{2};
+  double best_rejoin_lateral_error_{0.0};
+  double rejoin_enter_stamp_sec_{0.0};
+  double last_rejoin_republish_stamp_sec_{0.0};
+  int rejoin_republish_count_{0};
 
   std::string odom_topic_;
   std::string cmd_vel_topic_;

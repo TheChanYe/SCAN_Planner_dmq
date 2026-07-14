@@ -117,6 +117,63 @@ bool RouteFollower::isYawAligned(
          config_.heading_turn_only_threshold_rad;
 }
 
+VelocityCommand RouteFollower::updatePointGoal(
+    const NavigationTask& task,
+    const RobotState& robot,
+    const RouteProgress& progress,
+    double max_vx,
+    double now_sec) const
+{
+  VelocityCommand cmd{};
+  cmd.stamp_sec = now_sec;
+  if (task.points.empty() || !robot.valid || !progress.valid)
+  {
+    cmd.source = CommandSource::TRACKING_STOP;
+    return cmd;
+  }
+
+  const RoutePoint& target = task.points.back();
+  const double dx = target.x - robot.x;
+  const double dy = target.y - robot.y;
+  const double distance = std::hypot(dx, dy);
+  const double desired_yaw = distance > kEpsilon
+      ? std::atan2(dy, dx)
+      : robot.yaw;
+  const double heading_error = normalizeAngle(desired_yaw - robot.yaw);
+  const double effective_max_vx =
+      std::max(0.0, std::min(max_vx, config_.max_vx));
+
+  if (!isYawAligned(heading_error))
+  {
+    cmd.yaw_rate = std::max(
+        -config_.kp_yaw,
+        std::min(config_.kp_yaw, config_.kp_yaw * heading_error));
+  }
+  else
+  {
+    double target_speed = std::min(
+        effective_max_vx,
+        std::max(0.10, config_.kp_x * distance));
+    if (distance < 0.30)
+      target_speed = std::min(effective_max_vx, config_.kp_x * distance);
+
+    const double c = std::cos(robot.yaw);
+    const double s = std::sin(robot.yaw);
+    const double lateral_error = -s * dx + c * dy;
+    cmd.vx = target_speed;
+    cmd.vy = config_.kp_y * lateral_error;
+    cmd.yaw_rate = config_.kp_yaw * heading_error;
+  }
+
+  if (!std::isfinite(cmd.vx)) cmd.vx = 0.0;
+  if (!std::isfinite(cmd.vy)) cmd.vy = 0.0;
+  if (!std::isfinite(cmd.yaw_rate)) cmd.yaw_rate = 0.0;
+  cmd.vx = std::max(0.0, std::min(cmd.vx, effective_max_vx));
+  cmd.valid = true;
+  cmd.source = CommandSource::PLANNER;
+  return cmd;
+}
+
 // =============================================================================
 // update
 // =============================================================================
@@ -130,9 +187,10 @@ VelocityCommand RouteFollower::update(
 {
   VelocityCommand cmd{};
 
-  if (task.points.size() < 2 ||
+  if (task.points.empty() ||
       !progress.valid ||
       !std::isfinite(progress.arc_length_m) ||
+      !std::isfinite(progress.total_length_m) ||
       progress.arc_length_m < 0.0 ||
       !robot.valid)
   {
@@ -141,6 +199,9 @@ VelocityCommand RouteFollower::update(
     cmd.stamp_sec = now_sec;
     return cmd;
   }
+
+  if (task.points.size() == 1 || progress.total_length_m <= 1e-6)
+    return updatePointGoal(task, robot, progress, max_vx, now_sec);
 
   const double effective_max_vx =
       std::max(0.0, std::min(max_vx, config_.max_vx));

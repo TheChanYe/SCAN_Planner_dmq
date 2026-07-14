@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
 
 namespace navdog_runtime
 {
@@ -376,6 +377,35 @@ bool NavdogRuntimeNode::initialize()
                                  "/navdog/route_cmd_vel");
   private_nh_.param("native_scan_takeover", native_scan_takeover_, true);
   private_nh_.param("odom_twist_in_world_frame", odom_twist_in_world_frame_, true);
+  private_nh_.param("native_scan_rejoin/min_forward_distance_m",
+                    native_scan_rejoin_min_forward_distance_m_, 0.8);
+  private_nh_.param("native_scan_rejoin/preferred_forward_distance_m",
+                    native_scan_rejoin_preferred_forward_distance_m_, 1.2);
+  private_nh_.param("native_scan_rejoin/max_forward_distance_m",
+                    native_scan_rejoin_max_forward_distance_m_, 2.0);
+  private_nh_.param("native_scan_rejoin/no_progress_timeout_sec",
+                    native_scan_rejoin_no_progress_timeout_sec_, 3.0);
+  private_nh_.param("native_scan_rejoin/min_progress_improvement_m",
+                    native_scan_rejoin_min_progress_improvement_m_, 0.10);
+  private_nh_.param("native_scan_rejoin/max_republish_count",
+                    native_scan_rejoin_max_republish_count_, 2);
+  if (!std::isfinite(native_scan_rejoin_min_forward_distance_m_) ||
+      !std::isfinite(native_scan_rejoin_preferred_forward_distance_m_) ||
+      !std::isfinite(native_scan_rejoin_max_forward_distance_m_) ||
+      !std::isfinite(native_scan_rejoin_no_progress_timeout_sec_) ||
+      !std::isfinite(native_scan_rejoin_min_progress_improvement_m_) ||
+      native_scan_rejoin_min_forward_distance_m_ <= 0.0 ||
+      native_scan_rejoin_preferred_forward_distance_m_ <
+          native_scan_rejoin_min_forward_distance_m_ ||
+      native_scan_rejoin_max_forward_distance_m_ <
+          native_scan_rejoin_preferred_forward_distance_m_ ||
+      native_scan_rejoin_no_progress_timeout_sec_ <= 0.0 ||
+      native_scan_rejoin_min_progress_improvement_m_ <= 0.0 ||
+      native_scan_rejoin_max_republish_count_ < 0)
+  {
+    ROS_ERROR("invalid native_scan_rejoin parameters");
+    return false;
+  }
 
   planner_manager_ = std::make_shared<scan_planner::SCANPlannerManager>();
   auto planning_visualization =
@@ -527,7 +557,48 @@ void NavdogRuntimeNode::processEvents()
       setControlOwner(1);
       last_route_progress_ = navdog::RouteProgress{};
       navdog::NavigationTask active_task{};
-      if (coordinator_.copyActiveTask(active_task)) publishRoute(active_task);
+      if (coordinator_.copyActiveTask(active_task))
+      {
+        publishRoute(active_task);
+        double estimated_total_length = 0.0;
+        std::size_t distinct_point_count = active_task.points.empty() ? 0 : 1;
+        std::size_t last_distinct_index = 0;
+        for (std::size_t i = 1; i < active_task.points.size(); ++i)
+        {
+          const double segment_length = std::hypot(
+              active_task.points[i].x - active_task.points[i - 1].x,
+              active_task.points[i].y - active_task.points[i - 1].y);
+          estimated_total_length += segment_length;
+          const double distinct_distance = std::hypot(
+              active_task.points[i].x - active_task.points[last_distinct_index].x,
+              active_task.points[i].y - active_task.points[last_distinct_index].y);
+          if (distinct_distance >= 0.01)
+          {
+            ++distinct_point_count;
+            last_distinct_index = i;
+          }
+        }
+        if (!active_task.points.empty())
+        {
+          const auto& start = active_task.points.front();
+          const auto& goal = active_task.points.back();
+          ROS_INFO("TASK_ROUTE_DIAG task_sequence=%lu point_count=%lu "
+                   "distinct_point_count=%lu estimated_total_length=%.3f "
+                   "start=(%.3f,%.3f) goal=(%.3f,%.3f)",
+                   static_cast<unsigned long>(active_task.sequence),
+                   static_cast<unsigned long>(active_task.points.size()),
+                   static_cast<unsigned long>(distinct_point_count),
+                   estimated_total_length, start.x, start.y, goal.x, goal.y);
+        }
+        if (distinct_point_count <= 1 || estimated_total_length < 0.01)
+        {
+          ROS_WARN("TASK_ROUTE_DEGENERATE task_sequence=%lu point_count=%lu "
+                   "distinct_point_count=%lu fallback=POINT_GOAL_FOLLOW",
+                   static_cast<unsigned long>(active_task.sequence),
+                   static_cast<unsigned long>(active_task.points.size()),
+                   static_cast<unsigned long>(distinct_point_count));
+        }
+      }
       ROS_INFO("task started: task_sequence=%lu",
                static_cast<unsigned long>(active_task.sequence));
     }
@@ -632,6 +703,28 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 
   // Compute effective command: start from final_cmd, override on conflict
   effective_command_ = output.final_cmd;
+  if (output.final_cmd.source == navdog::CommandSource::TRACKING_STOP &&
+      output.navigation_mode.mode == navdog::NavigationMode::ROUTE_FOLLOW)
+  {
+    const char* reason = "INTERPOLATION_FAILED";
+    if (task.points.empty()) reason = "EMPTY_TASK";
+    else if (!input.robot.valid) reason = "INVALID_ROBOT";
+    else if (!output.route_progress.valid) reason = "INVALID_PROGRESS";
+    else if (!output.navigation_mode.corridor_available)
+      reason = "CORRIDOR_UNAVAILABLE";
+    else if (output.navigation_mode.route_blocked)
+      reason = "ROUTE_BLOCKED";
+    ROS_WARN_THROTTLE(
+        1.0,
+        "ROUTE_FOLLOW_STOP task_sequence=%lu reason=%s point_count=%lu "
+        "total_length=%.3f progress_valid=%d robot_valid=%d arc_length=%.3f "
+        "remaining_distance=%.3f",
+        static_cast<unsigned long>(output.task_sequence), reason,
+        static_cast<unsigned long>(task.points.size()),
+        output.route_progress.total_length_m, output.route_progress.valid,
+        input.robot.valid, output.route_progress.arc_length_m,
+        output.route_progress.remaining_distance_m);
+  }
   cmd_vel_conflict_ = false;
   if (cmd_vel_conflict_latched_)
   {
@@ -759,6 +852,147 @@ bool NavdogRuntimeNode::publishNativeScanTakeoverPath(
   return true;
 }
 
+bool NavdogRuntimeNode::publishNativeScanRejoinPath(
+    const navdog::NavigationTask& task,
+    const navdog::RobotState& robot,
+    const navdog::RouteProgress& progress)
+{
+  if (!robot.valid || !progress.valid || task.points.size() < 2 ||
+      progress.task_sequence != task.sequence || !occupancy_query_ ||
+      !occupancy_query_->ready())
+  {
+    ROS_ERROR("cannot build native SCAN rejoin path for task_sequence=%lu",
+              static_cast<unsigned long>(task.sequence));
+    return false;
+  }
+
+  std::vector<double> cumulative(task.points.size(), 0.0);
+  for (std::size_t i = 1; i < task.points.size(); ++i)
+  {
+    cumulative[i] = cumulative[i - 1] + std::hypot(
+        task.points[i].x - task.points[i - 1].x,
+        task.points[i].y - task.points[i - 1].y);
+  }
+  const double total_length = cumulative.back();
+  const double min_arc = std::min(
+      total_length,
+      progress.arc_length_m + native_scan_rejoin_min_forward_distance_m_);
+  const double max_arc = std::min(
+      total_length,
+      progress.arc_length_m + native_scan_rejoin_max_forward_distance_m_);
+  const double preferred_arc = std::max(
+      min_arc,
+      std::min(max_arc,
+               progress.arc_length_m +
+                   native_scan_rejoin_preferred_forward_distance_m_));
+  if (max_arc <= progress.arc_length_m + 1e-6)
+  {
+    ROS_ERROR("native SCAN rejoin has no forward route for task_sequence=%lu",
+              static_cast<unsigned long>(task.sequence));
+    return false;
+  }
+
+  const auto interpolate = [&](double arc, double& x, double& y,
+                               double& yaw, std::size_t& segment_end) -> bool
+  {
+    for (std::size_t i = 1; i < task.points.size(); ++i)
+    {
+      const double length = cumulative[i] - cumulative[i - 1];
+      if (length <= 1e-9 || cumulative[i] + 1e-9 < arc)
+        continue;
+      const double ratio = std::max(
+          0.0, std::min(1.0, (arc - cumulative[i - 1]) / length));
+      x = task.points[i - 1].x +
+          ratio * (task.points[i].x - task.points[i - 1].x);
+      y = task.points[i - 1].y +
+          ratio * (task.points[i].y - task.points[i - 1].y);
+      yaw = std::atan2(task.points[i].y - task.points[i - 1].y,
+                       task.points[i].x - task.points[i - 1].x);
+      segment_end = i;
+      return true;
+    }
+    return false;
+  };
+
+  double target_x = 0.0;
+  double target_y = 0.0;
+  double target_yaw = 0.0;
+  double target_arc = preferred_arc;
+  std::size_t target_segment_end = 0;
+  bool found_target = false;
+  const double search_step = 0.10;
+  const int search_count = static_cast<int>(
+      std::ceil((max_arc - min_arc) / search_step));
+  for (int i = 0; i <= search_count && !found_target; ++i)
+  {
+    const double offset = static_cast<double>(i) * search_step;
+    const double candidates[2] = {preferred_arc + offset,
+                                  preferred_arc - offset};
+    for (const double candidate_arc : candidates)
+    {
+      if (candidate_arc < min_arc - 1e-9 ||
+          candidate_arc > max_arc + 1e-9)
+        continue;
+      std::size_t segment_end = 0;
+      double x = 0.0;
+      double y = 0.0;
+      double yaw = 0.0;
+      if (interpolate(candidate_arc, x, y, yaw, segment_end) &&
+          occupancy_query_->isFree(x, y, robot.z, yaw))
+      {
+        target_x = x;
+        target_y = y;
+        target_yaw = yaw;
+        target_arc = candidate_arc;
+        target_segment_end = segment_end;
+        found_target = true;
+        break;
+      }
+    }
+  }
+  if (!found_target)
+  {
+    ROS_ERROR("no free forward rejoin point for task_sequence=%lu arc=[%.3f,%.3f]",
+              static_cast<unsigned long>(task.sequence), min_arc, max_arc);
+    return false;
+  }
+
+  nav_msgs::Path path;
+  path.header.stamp = ros::Time::now();
+  path.header.frame_id = "world";
+  const auto append = [&](double x, double y, double yaw)
+  {
+    geometry_msgs::PoseStamped pose;
+    pose.header = path.header;
+    pose.pose.position.x = x;
+    pose.pose.position.y = y;
+    pose.pose.position.z = robot.z;
+    pose.pose.orientation = tf::createQuaternionMsgFromYaw(yaw);
+    path.poses.push_back(pose);
+  };
+  append(robot.x, robot.y, robot.yaw);
+  append(target_x, target_y, target_yaw);
+  for (std::size_t i = target_segment_end; i < task.points.size(); ++i)
+  {
+    if (cumulative[i] <= target_arc + 0.01)
+      continue;
+    const double yaw = i > 0
+        ? std::atan2(task.points[i].y - task.points[i - 1].y,
+                     task.points[i].x - task.points[i - 1].x)
+        : target_yaw;
+    append(task.points[i].x, task.points[i].y, yaw);
+  }
+  native_scan_path_publisher_.publish(path);
+  ROS_WARN("NATIVE_SCAN_ACTIVE_REJOIN task_sequence=%lu robot=(%.3f,%.3f) "
+           "progress_arc=%.3f lateral_error=%.3f target=(%.3f,%.3f) "
+           "remaining_points=%lu",
+           static_cast<unsigned long>(task.sequence), robot.x, robot.y,
+           progress.arc_length_m, progress.lateral_error_m,
+           target_x, target_y,
+           static_cast<unsigned long>(path.poses.size() - 1));
+  return true;
+}
+
 void NavdogRuntimeNode::setControlOwner(std::uint8_t owner)
 {
   if (owner > 2) owner = 0;
@@ -777,8 +1011,17 @@ void NavdogRuntimeNode::resetNativeScanTakeover(bool publish_reset)
 {
   scan_takeover_active_ = false;
   scan_takeover_task_sequence_ = 0;
+  resetRejoinMonitoring();
   if (publish_reset)
     native_scan_reset_publisher_.publish(std_msgs::Empty{});
+}
+
+void NavdogRuntimeNode::resetRejoinMonitoring() noexcept
+{
+  best_rejoin_lateral_error_ = 0.0;
+  rejoin_enter_stamp_sec_ = 0.0;
+  last_rejoin_republish_stamp_sec_ = 0.0;
+  rejoin_republish_count_ = 0;
 }
 
 void NavdogRuntimeNode::releaseNativeScanToRoute(
@@ -867,12 +1110,28 @@ void NavdogRuntimeNode::updateControlOwner(
     }
     else if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
+      if (output.navigation_mode.transitioned &&
+          output.navigation_mode.previous_mode ==
+              navdog::NavigationMode::ROUTE_REJOIN)
+        resetRejoinMonitoring();
       setControlOwner(2);
     }
     else if (output.navigation_mode.mode == navdog::NavigationMode::ROUTE_REJOIN)
     {
-      if (output.navigation_mode.transitioned)
+      const double now_sec = ros::Time::now().toSec();
+      if (output.navigation_mode.transitioned &&
+          output.navigation_mode.previous_mode ==
+              navdog::NavigationMode::LOCAL_AVOID)
       {
+        // Keep SCAN ownership while replacing the completed avoidance
+        // trajectory with a forward path that actively rejoins the route.
+        setControlOwner(2);
+        best_rejoin_lateral_error_ = output.route_progress.lateral_error_m;
+        rejoin_enter_stamp_sec_ = now_sec;
+        last_rejoin_republish_stamp_sec_ = now_sec;
+        rejoin_republish_count_ = 0;
+        native_scan_reset_publisher_.publish(std_msgs::Empty{});
+        publishNativeScanRejoinPath(task, robot, output.route_progress);
         const double heading_error = output.route_progress.valid && robot.valid
             ? std::atan2(std::sin(robot.yaw - output.route_progress.route_yaw),
                          std::cos(robot.yaw - output.route_progress.route_yaw))
@@ -884,6 +1143,44 @@ void NavdogRuntimeNode::updateControlOwner(
                  "heading_error=%.3f",
                  static_cast<unsigned long>(task.sequence),
                  output.route_progress.lateral_error_m, heading_error);
+      }
+      else if (output.route_progress.valid &&
+               std::isfinite(output.route_progress.lateral_error_m))
+      {
+        const double lateral_error = output.route_progress.lateral_error_m;
+        if (lateral_error <= best_rejoin_lateral_error_ -
+                                 native_scan_rejoin_min_progress_improvement_m_)
+        {
+          best_rejoin_lateral_error_ = lateral_error;
+          rejoin_enter_stamp_sec_ = now_sec;
+        }
+        const double stalled_elapsed = now_sec - std::max(
+            rejoin_enter_stamp_sec_, last_rejoin_republish_stamp_sec_);
+        if (rejoin_enter_stamp_sec_ > 0.0 &&
+            stalled_elapsed >= native_scan_rejoin_no_progress_timeout_sec_)
+        {
+          ROS_WARN("NATIVE_SCAN_REJOIN_STALLED task_sequence=%lu "
+                   "lateral_error=%.3f best_lateral_error=%.3f elapsed=%.3f "
+                   "republish_count=%d",
+                   static_cast<unsigned long>(task.sequence), lateral_error,
+                   best_rejoin_lateral_error_, stalled_elapsed,
+                   rejoin_republish_count_);
+          if (rejoin_republish_count_ <
+              native_scan_rejoin_max_republish_count_)
+          {
+            native_scan_reset_publisher_.publish(std_msgs::Empty{});
+            publishNativeScanRejoinPath(task, robot, output.route_progress);
+            ++rejoin_republish_count_;
+          }
+          else
+          {
+            ROS_ERROR("NATIVE_SCAN_REJOIN_STALLED maximum republish count "
+                      "reached; retaining SCAN ownership");
+          }
+          best_rejoin_lateral_error_ = lateral_error;
+          rejoin_enter_stamp_sec_ = now_sec;
+          last_rejoin_republish_stamp_sec_ = now_sec;
+        }
       }
       setControlOwner(2);
     }

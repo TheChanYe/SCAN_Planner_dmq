@@ -44,6 +44,24 @@ namespace scan_planner
     nh.param("fsm/thresh_replan", replan_thresh_, -1.0);
     nh.param("fsm/thresh_no_replan", no_replan_thresh_, -1.0);
     nh.param("fsm/planning_horizon", planning_horizon_, -1.0);
+    nh.param("fsm/escape_min_radius", escape_min_radius_, 0.5);
+    nh.param("fsm/escape_max_radius", escape_max_radius_, 2.0);
+    nh.param("fsm/escape_radius_step", escape_radius_step_, 0.25);
+    nh.param("fsm/escape_max_lateral_from_route",
+             escape_max_lateral_from_route_, 1.2);
+    if (!std::isfinite(escape_min_radius_) ||
+        !std::isfinite(escape_max_radius_) ||
+        !std::isfinite(escape_radius_step_) ||
+        !std::isfinite(escape_max_lateral_from_route_) ||
+        escape_min_radius_ <= 0.0 ||
+        escape_max_radius_ < escape_min_radius_ ||
+        escape_radius_step_ <= 0.0 ||
+        escape_max_lateral_from_route_ <= 0.0)
+    {
+      ROS_FATAL("[SCANReplanFSM] invalid escape search parameters");
+      ros::shutdown();
+      return;
+    }
     nh.param("fsm/emergency_time_", emergency_time_, 1.0);
     nh.param("fsm/fail_safe", enable_fail_safe_, true);
     nh.param("fsm/max_replan_fail_count", max_replan_fail_count_, 1000);
@@ -408,6 +426,7 @@ namespace scan_planner
     active_waypoints_.clear();
     current_wp_ = 0;
     replan_fail_count_ = 0;
+    last_escape_side_ = 0;
     need_hover_stop_ = false;
     exec_state_ = WAIT_TARGET;
     ROS_WARN("[SCANReplanFSM] native takeover state reset");
@@ -1188,29 +1207,65 @@ namespace scan_planner
         // blocked lookahead point: the latter can be inside a large obstacle
         // and consequently has no free neighbouring cells at all.
         //
-        // SCORING STRATEGY: remove !found_escape from the outer radius loop
-        // so ALL radii are examined and the globally-best candidate is picked
-        // (rather than the nearest one at the smallest radius — which
-        // produces the “hug the obstacle edge” / jerky side-stepping
-        // behaviour).  Prefer candidates that are (a) closer to the global
-        // goal and (b) more perpendicular to the blocked route direction,
-        // because moving sideways around an obstacle clears it faster than
-        // inching along its boundary.
         const Eigen::Vector3d blocked_target = local_target_pt_;
         const double blocked_yaw = estimateYawFromSegment(
             start_pt_, blocked_target);
 
-        // Route direction & perpendicular – used for scoring bias.
-        const Eigen::Vector2d route_dir =
-            (end_pt_ - start_pt_).head<2>().normalized();
-        const Eigen::Vector2d perp_dir(-route_dir.y(), route_dir.x());
+        Eigen::Vector2d route_dir(std::cos(blocked_yaw), std::sin(blocked_yaw));
+        if (!route_dir.allFinite() || route_dir.norm() < 1e-6)
+          route_dir = Eigen::Vector2d::UnitX();
+        const Eigen::Vector2d route_normal(-route_dir.y(), route_dir.x());
+
+        const auto routeDistanceAndProgress =
+            [&](const Eigen::Vector3d &candidate,
+                double &lateral_distance,
+                double &route_time) -> bool
+        {
+          lateral_distance = std::numeric_limits<double>::infinity();
+          route_time = dist_min_t;
+          const double sample_step = std::max(0.05, t_step * 0.5);
+          for (double t = dist_min_t; t <= duration + 1e-6;
+               t += sample_step)
+          {
+            Eigen::Vector3d route_point;
+            if (!sampleGlobalPosition(std::min(t, duration), route_point))
+              continue;
+            const double distance =
+                (candidate - route_point).head<2>().norm();
+            if (distance < lateral_distance)
+            {
+              lateral_distance = distance;
+              route_time = std::min(t, duration);
+            }
+          }
+          return std::isfinite(lateral_distance);
+        };
+
+        const auto pathIsFree = [&](const Eigen::Vector3d &candidate) -> bool
+        {
+          const double distance =
+              (candidate - start_pt_).head<2>().norm();
+          const int steps = std::max(2, static_cast<int>(std::ceil(distance / 0.20)));
+          for (int step = 1; step <= steps; ++step)
+          {
+            const double ratio = static_cast<double>(step) / steps;
+            const Eigen::Vector3d point =
+                start_pt_ + ratio * (candidate - start_pt_);
+            if (planner_manager_->grid_map_->getInflateOccupancy(
+                    point, estimateYawFromSegment(start_pt_, candidate)) != 0)
+              return false;
+          }
+          return true;
+        };
 
         bool found_escape = false;
         double best_score = std::numeric_limits<double>::infinity();
         Eigen::Vector3d escape = start_pt_;
+        int selected_side = 0;
 
-        // Search up to 5 m (was 2.5 m) so large obstacles can be bypassed.
-        for (double radius = 0.35; radius <= 5.0; radius += 0.5)
+        for (double radius = escape_min_radius_;
+             radius <= escape_max_radius_ + 1e-6;
+             radius += escape_radius_step_)
         {
           for (int angle_index = 0; angle_index < 24; ++angle_index)
           {
@@ -1225,51 +1280,38 @@ namespace scan_planner
                 planner_manager_->grid_map_->getInflateOccupancy(
                     candidate, estimateYawFromSegment(start_pt_, candidate)) != 0)
               continue;
-
-            // Quick forward-clearance check: verify that a point
-            // 0.5 m ahead of the candidate toward the global goal
-            // is also free, so the escape actually leads somewhere.
-            const Eigen::Vector2d dir_to_goal =
-                (end_pt_.head<2>() - candidate.head<2>()).normalized();
-            Eigen::Vector3d fwd_check = candidate;
-            fwd_check.x() += dir_to_goal.x() * 0.5;
-            fwd_check.y() += dir_to_goal.y() * 0.5;
-            if (planner_manager_->grid_map_->getInflateOccupancy(
-                    fwd_check,
-                    estimateYawFromSegment(candidate, fwd_check)) != 0)
+            if (!pathIsFree(candidate))
               continue;
 
-            // Trajectory-start clearance: verify that the midpoint
-            // between the robot and the candidate is also free.  This
-            // prevents the B-spline control points near t=0 from
-            // ending up inside the inflated obstacle zone (which would
-            // trigger "First 3 control points in obstacles!" in the
-            // optimiser and kill the plan).
-            Eigen::Vector3d mid_point = start_pt_;
-            mid_point.x() += 0.5 * (candidate.x() - start_pt_.x());
-            mid_point.y() += 0.5 * (candidate.y() - start_pt_.y());
-            if (planner_manager_->grid_map_->getInflateOccupancy(
-                    mid_point,
-                    estimateYawFromSegment(start_pt_, mid_point)) != 0)
+            double lateral_distance = 0.0;
+            double candidate_route_time = 0.0;
+            if (!routeDistanceAndProgress(
+                    candidate, lateral_distance, candidate_route_time) ||
+                lateral_distance > escape_max_lateral_from_route_ ||
+                candidate_route_time + 1e-6 < dist_min_t)
               continue;
 
-            // Score = distance to goal, de-weighted by how sideways the
-            // escape direction is.  Purely-forward escapes (perp ≈ 0)
-            // get a penalty so the robot doesn't hug the obstacle edge;
-            // perpendicular escapes (perp ≈ 1) are preferred.
-            const double dist_to_goal =
-                (candidate - end_pt_).head<2>().norm();
-            const Eigen::Vector2d escape_dir =
-                (candidate.head<2>() - start_pt_.head<2>()).normalized();
-            const double perp_component =
-                std::abs(escape_dir.dot(perp_dir));
+            const Eigen::Vector2d displacement =
+                candidate.head<2>() - start_pt_.head<2>();
+            const double forward_progress = displacement.dot(route_dir);
+            if (forward_progress < -0.05)
+              continue;
+            const double signed_side = displacement.dot(route_normal);
+            const int side = signed_side > 0.05 ? 1 :
+                             (signed_side < -0.05 ? -1 : 0);
+            const double side_switch_penalty =
+                last_escape_side_ != 0 && side != 0 && side != last_escape_side_
+                    ? 1.0
+                    : 0.0;
             const double score =
-                dist_to_goal / (0.3 + perp_component);
+                2.0 * lateral_distance + 0.30 * radius -
+                0.80 * forward_progress + side_switch_penalty;
 
             if (score < best_score)
             {
               best_score = score;
               escape = candidate;
+              selected_side = side;
               found_escape = true;
             }
           }
@@ -1284,6 +1326,8 @@ namespace scan_planner
           // moved sideways, the next cycle projects its new pose and chooses
           // an appropriate forward target from that point.
           target_t = duration;
+          if (selected_side != 0)
+            last_escape_side_ = selected_side;
           ROS_WARN_THROTTLE(
               1.0,
               "[getLocalTarget] route blocked; use lateral escape "

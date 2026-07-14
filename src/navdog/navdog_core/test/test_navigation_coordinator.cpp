@@ -1914,10 +1914,16 @@ TEST(NavigationCoordinatorTest, SinglePointTaskDoesNotFailInTracking)
 
   // Next cycle: single point route should be valid
   CoreInput robot1 = makeRobotInput(0.5, 0, 0);
+  robot1.route_corridor_observation =
+      makeClearScanObservation(1u, 0.0, 1.3);
   CoreOutput output = coordinator.update(robot1, 1.3);
 
   EXPECT_EQ(output.state, NavState::TRACKING);
   EXPECT_TRUE(output.route_progress.valid);
+  EXPECT_EQ(output.navigation_mode.mode, NavigationMode::ROUTE_FOLLOW);
+  EXPECT_TRUE(output.final_cmd.valid);
+  EXPECT_EQ(output.final_cmd.source, CommandSource::PLANNER);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
 }
 
 // =============================================================================
