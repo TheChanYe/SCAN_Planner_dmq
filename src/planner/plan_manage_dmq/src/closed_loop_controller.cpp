@@ -27,6 +27,7 @@ ros::Timer cmd_timer;
 
 bool receive_traj = false;
 bool have_odom = false;
+bool turn_in_place = false;
 std::vector<UniformBspline> traj;
 double traj_duration = 0.0;
 int traj_id = 0;
@@ -39,6 +40,8 @@ ros::Time last_update_time;
 
 double time_forward;
 double heading_error_threshold;
+double heading_resume_threshold;
+double min_heading_speed_scale;
 double kp_pos;
 double kp_yaw;
 double max_vx;
@@ -68,11 +71,44 @@ bool loadParams(const ros::NodeHandle &nh)
   ok &= loadRequiredParam(nh, "max_vy", max_vy);
   ok &= loadRequiredParam(nh, "max_vyaw", max_vyaw);
   ok &= loadRequiredParam(nh, "finish_dist", finish_dist);
+
+  nh.param("heading_resume_threshold", heading_resume_threshold,
+           0.55 * heading_error_threshold);
+  nh.param("min_heading_speed_scale", min_heading_speed_scale, 0.35);
+
   if (ok && max_vyaw > kMaxVYawLimit)
   {
     ROS_WARN("[closed_loop_controller_dmq] cap max_vyaw %.3f to %.3f rad/s.", max_vyaw, kMaxVYawLimit);
     max_vyaw = kMaxVYawLimit;
   }
+
+  if (ok && (!std::isfinite(heading_error_threshold) || heading_error_threshold <= 0.0))
+  {
+    ROS_ERROR("[closed_loop_controller_dmq] invalid heading_error_threshold %.3f.",
+              heading_error_threshold);
+    ok = false;
+  }
+
+  if (ok && (!std::isfinite(heading_resume_threshold) ||
+             heading_resume_threshold < 0.0 ||
+             heading_resume_threshold >= heading_error_threshold))
+  {
+    const double old_value = heading_resume_threshold;
+    heading_resume_threshold = 0.55 * heading_error_threshold;
+    ROS_WARN("[closed_loop_controller_dmq] adjust heading_resume_threshold %.3f to %.3f rad.",
+             old_value, heading_resume_threshold);
+  }
+
+  if (ok && (!std::isfinite(min_heading_speed_scale) ||
+             min_heading_speed_scale < 0.0 ||
+             min_heading_speed_scale > 1.0))
+  {
+    const double old_value = min_heading_speed_scale;
+    min_heading_speed_scale = 0.35;
+    ROS_WARN("[closed_loop_controller_dmq] adjust min_heading_speed_scale %.3f to %.3f.",
+             old_value, min_heading_speed_scale);
+  }
+
   return ok;
 }
 
@@ -157,6 +193,7 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
   exec_time = 0.0;
   last_update_time = ros::Time::now();
   receive_traj = true;
+  turn_in_place = false;
 
   ROS_WARN("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
 }
@@ -190,9 +227,22 @@ void cmdCallback(const ros::TimerEvent &)
 
   const double yaw_des = estimateDesiredYaw(t_eval, pos_des);
   const double yaw_err = normalizeAngle(yaw_des - odom_yaw);
+  const double abs_yaw_err = std::abs(yaw_err);
   const double vyaw_cmd = clamp(kp_yaw * yaw_err, -max_vyaw, max_vyaw);
 
-  if (std::abs(yaw_err) > heading_error_threshold)
+  // Use hysteresis so the controller does not alternate between full stop and
+  // translation when the heading error sits close to one threshold.
+  if (turn_in_place)
+  {
+    if (abs_yaw_err <= heading_resume_threshold)
+      turn_in_place = false;
+  }
+  else if (abs_yaw_err >= heading_error_threshold)
+  {
+    turn_in_place = true;
+  }
+
+  if (turn_in_place)
   {
     publishExecutionFrozen(true);
     publishStop(vyaw_cmd);
@@ -201,7 +251,20 @@ void cmdCallback(const ros::TimerEvent &)
   }
 
   publishExecutionFrozen(false);
-  exec_time = std::min(traj_duration, exec_time + dt);
+
+  // Slow translation continuously as heading error grows. Advancing spline
+  // time by the same scale prevents the reference point from running away
+  // while the robot is still turning toward the path.
+  const double heading_ratio = clamp(
+      abs_yaw_err / std::max(heading_error_threshold, 1e-6), 0.0, 1.0);
+  const double smooth_ratio = heading_ratio * heading_ratio *
+      (3.0 - 2.0 * heading_ratio);
+  const double heading_speed_scale =
+      1.0 - (1.0 - min_heading_speed_scale) * smooth_ratio;
+
+  exec_time = std::min(
+      traj_duration,
+      exec_time + dt * heading_speed_scale);
   last_update_time = now;
 
   pos_des = traj[0].evaluateDeBoorT(exec_time);
@@ -209,7 +272,10 @@ void cmdCallback(const ros::TimerEvent &)
 
   Eigen::Vector2d pos_err(pos_des(0) - odom_pos(0), pos_des(1) - odom_pos(1));
   Eigen::Vector2d vel_ff(vel_des(0), vel_des(1));
-  Eigen::Vector2d vel_world = clampNorm(vel_ff + kp_pos * pos_err, std::max(max_vx, max_vy));
+  Eigen::Vector2d vel_world = clampNorm(
+      vel_ff + kp_pos * pos_err,
+      std::max(max_vx, max_vy));
+  vel_world *= heading_speed_scale;
 
   const double c = std::cos(odom_yaw);
   const double s = std::sin(odom_yaw);
