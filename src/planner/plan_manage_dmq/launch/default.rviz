@@ -66,26 +66,26 @@ Visualization Manager:
       Displays:
         - Class: rviz/Marker
           Enabled: true
-          Marker Topic: /scan_planner_node/goal_point
+          Marker Topic: /native_scan/scan_planner_dmq_node/goal_point
           Name: goal_point
           Namespaces:
-            {}
+            "": true
           Queue Size: 100
           Value: true
         - Class: rviz/Marker
           Enabled: true
-          Marker Topic: /scan_planner_node/optimal_list
+          Marker Topic: /native_scan/scan_planner_dmq_node/optimal_list
           Name: optimal_traj
           Namespaces:
-            {}
+            "": true
           Queue Size: 100
           Value: true
         - Class: rviz/Marker
           Enabled: true
-          Marker Topic: /scan_planner_node/a_star_list
+          Marker Topic: /native_scan/scan_planner_dmq_node/a_star_list
           Name: AStar
           Namespaces:
-            {}
+            "": true
           Queue Size: 100
           Value: true
         - Alpha: 1
@@ -118,7 +118,7 @@ Visualization Manager:
       Displays:
         - Class: rviz/Marker
           Enabled: true
-          Marker Topic: /grid_map/sliding_map_bbox
+          Marker Topic: /native_scan/grid_map/sliding_map_bbox
           Name: sliding_map
           Namespaces:
             sliding_map: true
@@ -175,7 +175,7 @@ Visualization Manager:
           Size (Pixels): 3
           Size (m): 0.10000000149011612
           Style: Flat Squares
-          Topic: /grid_map/occupancy_inflate
+          Topic: /native_scan/native_scan/grid_map/occupancy_inflate
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
@@ -203,7 +203,7 @@ Visualization Manager:
           Size (Pixels): 3
           Size (m): 0.10000000149011612
           Style: Flat Squares
-          Topic: /grid_map/occupancy
+          Topic: /native_scan/grid_map/occupancy
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
@@ -213,13 +213,13 @@ Visualization Manager:
     - Class: rviz/Group
       Displays:
         - Class: rviz/Marker
-          Enabled: false
-          Marker Topic: /scan_planner_node/self_inflation
+          Enabled: true
+          Marker Topic: /native_scan/scan_planner_dmq_node/self_inflation
           Name: self_inflation
           Namespaces:
-            {}
+            self_inflation: true
           Queue Size: 100
-          Value: false
+          Value: true
         - Alpha: 1
           Class: rviz/RobotModel
           Collision Enabled: false
@@ -436,8 +436,8 @@ Visualization Manager:
     - Alpha: 0.5
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 2.2290616035461426
-        Min Value: -0.195781409740448
+        Max Value: 2.087878465652466
+        Min Value: -0.12131509184837341
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -635,7 +635,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 44.55514907836914
+      Distance: 15.912205696105957
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -651,9 +651,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.4797964096069336
+      Pitch: 1.2297967672348022
       Target Frame: sliding_map
-      Yaw: 3.105565071105957
+      Yaw: 4.990607261657715
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 17.48538589477539
@@ -691,5 +691,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1132
-  X: 732
+  X: 703
   Y: 27
