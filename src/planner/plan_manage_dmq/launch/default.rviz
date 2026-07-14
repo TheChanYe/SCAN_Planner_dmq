@@ -48,7 +48,7 @@ Visualization Manager:
       Cell Size: 1
       Class: rviz/Grid
       Color: 160; 160; 164
-      Enabled: false
+      Enabled: true
       Line Style:
         Line Width: 0.029999999329447746
         Value: Lines
@@ -61,7 +61,7 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 40
       Reference Frame: <Fixed Frame>
-      Value: false
+      Value: true
     - Class: rviz/Group
       Displays:
         - Class: rviz/Marker
@@ -81,13 +81,13 @@ Visualization Manager:
           Queue Size: 100
           Value: true
         - Class: rviz/Marker
-          Enabled: false
+          Enabled: true
           Marker Topic: /scan_planner_node/a_star_list
           Name: AStar
           Namespaces:
             {}
           Queue Size: 100
-          Value: false
+          Value: true
         - Alpha: 1
           Buffer Length: 1
           Class: rviz/Path
@@ -156,7 +156,7 @@ Visualization Manager:
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
             Max Value: 0.574999988079071
-            Min Value: -0.42500001192092896
+            Min Value: -0.5249999761581421
             Value: true
           Axis: Z
           Channel Name: intensity
@@ -164,7 +164,7 @@ Visualization Manager:
           Color: 255; 255; 255
           Color Transformer: AxisColor
           Decay Time: 0
-          Enabled: false
+          Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
           Min Color: 0; 0; 0
@@ -179,7 +179,7 @@ Visualization Manager:
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
-          Value: false
+          Value: true
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
@@ -192,7 +192,7 @@ Visualization Manager:
           Color: 187; 187; 187
           Color Transformer: AxisColor
           Decay Time: 0
-          Enabled: false
+          Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
           Min Color: 0; 0; 0
@@ -207,7 +207,7 @@ Visualization Manager:
           Unreliable: false
           Use Fixed Frame: true
           Use rainbow: true
-          Value: false
+          Value: true
       Enabled: true
       Name: Mapping
     - Class: rviz/Group
@@ -436,8 +436,8 @@ Visualization Manager:
     - Alpha: 0.5
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 2.1714603900909424
-        Min Value: -0.1953873336315155
+        Max Value: 2.2290616035461426
+        Min Value: -0.195781409740448
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -635,7 +635,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 30.610836029052734
+      Distance: 44.55514907836914
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -643,17 +643,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 0.45201992988586426
-        Y: 1.0851612091064453
+        X: -1.4872432947158813
+        Y: 0.9457062482833862
         Z: -1.9158389568328857
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.3997966051101685
+      Pitch: 1.4797964096069336
       Target Frame: sliding_map
-      Yaw: 3.1305673122406006
+      Yaw: 3.105565071105957
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 17.48538589477539
@@ -691,5 +691,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1132
-  X: 117
-  Y: 146
+  X: 732
+  Y: 27

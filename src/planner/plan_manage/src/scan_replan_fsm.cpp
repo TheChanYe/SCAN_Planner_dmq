@@ -659,15 +659,27 @@ namespace scan_planner
           return;
         }
 
-        if (isWaypointSequenceMode())
+        // Check if the robot has actually reached the global goal.
+        // When the local trajectory expires but the global target is still
+        // far away (e.g. after a lateral escape manoeuvre), do NOT clear
+        // have_target_ and go straight to GEN_NEW_TRAJ so getLocalTarget()
+        // can pick the next forward target or another escape point.
+        const double dist_to_goal = (end_pt_ - odom_pos_).norm();
+        if (dist_to_goal < no_replan_thresh_)
         {
-          active_waypoints_.clear();
-          current_wp_ = 0;
+          if (isWaypointSequenceMode())
+          {
+            active_waypoints_.clear();
+            current_wp_ = 0;
+          }
+
+          have_target_ = false;
+          changeFSMExecState(WAIT_TARGET, "FSM");
+          return;
         }
 
-        have_target_ = false;
-
-        changeFSMExecState(WAIT_TARGET, "FSM");
+        // Still far from the global goal — plan the next segment.
+        changeFSMExecState(GEN_NEW_TRAJ, "FSM");
         return;
       }
       else if ((end_pt_ - pos).norm() < no_replan_thresh_)

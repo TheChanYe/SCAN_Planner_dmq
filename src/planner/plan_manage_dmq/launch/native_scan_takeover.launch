@@ -35,7 +35,8 @@
       <arg name="cy" value="243.44969177246094"/>
       <arg name="fx" value="387.229248046875"/>
       <arg name="fy" value="387.229248046875"/>
-      <arg name="max_vel" value="0.22"/>\n      <arg name="planning_horizon" value="3.0"/>
+      <arg name="max_vel" value="0.22"/>
+      <arg name="planning_horizon" value="3.0"/>
     </include>
 
     <node pkg="scan_planner_dmq" type="closed_loop_controller_dmq"

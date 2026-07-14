@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <sstream>
+#include <unistd.h>
 
 namespace navdog_runtime
 {
@@ -32,7 +33,14 @@ MqttBridge::~MqttBridge()
 bool MqttBridge::start()
 {
   if (!config_.enabled) return true;
-  client_ = mosquitto_new(config_.client_id.c_str(), true, this);
+  // A fixed client id lets an old runtime instance disconnect the newly
+  // launched one (and vice versa). That was producing a one-second
+  // connect/disconnect loop, so a task published after the sender's cancel
+  // message was routinely lost. Keep the configured prefix for observability
+  // while making this process' MQTT session unique.
+  resolved_client_id_ = config_.client_id + "-" +
+      std::to_string(static_cast<long long>(::getpid()));
+  client_ = mosquitto_new(resolved_client_id_.c_str(), true, this);
   if (!client_) return false;
   mosquitto_connect_callback_set(client_, &MqttBridge::onConnect);
   mosquitto_disconnect_callback_set(client_, &MqttBridge::onDisconnect);
@@ -43,6 +51,7 @@ bool MqttBridge::start()
   if (rc != MOSQ_ERR_SUCCESS || mosquitto_loop_start(client_) != MOSQ_ERR_SUCCESS)
     return false;
   started_ = true;
+  ROS_INFO("MQTT client id: %s", resolved_client_id_.c_str());
   return true;
 }
 
@@ -105,9 +114,15 @@ void MqttBridge::onMessage(
   {
     valid = parsePauseMessage(payload, event);
   }
-  if (valid) self->enqueue(event, cancel_first);
+  if (valid)
+  {
+    ROS_INFO("MQTT navigation event received: topic=%s type=%u",
+             topic.c_str(), static_cast<unsigned>(event.type));
+    self->enqueue(event, cancel_first);
+  }
   else
   {
+    ROS_WARN("invalid MQTT navigation message on topic=%s", topic.c_str());
     std::lock_guard<std::mutex> lock(self->mutex_);
     ++self->protocol_errors_;
   }

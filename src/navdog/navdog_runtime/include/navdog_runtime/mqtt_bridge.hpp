@@ -67,6 +67,7 @@ private:
   int protocol_errors_{0};
   bool started_{false};
   bool charging_reserved_{false};
+  std::string resolved_client_id_;
 };
 
 }  // namespace navdog_runtime

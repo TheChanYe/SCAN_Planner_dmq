@@ -1014,12 +1014,15 @@ namespace scan_planner
 
             if (t <= bspline_interval_) // First 3 control points in obstacles!
             {
-              cout << cps_.points.col(1).transpose() << "\n"
-                   << cps_.points.col(2).transpose() << "\n"
-                   << cps_.points.col(3).transpose() << "\n"
-                   << cps_.points.col(4).transpose() << endl;
-              ROS_WARN("First 3 control points in obstacles! return false, t=%f", t);
-              return false;
+              // Rather than failing immediately (which triggers an endless
+              // GEN_NEW_TRAJ retry loop in the FSM), treat this like a
+              // normal collision and let the outer do-while loop restart
+              // the optimisation.  The re-initialised control points and
+              // increased penalty weight (lambda2) give the solver a chance
+              // to converge to a trajectory whose start leaves enough
+              // clearance.
+              ROS_WARN("First 3 control points in obstacles! restarting optimisation, t=%f", t);
+              // flag_occ remains true — fall through to the restart branch below.
             }
 
             break;
