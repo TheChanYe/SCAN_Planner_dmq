@@ -542,6 +542,7 @@ void NavdogRuntimeNode::processEvents()
     else if (result == navdog::TaskHandleResult::PAUSED)
     {
       setControlOwner(0);
+      resetNativeScanTakeover(true);
       ROS_INFO("navigation paused");
     }
     else if (result == navdog::TaskHandleResult::RESUMED)
@@ -754,17 +755,7 @@ bool NavdogRuntimeNode::publishNativeScanTakeoverPath(
       path.poses.back().pose.position.y != goal.y)
     append_point(goal.x, goal.y);
 
-  // Latch ownership before handing the route to SCAN. The mux emits a zero
-  // frame on this transition, so Navdog cannot keep driving while SCAN plans.
-  scan_takeover_active_ = true;
-  scan_takeover_task_sequence_ = task.sequence;
-  setControlOwner(2);
   native_scan_path_publisher_.publish(path);
-  ROS_WARN("NATIVE_SCAN_TAKEOVER task_sequence=%lu remaining_points=%lu "
-           "start=(%.3f, %.3f, %.3f) goal=(%.3f, %.3f, %.3f)",
-           static_cast<unsigned long>(task.sequence),
-           static_cast<unsigned long>(path.poses.size()),
-           robot.x, robot.y, robot.z, goal.x, goal.y, robot.z);
   return true;
 }
 
@@ -790,6 +781,26 @@ void NavdogRuntimeNode::resetNativeScanTakeover(bool publish_reset)
     native_scan_reset_publisher_.publish(std_msgs::Empty{});
 }
 
+void NavdogRuntimeNode::releaseNativeScanToRoute(
+    const navdog::NavigationTask& task,
+    const navdog::RobotState& robot,
+    const navdog::CoreOutput& output)
+{
+  const navdog::RouteProgress& progress = output.route_progress;
+  const double heading_error = progress.valid && robot.valid
+      ? std::atan2(std::sin(robot.yaw - progress.route_yaw),
+                   std::cos(robot.yaw - progress.route_yaw))
+      : 0.0;
+  ROS_WARN("NATIVE_SCAN_RELEASE_TO_ROUTE task_sequence=%lu "
+           "lateral_error=%.3f route_yaw=%.3f robot_yaw=%.3f "
+           "heading_error=%.3f reason=REJOIN_COMPLETE",
+           static_cast<unsigned long>(task.sequence),
+           progress.lateral_error_m, progress.route_yaw, robot.yaw,
+           heading_error);
+  resetNativeScanTakeover(true);
+  setControlOwner(1);
+}
+
 void NavdogRuntimeNode::updateControlOwner(
     const navdog::CoreOutput& output,
     const navdog::RobotState& robot)
@@ -797,6 +808,8 @@ void NavdogRuntimeNode::updateControlOwner(
   if (output.state == navdog::NavState::PAUSED)
   {
     setControlOwner(0);
+    if (scan_takeover_active_ || scan_takeover_task_sequence_ != 0)
+      resetNativeScanTakeover(true);
     return;
   }
 
@@ -816,24 +829,77 @@ void NavdogRuntimeNode::updateControlOwner(
   if (native_scan_takeover_ && !scan_takeover_active_ && have_task &&
       output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
   {
+    // Every takeover starts from a clean SCAN controller.  The mux clears its
+    // cached SCAN velocity when ownership changes, so no previous trajectory
+    // can drive during this handoff.
+    resetNativeScanTakeover(true);
     if (!publishNativeScanTakeoverPath(task, robot, last_route_progress_))
     {
       setControlOwner(0);
+    }
+    else
+    {
+      scan_takeover_active_ = true;
+      scan_takeover_task_sequence_ = task.sequence;
+      ROS_WARN("ROUTE_CORRIDOR_BLOCKED task_sequence=%lu distance_ahead=%.3f "
+               "route_arc=%.3f mode=LOCAL_AVOID",
+               static_cast<unsigned long>(task.sequence),
+               output.route_corridor.first_blocked_distance_ahead_m,
+               output.route_corridor.first_blocked_arc_length_m);
+      ROS_WARN("NATIVE_SCAN_TAKEOVER task_sequence=%lu remaining_points=%lu "
+               "blocked_distance=%.3f",
+               static_cast<unsigned long>(task.sequence),
+               static_cast<unsigned long>(task.points.size() -
+                                          std::min(last_route_progress_.segment_index + 1,
+                                                   task.points.size() - 1) + 1),
+               output.route_corridor.first_blocked_distance_ahead_m);
+      setControlOwner(2);
     }
     return;
   }
 
   if (scan_takeover_active_)
   {
-    // Ownership is latched for the rest of this task. ROUTE_REJOIN and
-    // ROUTE_FOLLOW transitions must never return velocity control to Navdog.
     if (!have_task || task.sequence != scan_takeover_task_sequence_)
     {
       setControlOwner(0);
       resetNativeScanTakeover(true);
     }
+    else if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
+    {
+      setControlOwner(2);
+    }
+    else if (output.navigation_mode.mode == navdog::NavigationMode::ROUTE_REJOIN)
+    {
+      if (output.navigation_mode.transitioned)
+      {
+        const double heading_error = output.route_progress.valid && robot.valid
+            ? std::atan2(std::sin(robot.yaw - output.route_progress.route_yaw),
+                         std::cos(robot.yaw - output.route_progress.route_yaw))
+            : 0.0;
+        ROS_WARN("ROUTE_CORRIDOR_CLEAR_CONFIRMED task_sequence=%lu clear_elapsed=%.3f",
+                 static_cast<unsigned long>(task.sequence),
+                 coordinator_.config().navigation_mode.route_clear_confirm_sec);
+        ROS_WARN("NATIVE_SCAN_REJOIN task_sequence=%lu lateral_error=%.3f "
+                 "heading_error=%.3f",
+                 static_cast<unsigned long>(task.sequence),
+                 output.route_progress.lateral_error_m, heading_error);
+      }
+      setControlOwner(2);
+    }
+    else if (output.navigation_mode.valid &&
+             output.navigation_mode.mode == navdog::NavigationMode::ROUTE_FOLLOW &&
+             output.navigation_mode.reason ==
+                 navdog::NavigationModeReason::REJOIN_COMPLETE &&
+             output.navigation_mode.corridor_available &&
+             !output.navigation_mode.route_blocked)
+    {
+      releaseNativeScanToRoute(task, robot, output);
+    }
     else
     {
+      // A nonterminal, non-release state must not silently hand control back
+      // to RouteFollower before NavigationModeManager confirms the rejoin.
       setControlOwner(2);
     }
     return;

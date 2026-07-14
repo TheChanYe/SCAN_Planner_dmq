@@ -88,6 +88,16 @@ private:
 
     // Flush the prior owner's last velocity before forwarding the new owner.
     cmd_vel_publisher_.publish(geometry_msgs::Twist{});
+    if (requested == ControlOwner::ROUTE)
+    {
+      route_command_ = geometry_msgs::Twist{};
+      route_stamp_ = ros::Time(0);
+    }
+    else if (requested == ControlOwner::SCAN)
+    {
+      scan_command_ = geometry_msgs::Twist{};
+      scan_stamp_ = ros::Time(0);
+    }
   }
 
   bool commandFresh(const ros::Time& stamp, double timeout_sec,

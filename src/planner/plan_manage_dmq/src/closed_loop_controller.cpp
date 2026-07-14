@@ -8,6 +8,7 @@
 #include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Empty.h>
 #include <tf/tf.h>
 
 #include "bspline_opt/uniform_bspline.h"
@@ -23,6 +24,7 @@ ros::Publisher cmd_vel_pub;
 ros::Publisher execution_frozen_pub;
 ros::Subscriber bspline_sub;
 ros::Subscriber odom_sub;
+ros::Subscriber reset_sub;
 ros::Timer cmd_timer;
 
 bool receive_traj = false;
@@ -133,6 +135,19 @@ void publishExecutionFrozen(bool frozen)
   std_msgs::Bool msg;
   msg.data = frozen;
   execution_frozen_pub.publish(msg);
+}
+
+void resetCallback(const std_msgs::EmptyConstPtr &)
+{
+  receive_traj = false;
+  exec_time = 0.0;
+  turn_in_place = false;
+  traj.clear();
+  traj_duration = 0.0;
+  last_update_time = ros::Time::now();
+  publishExecutionFrozen(false);
+  publishStop(0.0);
+  ROS_WARN("[closed_loop_controller_dmq] native SCAN trajectory reset");
 }
 
 void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
@@ -318,6 +333,7 @@ int main(int argc, char **argv)
 
   bspline_sub = node.subscribe("planning/bspline", 10, bsplineCallback);
   odom_sub = node.subscribe(body_pose_topic, 20, odomCallback, ros::TransportHints().tcpNoDelay());
+  reset_sub = node.subscribe("/native_scan/reset", 1, resetCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("cmd_vel", 20);
   execution_frozen_pub = node.advertise<std_msgs::Bool>("planning/go2_execution_frozen", 10);
   cmd_timer = node.createTimer(ros::Duration(0.01), cmdCallback);

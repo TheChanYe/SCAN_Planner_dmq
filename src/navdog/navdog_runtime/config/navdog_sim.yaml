@@ -59,13 +59,15 @@ limits:
   max_accel_yaw: 0.8
 navigation_mode:
   avoid_enter_distance_m: 1.5
-  avoid_immediate_distance_m: 1.5
-  avoid_block_confirm_sec: 0.01
-  local_avoid_min_hold_sec: 0.5
-  route_clear_confirm_sec: 0.4
-  rejoin_lateral_tolerance_m: 0.2
-  rejoin_heading_tolerance_rad: 0.20944
-  rejoin_confirm_sec: 0.3
+  avoid_immediate_distance_m: 0.65
+  avoid_block_confirm_sec: 0.15
+  local_avoid_min_hold_sec: 0.80
+  route_clear_confirm_sec: 0.60
+  rejoin_lateral_tolerance_m: 0.25
+  rejoin_heading_tolerance_rad: 0.35
+  rejoin_confirm_sec: 0.40
+route_corridor:
+  lookahead_distance_m: 3.0
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8

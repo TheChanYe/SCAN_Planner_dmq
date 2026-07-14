@@ -2263,10 +2263,10 @@ TEST(NavigationCoordinatorTest, TrackingDoesNotUseObstacleSummaryForRouteBlockin
   CoreInput robot0 = makeRobotInput(0, 0, 10.0 * kDeg);
   coordinator.update(robot0, 1.2);
 
-  // ObstacleSummary has very small front_min
+  // ObstacleSummary has a near front_min outside the route corridor,
   // but route_corridor_observation is CLEAR
   CoreInput input = makeRobotInput(3, 0, 0);
-  input.obstacles.front_min = 0.01;
+  input.obstacles.front_min = 0.8;
   input.obstacles.valid = true;
   input.obstacles.stamp_sec = 1.3;
   input.route_corridor_observation =
@@ -2274,6 +2274,7 @@ TEST(NavigationCoordinatorTest, TrackingDoesNotUseObstacleSummaryForRouteBlockin
   CoreOutput output = coordinator.update(input, 1.3);
 
   EXPECT_EQ(output.state, NavState::TRACKING);
+  EXPECT_EQ(output.navigation_mode.mode, NavigationMode::ROUTE_FOLLOW);
   EXPECT_TRUE(output.route_corridor.valid);
   EXPECT_FALSE(output.route_corridor.blocked);
 }

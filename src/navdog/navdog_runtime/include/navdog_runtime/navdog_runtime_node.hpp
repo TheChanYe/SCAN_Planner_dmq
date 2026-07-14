@@ -56,6 +56,9 @@ private:
       const navdog::RouteProgress& progress);
   void setControlOwner(std::uint8_t owner);
   void resetNativeScanTakeover(bool publish_reset);
+  void releaseNativeScanToRoute(const navdog::NavigationTask& task,
+                                const navdog::RobotState& robot,
+                                const navdog::CoreOutput& output);
   void updateControlOwner(const navdog::CoreOutput& output,
                           const navdog::RobotState& robot);
   void publishMqttStatus(const navdog::CoreOutput& output);
