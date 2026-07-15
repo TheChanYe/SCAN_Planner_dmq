@@ -37,17 +37,14 @@
       <arg name="fy" value="387.229248046875"/>
       <arg name="max_vel" value="0.22"/>
       <arg name="planning_horizon" value="3.0"/>
+      <arg name="max_replan_fail_count" value="30"/>
+      <arg name="replan_retry_interval_sec" value="0.20"/>
+      <arg name="safety_replan_cooldown_sec" value="0.50"/>
+      <arg name="escape_min_radius" value="0.8"/>
+      <arg name="escape_max_radius" value="2.5"/>
+      <arg name="escape_radius_step" value="0.25"/>
+      <arg name="escape_max_lateral_from_route" value="1.6"/>
     </include>
-
-    <!-- Override FSM defaults for native SCAN takeover. -->
-    <param name="fsm/planning_horizon" value="3.0" type="double"/>
-    <param name="fsm/max_replan_fail_count" value="30" type="int"/>
-    <param name="fsm/replan_retry_interval_sec" value="0.20" type="double"/>
-    <param name="fsm/safety_replan_cooldown_sec" value="0.50" type="double"/>
-    <param name="fsm/escape_min_radius" value="0.5" type="double"/>
-    <param name="fsm/escape_max_radius" value="2.5" type="double"/>
-    <param name="fsm/escape_radius_step" value="0.25" type="double"/>
-    <param name="fsm/escape_max_lateral_from_route" value="1.6" type="double"/>
 
     <node pkg="scan_planner_dmq" type="closed_loop_controller_dmq"
           name="closed_loop_controller" output="screen">

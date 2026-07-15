@@ -104,6 +104,7 @@ namespace scan_planner
     bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method
     bool callEmergencyStop(Eigen::Vector3d stop_pos);                          // front-end and back-end method
     bool planFromCurrentTraj();
+    bool localTrajectoryIsSafe(double &collision_time_sec);
     void setStartStateFromOdomOrCurrentTraj();
 
     /* return value: std::pair< Times of the same state be continuously called, current continuously called state > */

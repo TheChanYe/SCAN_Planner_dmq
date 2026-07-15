@@ -16,6 +16,13 @@
   <arg name="max_vel" default="0.75"/>
   <arg name="max_acc" default="0.5"/>
   <arg name="planning_horizon" default="7.5"/>
+  <arg name="max_replan_fail_count" default="1000"/>
+  <arg name="replan_retry_interval_sec" default="0.20"/>
+  <arg name="safety_replan_cooldown_sec" default="0.50"/>
+  <arg name="escape_min_radius" default="0.5"/>
+  <arg name="escape_max_radius" default="2.0"/>
+  <arg name="escape_radius_step" default="0.25"/>
+  <arg name="escape_max_lateral_from_route" default="1.2"/>
 
   <!-- main node -->
   <node pkg="scan_planner_dmq" name="scan_planner_dmq_node" type="scan_planner_dmq_node" output="screen" clear_params="true">
@@ -34,11 +41,13 @@
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
     <param name="fsm/fail_safe" value="true" type="bool"/> 
-    <param name="fsm/max_replan_fail_count" value="1000" type="int"/>
-    <param name="fsm/escape_min_radius" value="0.5" type="double"/>
-    <param name="fsm/escape_max_radius" value="2.0" type="double"/>
-    <param name="fsm/escape_radius_step" value="0.25" type="double"/>
-    <param name="fsm/escape_max_lateral_from_route" value="1.2" type="double"/>
+    <param name="fsm/max_replan_fail_count" value="$(arg max_replan_fail_count)" type="int"/>
+    <param name="fsm/replan_retry_interval_sec" value="$(arg replan_retry_interval_sec)" type="double"/>
+    <param name="fsm/safety_replan_cooldown_sec" value="$(arg safety_replan_cooldown_sec)" type="double"/>
+    <param name="fsm/escape_min_radius" value="$(arg escape_min_radius)" type="double"/>
+    <param name="fsm/escape_max_radius" value="$(arg escape_max_radius)" type="double"/>
+    <param name="fsm/escape_radius_step" value="$(arg escape_radius_step)" type="double"/>
+    <param name="fsm/escape_max_lateral_from_route" value="$(arg escape_max_lateral_from_route)" type="double"/>
     <param name="fsm/is_real_world" value="$(arg is_real_world)" type="bool"/>
 
     <!-- sliding map -->

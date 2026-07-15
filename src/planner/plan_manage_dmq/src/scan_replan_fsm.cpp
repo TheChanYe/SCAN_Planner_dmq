@@ -845,9 +845,16 @@ namespace scan_planner
   {
     if (replan_fail_count_ >= max_replan_fail_count_)
     {
-      ROS_WARN("Replan failed %d times. Emergency stop and wait for a new target.", replan_fail_count_);
+      const bool keep_reference_path =
+          navi_mode_ == NAVI_MODE::REFERENCE_PATH && have_target_;
+      ROS_WARN("Replan failed %d times. Emergency stop; "
+               "keep_reference_path=%d.",
+               replan_fail_count_, keep_reference_path ? 1 : 0);
       replan_fail_count_ = 0;
-      need_hover_stop_ = true;
+      // Native takeover owns an active MQTT task.  Do not discard that path
+      // and wait for a second /initial_path message after a temporary local
+      // planning failure; stop first, then retry against the updated map.
+      need_hover_stop_ = !keep_reference_path;
       flag_escape_emergency_ = true;
       changeFSMExecState(EMERGENCY_STOP, "finishProcess");
     }
@@ -901,6 +908,40 @@ namespace scan_planner
         return false;
     }
 
+    return true;
+  }
+
+  bool SCANReplanFSM::localTrajectoryIsSafe(
+      double &collision_time_sec)
+  {
+    collision_time_sec = std::numeric_limits<double>::infinity();
+    if (!planner_manager_ || !planner_manager_->grid_map_)
+      return false;
+
+    // UniformBspline's legacy evaluation API is not const-qualified even
+    // though evaluation does not modify the trajectory.
+    LocalTrajData &info = planner_manager_->local_data_;
+    if (!std::isfinite(info.duration_) || info.duration_ <= 1e-5)
+      return false;
+
+    constexpr double kValidationStepSec = 0.01;
+    const double validation_end = info.duration_ * 2.0 / 3.0;
+    for (double t = 0.0; t <= validation_end + 1e-9;
+         t += kValidationStepSec)
+    {
+      const double sample_t = std::min(t, validation_end);
+      const Eigen::Vector3d pos =
+          info.position_traj_.evaluateDeBoorT(sample_t);
+      const Eigen::Vector3d next = info.position_traj_.evaluateDeBoorT(
+          std::min(sample_t + kValidationStepSec, info.duration_));
+      if (!pos.allFinite() || !next.allFinite() ||
+          planner_manager_->grid_map_->getInflateOccupancy(
+              pos, estimateYawFromSegment(pos, next)) != 0)
+      {
+        collision_time_sec = sample_t;
+        return false;
+      }
+    }
     return true;
   }
 
@@ -1035,9 +1076,25 @@ namespace scan_planner
       return false;
     }
 
+    const LocalTrajData previous_local_trajectory =
+        planner_manager_->local_data_;
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     have_new_target_ = false;
+
+    if (plan_success)
+    {
+      double collision_time_sec = 0.0;
+      if (!localTrajectoryIsSafe(collision_time_sec))
+      {
+        ROS_WARN("SCAN_LOCAL_PLAN_REJECTED target=(%.2f,%.2f) "
+                 "collision_time=%.2f reason=FOOTPRINT_COLLISION",
+                 local_target_pt_(0), local_target_pt_(1),
+                 collision_time_sec);
+        planner_manager_->local_data_ = previous_local_trajectory;
+        plan_success = false;
+      }
+    }
 
     if (plan_success)
     {

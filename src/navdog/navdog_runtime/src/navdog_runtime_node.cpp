@@ -415,6 +415,11 @@ bool NavdogRuntimeNode::initialize()
     ROS_ERROR("invalid native_scan_rejoin parameters");
     return false;
   }
+  ROS_INFO("NATIVE_SCAN_RELEASE_POLICY front_clearance=%.3f "
+           "side_clearance=%.3f require_corridor_clear=1 "
+           "require_rejoin_alignment=1",
+           native_scan_release_front_clearance_m_,
+           native_scan_release_side_clearance_m_);
 
   planner_manager_ = std::make_shared<scan_planner::SCANPlannerManager>();
   auto planning_visualization =
