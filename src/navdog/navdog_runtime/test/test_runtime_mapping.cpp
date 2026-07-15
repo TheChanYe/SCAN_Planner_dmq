@@ -426,7 +426,7 @@ TEST(SimulationConfigTest, DefaultPoseMatchesRouteStart)
 // New tests: task sequence logging
 // =============================================================================
 
-TEST(RuntimeNodeTest, CopyActiveTaskReturnsRealSequence)
+TEST(RuntimeNodeTest, RouteManagerReturnsRealSequence)
 {
   // TaskManager assigns its own sequence, not the MQTT parser sequence.
   navdog::NavigationCoordinator coordinator;
@@ -434,11 +434,9 @@ TEST(RuntimeNodeTest, CopyActiveTaskReturnsRealSequence)
   event.task.sequence = 999;  // MQTT parser sequence (should be ignored by TaskManager)
   coordinator.handleEvent(event);
 
-  navdog::NavigationTask active{};
-  EXPECT_TRUE(coordinator.copyActiveTask(active));
   // TaskManager generates its own sequence (starts at 1)
-  EXPECT_NE(active.sequence, 999u);
-  EXPECT_GT(active.sequence, 0u);
+  EXPECT_NE(coordinator.routeManager().taskSequence(), 999u);
+  EXPECT_GT(coordinator.routeManager().taskSequence(), 0u);
 }
 
 // =============================================================================

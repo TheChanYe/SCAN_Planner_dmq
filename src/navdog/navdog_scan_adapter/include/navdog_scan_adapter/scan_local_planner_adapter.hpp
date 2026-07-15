@@ -16,6 +16,11 @@
 namespace navdog_scan_adapter
 {
 
+struct ScanAdapterConfig
+{
+  navdog::PlannerTriggerConfig planner_trigger{};
+};
+
 // =============================================================================
 // ScanLocalPlannerAdapter
 //
@@ -67,7 +72,8 @@ private:
   navdog::LocalTrajectory sampleLocalTrajData(
       std::uint64_t task_sequence,
       std::uint64_t plan_sequence,
-      navdog::NavigationMode purpose);
+      navdog::NavigationMode purpose,
+      double source_stamp_sec);
 
   bool doReboundReplan(
       const navdog::LocalPlanRequest& request);

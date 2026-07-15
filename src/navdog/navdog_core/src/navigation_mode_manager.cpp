@@ -92,9 +92,6 @@ bool NavigationModeManager::isTaskValid(
   if (task.sequence == 0)
     return false;
 
-  if (task.points.empty())
-    return false;
-
   switch (task.mode)
   {
     case TaskMode::NORMAL_AVOID:

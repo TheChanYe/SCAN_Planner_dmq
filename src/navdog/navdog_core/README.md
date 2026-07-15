@@ -110,7 +110,7 @@ navdog_core 保持不变，只新增或替换 navdog_ros2。
 - GoalController 近终点减速与到位对齐
 - SafetySupervisor 前障减速/停止与超时保护
 - LocalPlannerAdapter / LocalTrajectory 抽象协议
-- navdog_scan_adapter::ScanLocalPlannerAdapter 包装 SCANPlannerManager
+- navdog_scan_adapter::ScanLocalPlannerAdapter 包装具体局部规划实现
 - navdog_scan_adapter::OccupancyQueryAdapter 提供三维占据查询注入
 - TRACKING 输出非零真实速度
 
@@ -165,7 +165,7 @@ TRACKING
     ├── 路线进度有效后调用 RouteCorridorObservationGate
     ├── 调用 NavigationModeManager 决定导航子模式
     ├── 根据模式调用执行器生成 raw_cmd
-    ├── LOCAL_AVOID / ROUTE_REJOIN 按需触发 SCAN 局部规划
+    ├── 绕障与接回模式按需触发局部规划
     ├── GoalController 处理近终点减速与对齐
     ├── SafetySupervisor 前障减速/停止与超时保护
     ├── 输出 final_cmd + route_progress + route_corridor + navigation_mode
@@ -199,7 +199,7 @@ RouteProgressTracker
 模式执行器：
 - ROUTE_FOLLOW：RouteFollower
 - LOCAL_AVOID：TrajectoryFollower（跟踪 SCAN 局部轨迹）
-- ROUTE_REJOIN：TrajectoryFollower（跟踪 SCAN 接回轨迹）
+- 接回模式：TrajectoryFollower 跟踪局部接回轨迹
 
 回到 ROUTE_FOLLOW 时立即清除局部轨迹，
 防止旧任务/旧模式轨迹被复用。

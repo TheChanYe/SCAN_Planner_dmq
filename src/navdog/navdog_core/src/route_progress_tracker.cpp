@@ -653,18 +653,11 @@ RouteProgressOutput RouteProgressTracker::update(
   }
 
   // 8. Enforce monotonic progress
-  double new_arc_length = candidate.arc_length_m;
-
-  if (initialized_ &&
-      new_arc_length < current_arc_length_m_)
-  {
-    new_arc_length = current_arc_length_m_;
-  }
-
-  candidate.arc_length_m = new_arc_length;
-
-  // Update internal state
-  current_arc_length_m_ = new_arc_length;
+  // Update internal state. This explicit clamp is the central invariant:
+  // closest-point changes at crossings or loops can never move progress back.
+  current_arc_length_m_ =
+      std::max(current_arc_length_m_, candidate.arc_length_m);
+  candidate.arc_length_m = current_arc_length_m_;
   current_segment_vector_index_ =
       candidate.segment_vector_index;
   initialized_ = true;

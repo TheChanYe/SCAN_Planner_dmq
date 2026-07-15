@@ -11,11 +11,11 @@
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>tf</depend>
+  <depend>navdog_task</depend>
+  <depend>navdog_protocol</depend>
   <depend>navdog_core</depend>
   <depend>navdog_scan_adapter</depend>
   <depend>scan_planner_dmq</depend>
   <depend>plan_env</depend>
-  <depend>jsoncpp</depend>
-  <depend>libmosquitto-dev</depend>
   <test_depend>rostest</test_depend>
 </package>

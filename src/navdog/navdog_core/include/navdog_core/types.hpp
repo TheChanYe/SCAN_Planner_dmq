@@ -1,5 +1,7 @@
 #pragma once
 
+#include <navdog_task/task_types.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -8,16 +10,17 @@
 namespace navdog
 {
 
+using navdog_task::NavigationEvent;
+using navdog_task::NavigationEventType;
+using navdog_task::NavigationTask;
+using navdog_task::RoutePoint;
+using navdog_task::TaskHandleResult;
+using navdog_task::TaskMode;
+using navdog_task::TaskSession;
+
 // =============================================================================
 // 4.1 任务模式
 // =============================================================================
-
-enum class TaskMode : std::uint8_t
-{
-  NORMAL_AVOID = 1,
-  ROUTE_ONLY = 2,
-  CHARGING = 3
-};
 
 // =============================================================================
 // 4.2 导航状态
@@ -90,42 +93,6 @@ enum class PlannerActionType : std::uint8_t
 // =============================================================================
 // 4.6 导航事件类型
 // =============================================================================
-
-enum class NavigationEventType : std::uint8_t
-{
-  NONE = 0,
-  START_TASK,
-  CANCEL_TASK,
-  PAUSE,
-  RESUME,
-  UPDATE_MAX_VX,
-  DYNAMIC_OBSTACLE_UPDATE
-};
-
-// =============================================================================
-// 4.7 路线点
-// =============================================================================
-
-struct RoutePoint
-{
-  double x{0.0};
-  double y{0.0};
-  double z{0.0};
-  double yaw{0.0};
-  bool has_yaw{false};
-};
-
-// =============================================================================
-// 4.8 导航任务
-// =============================================================================
-
-struct NavigationTask
-{
-  std::uint64_t sequence{0};
-  TaskMode mode{TaskMode::NORMAL_AVOID};
-  double max_vx{0.4};
-  std::vector<RoutePoint> points;
-};
 
 // =============================================================================
 // 4.8b 路线进度
@@ -307,13 +274,6 @@ struct PlannerFeedback
 // =============================================================================
 // 4.13 导航事件
 // =============================================================================
-
-struct NavigationEvent
-{
-  NavigationEventType type{NavigationEventType::NONE};
-  NavigationTask task{};
-  double max_vx{0.0};
-};
 
 // =============================================================================
 // 4.14 规划动作
@@ -522,6 +482,8 @@ struct LocalPlanRequest
 
   double max_vx{0.4};
   double robot_z{0.0};
+  // Timestamp supplied by Core using the runtime's monotonic control clock.
+  double request_stamp_sec{0.0};
 
   bool valid{false};
 };
@@ -565,7 +527,7 @@ struct LocalTrajectory
 // =============================================================================
 // 4.16i 局部规划适配器抽象接口
 //
-// navdog_core 不直接依赖 SCANPlannerManager / GridMap / Eigen。
+// navdog_core 不直接依赖任何具体局部规划器、地图或线性代数实现。
 // 由 navdog_scan_adapter 等包提供具体实现并注入到 Coordinator。
 // =============================================================================
 

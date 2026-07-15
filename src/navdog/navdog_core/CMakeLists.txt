@@ -1,16 +1,18 @@
 cmake_minimum_required(VERSION 3.1)
 project(navdog_core)
 
-find_package(catkin REQUIRED)
+find_package(catkin REQUIRED COMPONENTS navdog_task)
 
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES navdog_core
+  CATKIN_DEPENDS navdog_task
 )
 
 add_library(navdog_core
   src/navigation_coordinator.cpp
-  src/task_manager.cpp
+  src/route_manager.cpp
+  src/recovery_controller.cpp
   src/start_align_controller.cpp
   src/route_progress_tracker.cpp
   src/route_corridor_observation_gate.cpp
@@ -25,7 +27,10 @@ add_library(navdog_core
 target_include_directories(navdog_core
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${catkin_INCLUDE_DIRS}
 )
+
+target_link_libraries(navdog_core navdog_task ${catkin_LIBRARIES})
 
 
 
@@ -49,16 +54,6 @@ if(CATKIN_ENABLE_TESTING)
     )
   endif()
 
-  catkin_add_gtest(test_task_manager
-    test/test_task_manager.cpp
-  )
-
-  if(TARGET test_task_manager)
-    target_link_libraries(test_task_manager
-      navdog_core
-    )
-  endif()
-
   catkin_add_gtest(test_start_align_controller
     test/test_start_align_controller.cpp
   )
@@ -69,14 +64,14 @@ if(CATKIN_ENABLE_TESTING)
     )
   endif()
 
-  catkin_add_gtest(test_route_progress_tracker
-    test/test_route_progress_tracker.cpp
-  )
+  catkin_add_gtest(test_route_manager test/test_route_manager.cpp)
+  if(TARGET test_route_manager)
+    target_link_libraries(test_route_manager navdog_core)
+  endif()
 
-  if(TARGET test_route_progress_tracker)
-    target_link_libraries(test_route_progress_tracker
-      navdog_core
-    )
+  catkin_add_gtest(test_recovery_controller test/test_recovery_controller.cpp)
+  if(TARGET test_recovery_controller)
+    target_link_libraries(test_recovery_controller navdog_core)
   endif()
 
   catkin_add_gtest(test_route_corridor_observation_gate

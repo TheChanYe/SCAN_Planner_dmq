@@ -30,7 +30,9 @@ struct RouteProgressOutput
 
 class RouteProgressTracker
 {
-public:
+  friend class RouteManager;
+
+private:
   explicit RouteProgressTracker(
       const RouteProgressConfig& config =
           RouteProgressConfig{});

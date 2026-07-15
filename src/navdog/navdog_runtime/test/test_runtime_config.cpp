@@ -1,4 +1,5 @@
 #include "navdog_runtime/navdog_runtime_node.hpp"
+#include "navdog_runtime/ros1_config_loader.hpp"
 
 #include <gtest/gtest.h>
 #include <ros/ros.h>
@@ -147,7 +148,7 @@ TEST(NavdogConfigLoadingTest, LoadsTaskConfigFromParams)
   nh.setParam("task/min_max_vx", 0.1);
   nh.setParam("task/max_max_vx", 1.2);
 
-  const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
+  const auto config = Ros1ConfigLoader::load(nh);
 
   EXPECT_DOUBLE_EQ(config.task.default_max_vx, 0.5);
   EXPECT_DOUBLE_EQ(config.task.min_max_vx, 0.1);

@@ -17,13 +17,6 @@ struct RuntimeConfig
 // 5.2 TaskConfig
 // =============================================================================
 
-struct TaskConfig
-{
-  double default_max_vx{0.4};
-  double min_max_vx{0.15};
-  double max_max_vx{1.0};
-};
-
 // =============================================================================
 // 5.3 StartAlignConfig
 // =============================================================================
@@ -266,7 +259,6 @@ struct PlannerTriggerConfig
 struct NavdogConfig
 {
   RuntimeConfig runtime{};
-  TaskConfig task{};
   PlannerConfig planner{};
   StartAlignConfig start_align{};
   RouteProgressConfig route_progress{};

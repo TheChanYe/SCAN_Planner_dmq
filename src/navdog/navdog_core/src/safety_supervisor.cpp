@@ -275,6 +275,13 @@ VelocityCommand SafetySupervisor::apply(
     return safetyStop(now_sec, CommandSource::SAFETY_STOP);
   }
 
+  // A controller-requested zero remains zero regardless of sensor freshness.
+  // This preserves pause/wait/cancel semantics without weakening safety.
+  if (isExplicitStopCommand(raw_cmd))
+  {
+    return safetyStop(now_sec, raw_cmd.source);
+  }
+
   // Timeout / map validity guard.
   const bool timeouts_ok = checkTimeouts(context, now_sec);
   if (!timeouts_ok)
@@ -296,11 +303,6 @@ VelocityCommand SafetySupervisor::apply(
   if (!checkTrajectoryIdentity(context))
   {
     return safetyStop(now_sec, CommandSource::SAFETY_STOP);
-  }
-
-  if (isExplicitStopCommand(raw_cmd))
-  {
-    return safetyStop(now_sec, raw_cmd.source);
   }
 
   double limited_vx = raw_cmd.vx;

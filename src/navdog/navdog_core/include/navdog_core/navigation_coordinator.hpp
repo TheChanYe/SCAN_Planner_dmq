@@ -4,14 +4,15 @@
 #include "navdog_core/goal_controller.hpp"
 #include "navdog_core/navigation_mode_manager.hpp"
 #include "navdog_core/rejoin_target_selector.hpp"
+#include "navdog_core/route_manager.hpp"
 #include "navdog_core/route_corridor_observation_gate.hpp"
 #include "navdog_core/route_follower.hpp"
-#include "navdog_core/route_progress_tracker.hpp"
 #include "navdog_core/safety_supervisor.hpp"
 #include "navdog_core/start_align_controller.hpp"
-#include "navdog_core/task_manager.hpp"
 #include "navdog_core/trajectory_follower.hpp"
 #include "navdog_core/types.hpp"
+
+#include <navdog_task/task_manager.hpp>
 
 #include <deque>
 #include <memory>
@@ -23,12 +24,13 @@ class NavigationCoordinator
 {
 public:
   explicit NavigationCoordinator(
-      const NavdogConfig& config = NavdogConfig{});
+      const NavdogConfig& config = NavdogConfig{},
+      const navdog_task::TaskConfig& task_config =
+          navdog_task::TaskConfig{});
 
   void reset();
 
-  TaskHandleResult handleEvent(
-      const NavigationEvent& event);
+  TaskHandleResult handleEvent(NavigationEvent event);
 
   CoreOutput update(
       const CoreInput& input,
@@ -38,8 +40,8 @@ public:
 
   bool hasActiveTask() const noexcept;
 
-  bool copyActiveTask(
-      NavigationTask& task) const;
+  const RouteManager& routeManager() const noexcept;
+  const navdog_task::TaskSession& taskSession() const noexcept;
 
   const NavdogConfig& config() const noexcept;
 
@@ -119,6 +121,7 @@ private:
       const RobotState& robot,
       const RouteProgress& progress,
       NavigationMode mode,
+      double max_vx,
       double now_sec);
 
   bool needsNewLocalPlan(
@@ -141,11 +144,6 @@ private:
       std::uint64_t expected_task_sequence,
       std::uint64_t expected_plan_sequence) const noexcept;
 
-  bool interpolateRoutePoint(
-      const NavigationTask& task,
-      double target_arc_length_m,
-      RoutePoint& out) const noexcept;
-
   bool selectLocalAvoidTarget(
       const NavigationTask& task,
       const RobotState& robot,
@@ -157,7 +155,8 @@ private:
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
 
-  TaskManager task_manager_{};
+  navdog_task::TaskManager task_manager_{};
+  RouteManager route_manager_{};
   std::deque<PlannerAction> pending_planner_actions_;
 
   bool planning_request_sent_{false};
@@ -165,8 +164,6 @@ private:
   std::uint64_t expected_trajectory_id_{0};
 
   StartAlignController start_align_controller_{};
-
-  RouteProgressTracker route_progress_tracker_{};
 
   RouteCorridorObservationGate
       route_corridor_observation_gate_{};

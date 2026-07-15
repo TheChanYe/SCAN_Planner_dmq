@@ -21,12 +21,6 @@ constexpr double kSampleDtSec = 0.05;
 constexpr double kCollisionStartGraceSec = 0.30;
 constexpr double kCollisionLookAheadSec = 0.05;
 
-double rosTimeToSec(const ros::Time& t)
-{
-  return static_cast<double>(t.sec) +
-         static_cast<double>(t.nsec) * 1e-9;
-}
-
 bool finitePoint(const navdog::RoutePoint& point, bool require_z)
 {
   if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
@@ -49,6 +43,8 @@ bool validRequest(const navdog::LocalPlanRequest& request)
       finitePoint(request.target, true) &&
       finitePoint(request.target_vel, false) &&
       std::isfinite(request.robot_z) &&
+      std::isfinite(request.request_stamp_sec) &&
+      request.request_stamp_sec >= 0.0 &&
       std::isfinite(request.max_vx) && request.max_vx > 0.0;
 }
 
@@ -163,7 +159,8 @@ void ScanLocalPlannerAdapter::planningLoop()
         cached_trajectory_ = sampleLocalTrajData(
             request.task_sequence,
             request.plan_sequence,
-            request.purpose);
+            request.purpose,
+            request.request_stamp_sec);
         completed_state_ = cached_trajectory_.valid
                      ? navdog::LocalPlanState::READY
                      : navdog::LocalPlanState::FAILED;
@@ -218,7 +215,8 @@ bool ScanLocalPlannerAdapter::doReboundReplan(
 navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
     std::uint64_t task_sequence,
     std::uint64_t plan_sequence,
-    navdog::NavigationMode purpose)
+    navdog::NavigationMode purpose,
+    double source_stamp_sec)
 {
   navdog::LocalTrajectory trajectory{};
 
@@ -241,7 +239,7 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::sampleLocalTrajData(
   trajectory.plan_sequence = plan_sequence;
   trajectory.purpose = purpose;
   trajectory.duration_sec = local_data.duration_;
-  trajectory.source_stamp_sec = rosTimeToSec(ros::Time::now());
+  trajectory.source_stamp_sec = source_stamp_sec;
 
   const int sample_count = static_cast<int>(
       std::ceil(local_data.duration_ / kSampleDtSec)) + 1;

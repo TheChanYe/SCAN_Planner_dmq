@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navdog_task</name>
+  <version>0.1.0</version>
+  <description>ROS-independent navigation task state and transitions.</description>
+  <maintainer email="erpang@protonmail.ch">TheChanYe</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+</package>

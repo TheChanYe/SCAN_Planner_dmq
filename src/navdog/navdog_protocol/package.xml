@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>navdog_protocol</name>
+  <version>0.1.0</version>
+  <description>ROS-independent MQTT transport and JSON codec for navdog.</description>
+  <maintainer email="erpang@protonmail.ch">TheChanYe</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>navdog_task</depend>
+  <depend>jsoncpp</depend>
+  <depend>libmosquitto-dev</depend>
+</package>

@@ -1,0 +1,1213 @@
+... logging to /root/.ros/log/8550983c-805a-11f1-b28b-10ffe025bf63/roslaunch-cc-ff-13843.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/ws/src/navdog/navdog_runtime/launch/navdog_sim.launch
+[1mstarted roslaunch server http://cc-ff:44623/[0m
+
+SUMMARY
+========
+
+CLEAR PARAMETERS
+ * /native_scan/scan_planner_dmq_node/
+
+PARAMETERS
+ * /body_pose_topic: /quad_0/body_pose
+ * /cmd_vel_owner_mux/route_cmd_timeout: 0.3
+ * /cmd_vel_owner_mux/scan_cmd_timeout: 0.3
+ * /go2_kinematic_sim/init_yaw: 0.0
+ * /init_x: 0.0
+ * /init_y: 0.0
+ * /init_yaw: 0.0
+ * /init_z: 0.3
+ * /mockamap_node/attenuation: 0.1
+ * /mockamap_node/complexity: 0.05
+ * /mockamap_node/fill: 0.12
+ * /mockamap_node/fractal: 1
+ * /mockamap_node/height_max: 2.0
+ * /mockamap_node/height_min: 2.0
+ * /mockamap_node/obstacle_number: 150
+ * /mockamap_node/resolution: 0.1
+ * /mockamap_node/seed: 127
+ * /mockamap_node/spawn_clear_radius: 1.5
+ * /mockamap_node/spawn_clear_x: 0.0
+ * /mockamap_node/spawn_clear_y: 0.0
+ * /mockamap_node/surface_resolution: 0.05
+ * /mockamap_node/type: 2
+ * /mockamap_node/update_freq: 0.5
+ * /mockamap_node/width_max: 0.8
+ * /mockamap_node/width_min: 0.2
+ * /mockamap_node/x_length: 40.0
+ * /mockamap_node/y_length: 40.0
+ * /mockamap_node/z_length: 5.0
+ * /native_scan/closed_loop_controller/finish_dist: 0.15
+ * /native_scan/closed_loop_controller/heading_error_threshold: 0.65
+ * /native_scan/closed_loop_controller/heading_resume_threshold: 0.35
+ * /native_scan/closed_loop_controller/kp_pos: 0.7
+ * /native_scan/closed_loop_controller/kp_yaw: 1.5
+ * /native_scan/closed_loop_controller/max_vx: 0.22
+ * /native_scan/closed_loop_controller/max_vy: 0.18
+ * /native_scan/closed_loop_controller/max_vyaw: 0.65
+ * /native_scan/closed_loop_controller/min_heading_speed_scale: 0.35
+ * /native_scan/closed_loop_controller/time_forward: 0.8
+ * /native_scan/scan_planner_dmq_node/fsm/emergency_time_: 1.0
+ * /native_scan/scan_planner_dmq_node/fsm/escape_max_lateral_from_route: 1.6
+ * /native_scan/scan_planner_dmq_node/fsm/escape_max_radius: 2.5
+ * /native_scan/scan_planner_dmq_node/fsm/escape_min_radius: 0.8
+ * /native_scan/scan_planner_dmq_node/fsm/escape_radius_step: 0.25
+ * /native_scan/scan_planner_dmq_node/fsm/fail_safe: True
+ * /native_scan/scan_planner_dmq_node/fsm/is_real_world: False
+ * /native_scan/scan_planner_dmq_node/fsm/max_replan_fail_count: 30
+ * /native_scan/scan_planner_dmq_node/fsm/navi_mode: 3
+ * /native_scan/scan_planner_dmq_node/fsm/planning_horizon: 3.0
+ * /native_scan/scan_planner_dmq_node/fsm/replan_retry_interval_sec: 0.2
+ * /native_scan/scan_planner_dmq_node/fsm/safety_replan_cooldown_sec: 0.5
+ * /native_scan/scan_planner_dmq_node/fsm/thresh_no_replan: 0.1
+ * /native_scan/scan_planner_dmq_node/fsm/thresh_replan: 1.0
+ * /native_scan/scan_planner_dmq_node/grid_map/cloud_is_world: True
+ * /native_scan/scan_planner_dmq_node/grid_map/cx: 321.04638671875
+ * /native_scan/scan_planner_dmq_node/grid_map/cy: 243.44969177246094
+ * /native_scan/scan_planner_dmq_node/grid_map/depth_filter_margin: 1
+ * /native_scan/scan_planner_dmq_node/grid_map/depth_filter_maxdist: 3.0
+ * /native_scan/scan_planner_dmq_node/grid_map/depth_filter_mindist: 0.3
+ * /native_scan/scan_planner_dmq_node/grid_map/double_cylinder_offset: 0.18
+ * /native_scan/scan_planner_dmq_node/grid_map/double_cylinder_radius: 0.25
+ * /native_scan/scan_planner_dmq_node/grid_map/fx: 387.229248046875
+ * /native_scan/scan_planner_dmq_node/grid_map/fy: 387.229248046875
+ * /native_scan/scan_planner_dmq_node/grid_map/k_depth_scaling_factor: 1000.0
+ * /native_scan/scan_planner_dmq_node/grid_map/map_sliding_thresh: 0.2
+ * /native_scan/scan_planner_dmq_node/grid_map/max_ray_length: 5.0
+ * /native_scan/scan_planner_dmq_node/grid_map/need_extrinsic: False
+ * /native_scan/scan_planner_dmq_node/grid_map/obstacles_inflation_z_down: 0.4
+ * /native_scan/scan_planner_dmq_node/grid_map/obstacles_inflation_z_up: 0.1
+ * /native_scan/scan_planner_dmq_node/grid_map/p_hit: 0.85
+ * /native_scan/scan_planner_dmq_node/grid_map/p_max: 0.98
+ * /native_scan/scan_planner_dmq_node/grid_map/p_min: 0.12
+ * /native_scan/scan_planner_dmq_node/grid_map/p_miss: 0.3
+ * /native_scan/scan_planner_dmq_node/grid_map/p_occ: 0.8
+ * /native_scan/scan_planner_dmq_node/grid_map/resolution: 0.05
+ * /native_scan/scan_planner_dmq_node/grid_map/sensor_type: lidar
+ * /native_scan/scan_planner_dmq_node/grid_map/skip_pixel: 2
+ * /native_scan/scan_planner_dmq_node/grid_map/sliding_map_size_x: 10.0
+ * /native_scan/scan_planner_dmq_node/grid_map/sliding_map_size_y: 10.0
+ * /native_scan/scan_planner_dmq_node/grid_map/sliding_map_size_z: 5.0
+ * /native_scan/scan_planner_dmq_node/grid_map/vis_height: 0.3
+ * /native_scan/scan_planner_dmq_node/manager/control_points_distance: 0.2
+ * /native_scan/scan_planner_dmq_node/manager/feasibility_tolerance: 0.5
+ * /native_scan/scan_planner_dmq_node/manager/max_acc: 0.5
+ * /native_scan/scan_planner_dmq_node/manager/max_jerk: 4.0
+ * /native_scan/scan_planner_dmq_node/manager/max_vel: 0.22
+ * /native_scan/scan_planner_dmq_node/manager/planning_horizon: 3.0
+ * /native_scan/scan_planner_dmq_node/optimization/acc_tolerance: 1.0
+ * /native_scan/scan_planner_dmq_node/optimization/dist0: 0.2
+ * /native_scan/scan_planner_dmq_node/optimization/lambda_collision: 1.0
+ * /native_scan/scan_planner_dmq_node/optimization/lambda_feasibility: 0.1
+ * /native_scan/scan_planner_dmq_node/optimization/lambda_fitness: 1.0
+ * /native_scan/scan_planner_dmq_node/optimization/lambda_smooth: 1.0
+ * /native_scan/scan_planner_dmq_node/optimization/max_acc: 0.5
+ * /native_scan/scan_planner_dmq_node/optimization/max_vel: 0.22
+ * /native_scan/scan_planner_dmq_node/optimization/vel_tolerance: 1.0
+ * /navdog_runtime/cmd_vel_topic: /navdog/route_cmd...
+ * /navdog_runtime/control_rate_hz: 50.0
+ * /navdog_runtime/default_max_vx: 0.4
+ * /navdog_runtime/default_route_z: 0.3
+ * /navdog_runtime/grid_map/cloud_is_world: True
+ * /navdog_runtime/grid_map/double_cylinder_offset: 0.18
+ * /navdog_runtime/grid_map/double_cylinder_radius: 0.25
+ * /navdog_runtime/grid_map/map_sliding_thresh: 0.2
+ * /navdog_runtime/grid_map/max_ray_length: 5.0
+ * /navdog_runtime/grid_map/need_extrinsic: False
+ * /navdog_runtime/grid_map/obstacles_inflation_z_down: 0.4
+ * /navdog_runtime/grid_map/obstacles_inflation_z_up: 0.1
+ * /navdog_runtime/grid_map/p_hit: 0.85
+ * /navdog_runtime/grid_map/p_max: 0.98
+ * /navdog_runtime/grid_map/p_min: 0.12
+ * /navdog_runtime/grid_map/p_miss: 0.3
+ * /navdog_runtime/grid_map/p_occ: 0.8
+ * /navdog_runtime/grid_map/resolution: 0.05
+ * /navdog_runtime/grid_map/sensor_type: lidar
+ * /navdog_runtime/grid_map/sliding_map_size_x: 10.0
+ * /navdog_runtime/grid_map/sliding_map_size_y: 10.0
+ * /navdog_runtime/grid_map/sliding_map_size_z: 5.0
+ * /navdog_runtime/grid_map/vis_height: 0.3
+ * /navdog_runtime/limits/max_accel_x: 0.5
+ * /navdog_runtime/limits/max_accel_y: 0.25
+ * /navdog_runtime/limits/max_accel_yaw: 0.8
+ * /navdog_runtime/limits/max_vx: 0.5
+ * /navdog_runtime/limits/max_vy: 0.12
+ * /navdog_runtime/limits/max_yaw_rate: 0.65
+ * /navdog_runtime/manager/control_points_distance: 0.2
+ * /navdog_runtime/manager/feasibility_tolerance: 0.5
+ * /navdog_runtime/manager/max_acc: 0.5
+ * /navdog_runtime/manager/max_jerk: 4.0
+ * /navdog_runtime/manager/max_vel: 0.75
+ * /navdog_runtime/manager/planning_horizon: 7.5
+ * /navdog_runtime/mqtt/client_id: navdog_runtime
+ * /navdog_runtime/mqtt/enabled: True
+ * /navdog_runtime/mqtt/host: 127.0.0.1
+ * /navdog_runtime/mqtt/keepalive_sec: 30
+ * /navdog_runtime/mqtt/port: 1883
+ * /navdog_runtime/mqtt/qos: 1
+ * /navdog_runtime/native_scan_rejoin/max_forward_distance_m: 2.0
+ * /navdog_runtime/native_scan_rejoin/max_republish_count: 2
+ * /navdog_runtime/native_scan_rejoin/min_forward_distance_m: 0.8
+ * /navdog_runtime/native_scan_rejoin/min_progress_improvement_m: 0.1
+ * /navdog_runtime/native_scan_rejoin/no_progress_timeout_sec: 3.0
+ * /navdog_runtime/native_scan_rejoin/preferred_forward_distance_m: 1.2
+ * /navdog_runtime/native_scan_rejoin/release_front_clearance_m: 2.0
+ * /navdog_runtime/native_scan_rejoin/release_side_clearance_m: 0.5
+ * /navdog_runtime/native_scan_takeover: True
+ * /navdog_runtime/navigation_mode/avoid_block_confirm_sec: 0.15
+ * /navdog_runtime/navigation_mode/avoid_enter_distance_m: 1.5
+ * /navdog_runtime/navigation_mode/avoid_immediate_distance_m: 0.65
+ * /navdog_runtime/navigation_mode/local_avoid_min_hold_sec: 0.8
+ * /navdog_runtime/navigation_mode/rejoin_confirm_sec: 0.4
+ * /navdog_runtime/navigation_mode/rejoin_heading_tolerance_rad: 0.35
+ * /navdog_runtime/navigation_mode/rejoin_lateral_tolerance_m: 0.25
+ * /navdog_runtime/navigation_mode/route_clear_confirm_sec: 0.6
+ * /navdog_runtime/odom_topic: /quad_0/body_pose
+ * /navdog_runtime/odom_twist_in_world_frame: True
+ * /navdog_runtime/optimization/acc_tolerance: 1.0
+ * /navdog_runtime/optimization/dist0: 0.2
+ * /navdog_runtime/optimization/lambda_collision: 1.0
+ * /navdog_runtime/optimization/lambda_feasibility: 0.1
+ * /navdog_runtime/optimization/lambda_fitness: 1.0
+ * /navdog_runtime/optimization/lambda_smooth: 1.0
+ * /navdog_runtime/optimization/max_acc: 0.5
+ * /navdog_runtime/optimization/max_vel: 0.75
+ * /navdog_runtime/optimization/vel_tolerance: 1.0
+ * /navdog_runtime/planner_trigger/min_remaining_duration_sec: 0.05
+ * /navdog_runtime/planner_trigger/replan_retry_interval_sec: 0.3
+ * /navdog_runtime/planner_trigger/target_change_threshold_m: 0.5
+ * /navdog_runtime/planner_trigger/trajectory_expiry_margin_sec: 0.2
+ * /navdog_runtime/planner_trigger/trajectory_future_tolerance_sec: 0.05
+ * /navdog_runtime/planner_trigger/trajectory_source_max_age_sec: 1.0
+ * /navdog_runtime/route_corridor/lookahead_distance_m: 3.0
+ * /navdog_runtime/route_corridor_observation/map_timeout_sec: 1.5
+ * /navdog_runtime/route_corridor_observation/max_progress_lag_m: 0.5
+ * /navdog_runtime/route_follower/heading_turn_only_threshold_rad: 0.2
+ * /navdog_runtime/route_follower/kp_x: 0.8
+ * /navdog_runtime/route_follower/kp_y: 0.6
+ * /navdog_runtime/route_follower/kp_yaw: 1.2
+ * /navdog_runtime/route_follower/lookahead_distance_m: 0.6
+ * /navdog_runtime/route_follower/max_vx: 0.5
+ * /navdog_runtime/safety/emergency_stop: 0.45
+ * /navdog_runtime/safety/future_tolerance_sec: 0.05
+ * /navdog_runtime/safety/obstacle_timeout_sec: 1.5
+ * /navdog_runtime/safety/odom_timeout_sec: 0.5
+ * /navdog_runtime/safety/planner_cmd_timeout_sec: 0.3
+ * /navdog_runtime/safety/slow_down_front: 1.5
+ * /navdog_runtime/start_align/enter_deg: 15.0
+ * /navdog_runtime/start_align/exit_deg: 5.0
+ * /navdog_runtime/start_align/kp_yaw: 1.5
+ * /navdog_runtime/start_align/max_hold_sec: 8.0
+ * /navdog_runtime/start_align/max_yaw_rate: 0.65
+ * /navdog_runtime/start_align/target_min_dist_m: 0.2
+ * /navdog_runtime/status_rate_hz: 10.0
+ * /navdog_runtime/trajectory_follower/heading_turn_only_threshold_rad: 0.2
+ * /navdog_runtime/trajectory_follower/kp_pos: 0.8
+ * /navdog_runtime/trajectory_follower/kp_yaw: 1.5
+ * /navdog_runtime/trajectory_follower/time_forward_sec: 0.5
+ * /pcl_render_node/map/x_size: 40.0
+ * /pcl_render_node/map/y_size: 40.0
+ * /pcl_render_node/map/z_size: 5.0
+ * /pcl_render_node/sensor_type: lidar
+ * /robot_description: <?xml version='1....
+ * /rosdistro: noetic
+ * /rosversion: 1.17.4
+
+NODES
+  /
+    cmd_vel_owner_mux (navdog_runtime/cmd_vel_owner_mux)
+    go2_gait_publisher (scan_planner_dmq/go2_gait_publisher_dmq)
+    go2_kinematic_sim (scan_planner_dmq/go2_kinematic_sim_dmq)
+    go2_robot_state_publisher (robot_state_publisher/robot_state_publisher)
+    mockamap_node (mockamap/mockamap_node)
+    navdog_runtime (navdog_runtime/navdog_runtime_node)
+    odom_visualization (odom_visualization/odom_visualization)
+    pcl_render_node (local_sensing_node/pcl_render_node)
+  /native_scan/
+    closed_loop_controller (scan_planner_dmq/closed_loop_controller_dmq)
+    scan_planner_dmq_node (scan_planner_dmq/scan_planner_dmq_node)
+[33m[WARN] [1784126170.124550947]: The root link base has an inertia specified in the URDF, but KDL does not support a root link with an inertia.  As a workaround, you can add an extra dummy link to your URDF.[0m
+[33m[WARN] [1784126170.127614206]: [Go2 kinematic sim dmq] ready.[0m
+[33m[WARN] [1784126170.148318648]: [closed_loop_controller_dmq] ready.[0m
+hit: 1.7346
+miss: -0.847298
+min log: -1.99243
+max: 3.89182
+thresh log: 1.38629
+[0m[INFO] [1784126170.197279805]: NATIVE_SCAN_RELEASE_POLICY front_clearance=2.000 side_clearance=0.500 require_corridor_clear=1 require_rejoin_alignment=1[0m
+hit: 1.7346
+miss: -0.847298
+min log: -1.99243
+max: 3.89182
+thresh log: 1.38629
+[33m[WARN] [1784126172.169419359]: Global Pointcloud received..[0m
+Failed to find match for field 'intensity'.
+[FSM]: state: INIT
+wait for goal.
+[33m[WARN] [1784126172.332698567]: Normal compute finished.., mapsize = 70039[0m
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[FSM]: state: INIT
+wait for goal.
+[33m[WARN] [1784126224.228154398]: navigation event result=5[0m
+[FSM]: state: INIT
+wait for goal.
+[33m[WARN] [1784126224.728158566]: CONTROL_OWNER STOP -> ROUTE[0m
+[33m[WARN] [1784126224.728204973]: [closed_loop_controller_dmq] native SCAN trajectory reset[0m
+[33m[WARN] [1784126224.728302632]: CONTROL_OWNER STOP -> ROUTE[0m
+[33m[WARN] [1784126224.728718517]: [SCANReplanFSM] native takeover state reset[0m
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[33m[WARN] [1784126228.608377651]: ROUTE_FOLLOW_STOP task_sequence=1 reason=CORRIDOR_UNAVAILABLE point_count=66 total_length=25.613 progress_valid=1 robot_valid=1 arc_length=0.000 remaining_distance=25.613[0m
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[FSM]: state: WAIT_TARGET
+wait for goal.
+[33m[WARN] [1784126241.528373780]: ROUTE_FOLLOW_STOP task_sequence=1 reason=ROUTE_BLOCKED point_count=66 total_length=25.613 progress_valid=1 robot_valid=1 arc_length=6.022 remaining_distance=19.591[0m
+[33m[WARN] [1784126241.689781045]: CONTROL_OWNER ROUTE -> SCAN[0m
+[33m[WARN] [1784126241.689816046]: NATIVE_SCAN_PATH_PUBLISHED task_sequence=1 point_count=51 owner=SCAN[0m
+[33m[WARN] [1784126241.689828480]: ROUTE_CORRIDOR_BLOCKED task_sequence=1 distance_ahead=1.487 route_arc=7.512 mode=LOCAL_AVOID[0m
+[33m[WARN] [1784126241.689835328]: NATIVE_SCAN_TAKEOVER task_sequence=1 blocked_distance=1.487[0m
+[33m[WARN] [1784126241.689858341]: CONTROL_OWNER ROUTE -> SCAN[0m
+[0m[INFO] [1784126241.689873059]: SCAN_PATH_SANITIZED received=51 kept=50 removed=1[0m
+[TRIG]: from WAIT_TARGET to GEN_NEW_TRAJ
+[33m[WARN] [1784126241.782492645]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126241.785661785]: [getLocalTarget] route blocked; use lateral escape target (-4.57 5.72 0.30)[0m
+[0m[INFO] [1784126241.782444605]: ==========================================
+[0m
+
+[rebo replan]: -------------------------------------0
+start: -3.76   4.7   0.3, -0  0  0
+goal:-4.57  5.72   0.3, 0 0 0
+[32miter(+1)=5,time(ms)=0.013,total_t(ms)=0.013,cost=0.028
+[0mfirst_optimize_step_success=1
+total time:[42m0.000111[0m,optimize:8.75e-05,refine:2.34e-05
+[33m[WARN] [1784126241.785921329]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-4.57,5.72) trajectory_id=1[0m
+[FSM]: from GEN_NEW_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126241.786034459]: [closed_loop_controller_dmq] received bspline traj_id=1 duration=5.818[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126245.925608537]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126245.930491965]: [getLocalTarget] route blocked; use lateral escape target (-4.52 5.98 0.30)[0m
+
+[rebo replan]: -------------------------------------1
+start: -4.2 5.25  0.3,    -0.207      0.26 -1.63e-16
+goal:-4.52  5.98   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.005
+[0mfirst_optimize_step_success=1
+total time:[42m8.33e-05[0m,optimize:6.22e-05,refine:2.12e-05
+[33m[WARN] [1784126245.930730930]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-4.52,5.98) trajectory_id=2[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126245.932200083]: [closed_loop_controller_dmq] received bspline traj_id=2 duration=3.879[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------2
+start: -4.5 5.93  0.3, -5.03e-05  0.000373 -1.72e-16
+goal:-6.49  8.12   0.3, 0 0 0
+[32miter(+1)=8,time(ms)=0.031,total_t(ms)=0.031,cost=0.044
+[0mfirst_optimize_step_success=1
+total time:[42m0.000272[0m,optimize:0.000206,refine:6.6e-05
+[33m[WARN] [1784126249.841836264]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-6.49,8.12) trajectory_id=3[0m
+[FSM]: from GEN_NEW_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126249.844676271]: [closed_loop_controller_dmq] received bspline traj_id=3 duration=13.576[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------3
+start: -4.65  6.19   0.3,    -0.324     0.205 -6.28e-16
+goal:-6.68  8.35   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.008,total_t(ms)=0.008,cost=0.009
+[0mfirst_optimize_step_success=1
+total time:[42m0.000139[0m,optimize:8.64e-05,refine:5.26e-05
+[33m[WARN] [1784126260.087909252]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-6.68,8.35) trajectory_id=4[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126260.088009269]: [closed_loop_controller_dmq] received bspline traj_id=4 duration=13.818[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------4
+start: -5.07  6.52   0.3,    -0.272     0.266 -9.92e-17
+goal:-6.96   8.7   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.006,total_t(ms)=0.006,cost=0.004
+[0mfirst_optimize_step_success=1
+total time:[42m0.000115[0m,optimize:7.04e-05,refine:4.48e-05
+[33m[WARN] [1784126262.671837441]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-6.96,8.70) trajectory_id=5[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126262.671914433]: [closed_loop_controller_dmq] received bspline traj_id=5 duration=13.091[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126263.268254610]: NATIVE_SCAN_ACTIVE_REJOIN task_sequence=1 robot=(-5.162,6.614) progress_arc=8.389 lateral_error=0.100 target=(-5.990,7.488) remaining_points=42[0m
+[33m[WARN] [1784126263.268274753]: ROUTE_CORRIDOR_CLEAR_CONFIRMED task_sequence=1 clear_elapsed=0.600[0m
+[33m[WARN] [1784126263.268281901]: NATIVE_SCAN_REJOIN task_sequence=1 lateral_error=0.100 heading_error=0.110[0m
+[0m[INFO] [1784126263.273708657]: SCAN_PATH_SANITIZED received=43 kept=42 removed=1[0m
+[TRIG]: from EXEC_TRAJ to REPLAN_TRAJ
+[0m[INFO] [1784126263.355638333]: ==========================================
+[0m
+
+[rebo replan]: -------------------------------------5
+start: -5.16  6.61   0.3,  -0.256   0.267 2.2e-16
+goal:-7.11  8.89   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.006,total_t(ms)=0.006,cost=0.003
+[0mfirst_optimize_step_success=1
+total time:[42m0.000124[0m,optimize:7.29e-05,refine:5.1e-05
+[33m[WARN] [1784126263.356096661]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-7.11,8.89) trajectory_id=6[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126263.356176257]: [closed_loop_controller_dmq] received bspline traj_id=6 duration=13.818[0m
+[33m[WARN] [1784126263.690761054]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.093 heading_error=0.091 obstacle_valid=1 front=1.500/2.000 left=0.350/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126264.708303859]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.079 heading_error=0.055 obstacle_valid=1 front=1.325/2.000 left=0.400/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126265.708517025]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.070 heading_error=0.033 obstacle_valid=1 front=1.150/2.000 left=0.475/0.500 right=inf/0.500[0m
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------6
+start: -5.59  7.09   0.3,    -0.219     0.262 -3.39e-16
+goal:-7.48  9.36   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.006,total_t(ms)=0.006,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m0.000132[0m,optimize:7.71e-05,refine:5.51e-05
+[33m[WARN] [1784126266.172507151]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-7.48,9.36) trajectory_id=7[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126266.172630249]: [closed_loop_controller_dmq] received bspline traj_id=7 duration=13.818[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126266.708609985]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.065 heading_error=0.022 obstacle_valid=1 front=0.975/2.000 left=0.775/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126267.728240149]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.061 heading_error=0.016 obstacle_valid=1 front=0.800/2.000 left=inf/0.500 right=0.850/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126268.728474375]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.058 heading_error=0.013 obstacle_valid=1 front=0.625/2.000 left=inf/0.500 right=0.650/0.500[0m
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------7
+start: -6.01   7.6   0.3,    -0.208     0.253 -9.78e-17
+goal:-7.86  9.82   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.007,total_t(ms)=0.007,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m0.000128[0m,optimize:8.25e-05,refine:4.51e-05
+[33m[WARN] [1784126269.175971105]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-7.86,9.82) trajectory_id=8[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126269.176086054]: [closed_loop_controller_dmq] received bspline traj_id=8 duration=13.091[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126269.748392310]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.055 heading_error=0.014 obstacle_valid=1 front=0.450/2.000 left=inf/0.500 right=0.475/0.500[0m
+[33m[WARN] [1784126270.768359699]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.051 heading_error=0.017 obstacle_valid=1 front=0.325/2.000 left=inf/0.500 right=0.300/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126271.788503103]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.047 heading_error=0.019 obstacle_valid=1 front=1.150/2.000 left=inf/0.500 right=0.100/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------8
+start: -6.44  8.12   0.3,    -0.208      0.25 -1.64e-16
+goal:-8.33  10.4   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.008,total_t(ms)=0.008,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m0.000188[0m,optimize:0.00011,refine:7.79e-05
+[33m[WARN] [1784126272.254347170]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-8.33,10.41) trajectory_id=9[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126272.254499884]: [closed_loop_controller_dmq] received bspline traj_id=9 duration=13.818[0m
+[33m[WARN] [1784126272.791413435]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.043 heading_error=0.020 obstacle_valid=1 front=0.875/2.000 left=inf/0.500 right=0.050/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126273.808503835]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.038 heading_error=0.018 obstacle_valid=1 front=0.725/2.000 left=inf/0.500 right=0.100/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126274.828227850]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.034 heading_error=0.018 obstacle_valid=1 front=0.525/2.000 left=0.650/0.500 right=0.250/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------9
+start: -6.87  8.64   0.3,    -0.209     0.252 -2.52e-17
+goal:-8.7 10.9  0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.011,total_t(ms)=0.011,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m0.000214[0m,optimize:0.000133,refine:8.11e-05
+[33m[WARN] [1784126275.347572908]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-8.70,10.88) trajectory_id=10[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126275.347757577]: [closed_loop_controller_dmq] received bspline traj_id=10 duration=13.091[0m
+[33m[WARN] [1784126275.828355347]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.030 heading_error=0.018 obstacle_valid=1 front=0.375/2.000 left=0.400/0.500 right=0.475/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126276.848349225]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.027 heading_error=0.017 obstacle_valid=1 front=0.225/2.000 left=0.200/0.500 right=0.525/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126277.868277111]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.023 heading_error=0.013 obstacle_valid=1 front=0.125/2.000 left=0.050/0.500 right=0.725/0.500[0m
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+
+[rebo replan]: -------------------------------------10
+start: -7.31  9.17   0.3,    -0.208     0.253 -2.29e-16
+goal:-9.17  11.5   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.009,total_t(ms)=0.009,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m0.000167[0m,optimize:0.000117,refine:5.04e-05
+[33m[WARN] [1784126278.436005524]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-9.17,11.46) trajectory_id=11[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126278.436101470]: [closed_loop_controller_dmq] received bspline traj_id=11 duration=13.818[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126278.891536579]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=1 alignment_ok=1 lateral_error=0.021 heading_error=0.012 obstacle_valid=1 front=inf/2.000 left=0.025/0.500 right=0.025/0.500[0m
+[33m[WARN] [1784126279.893165031]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.018 heading_error=0.010 obstacle_valid=1 front=inf/2.000 left=0.025/0.500 right=0.025/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126280.908562701]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.016 heading_error=0.010 obstacle_valid=1 front=inf/2.000 left=0.150/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126281.502114204]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126281.509007331]: [getLocalTarget] route blocked; use lateral escape target (-9.17 11.49 0.30)[0m
+
+[rebo replan]: -------------------------------------11
+start: -7.73  9.69   0.3,    -0.207     0.254 -1.27e-17
+goal:-9.17  11.5   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.011,total_t(ms)=0.011,cost=0.003
+[0mfirst_optimize_step_success=1
+total time:[42m0.000216[0m,optimize:0.000132,refine:8.49e-05
+[33m[WARN] [1784126281.509730465]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-9.17,11.49) trajectory_id=12[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126281.509861152]: [closed_loop_controller_dmq] received bspline traj_id=12 duration=10.182[0m
+[33m[WARN] [1784126281.928389042]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.014 heading_error=0.009 obstacle_valid=1 front=inf/2.000 left=0.500/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126282.948306631]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.012 heading_error=0.007 obstacle_valid=1 front=inf/2.000 left=0.675/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126283.968275144]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.011 heading_error=0.004 obstacle_valid=1 front=1.950/2.000 left=inf/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126284.586346040]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126284.588649426]: [getLocalTarget] route blocked; use lateral escape target (-9.28 11.62 0.30)[0m
+
+[rebo replan]: -------------------------------------12
+start: -8.16  10.2   0.3,      -0.2      0.25 -5.58e-17
+goal:-9.28  11.6   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.009,cost=0.002
+[0mfirst_optimize_step_success=1
+total time:[42m8.35e-05[0m,optimize:5.59e-05,refine:2.75e-05
+[33m[WARN] [1784126284.588902670]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-9.28,11.62) trajectory_id=13[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126284.589031998]: [closed_loop_controller_dmq] received bspline traj_id=13 duration=8.000[0m
+[33m[WARN] [1784126284.968290514]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.011 heading_error=0.001 obstacle_valid=1 front=1.675/2.000 left=inf/0.500 right=inf/0.500[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126285.991690996]: NATIVE_SCAN_RELEASE_WAIT task_sequence=1 rejoin_complete=1 corridor_clear=0 alignment_ok=1 lateral_error=0.011 heading_error=-0.001 obstacle_valid=1 front=1.425/2.000 left=inf/0.500 right=inf/0.500[0m
+[33m[WARN] [1784126285.991730322]: ROUTE_FOLLOW_STOP task_sequence=1 reason=ROUTE_BLOCKED point_count=66 total_length=25.613 progress_valid=1 robot_valid=1 arc_length=13.385 remaining_distance=12.228[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126287.775346442]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126287.777594871]: [getLocalTarget] route blocked; use lateral escape target (-9.25 11.58 0.30)[0m
+
+[rebo replan]: -------------------------------------13
+start: -8.6 10.8  0.3,   -0.187    0.234 5.52e-17
+goal:-9.25  11.6   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.005,total_t(ms)=0.005,cost=0.005
+[0mfirst_optimize_step_success=1
+total time:[42m6.46e-05[0m,optimize:4.17e-05,refine:2.29e-05
+[33m[WARN] [1784126287.777785565]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-9.25,11.58) trajectory_id=14[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126287.777867898]: [closed_loop_controller_dmq] received bspline traj_id=14 duration=5.091[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126291.730803142]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126291.733289387]: [getLocalTarget] route blocked; use lateral escape target (-9.26 12.23 0.30)[0m
+
+[rebo replan]: -------------------------------------14
+start: -9.14  11.4   0.3,  -0.0649   0.0804 7.89e-17
+goal:-9.26  12.2   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.010,total_t(ms)=0.010,cost=0.024
+[0mfirst_optimize_step_success=1
+Need to reallocate time.
+total time:[42m0.00015[0m,optimize:7.77e-05,refine:7.22e-05
+[33m[WARN] [1784126291.733598254]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-9.26,12.23) trajectory_id=15[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126291.733691772]: [closed_loop_controller_dmq] received bspline traj_id=15 duration=4.936[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------15
+start: -9.26  12.2   0.3, -5.24e-05  0.000511     9e-17
+goal:-11.4  14.3   0.3, 0 0 0
+[33m[WARN] [1784126296.676112775]: A-star path has less than 2 points, drop this collision segment.[0m
+iter=5,time(ms)=0.059,rebound.
+[33m[WARN] [1784126296.676200786]: First 3 control points in obstacles! restarting optimisation, t=0.227283[0m
+[33m[WARN] [1784126296.676269547]: First 3 control points in obstacles! restarting optimisation, t=0.227283[0m
+[32miter(+1)=4,time(ms)=0.009,keep optimizing
+[0m[32miter(+1)=8,time(ms)=0.025,keep optimizing
+[0m[32miter(+1)=3,time(ms)=0.030,keep optimizing
+[0mfirst_optimize_step_success=0
+[33m[WARN] [1784126296.676295039]: [SCANReplanFSM] initial planning failed; retry_count=1 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------16
+start: -9.26  12.2   0.3, -0.0018  0.0169       0
+goal:-11.4  14.3   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.008,total_t(ms)=0.008,cost=0.007
+[0mfirst_optimize_step_success=1
+total time:[42m0.000176[0m,optimize:9.66e-05,refine:7.95e-05
+[33m[WARN] [1784126296.876819111]: SCAN_LOCAL_PLAN_SUCCESS retry_count=1 target=(-11.42,14.27) trajectory_id=16[0m
+[FSM]: from GEN_NEW_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126296.876950012]: [closed_loop_controller_dmq] received bspline traj_id=16 duration=13.818[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126302.533444374]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126302.534848719]: [getLocalTarget] route blocked; use lateral escape target (-11.22 14.55 0.30)[0m
+
+[rebo replan]: -------------------------------------17
+start: -9.79  12.8   0.3,    -0.268     0.252 -1.22e-16
+goal:-11.2  14.6   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.008,total_t(ms)=0.008,cost=0.006
+[0mfirst_optimize_step_success=1
+total time:[42m0.000136[0m,optimize:9.01e-05,refine:4.56e-05
+[33m[WARN] [1784126302.535206315]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-11.22,14.55) trajectory_id=17[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126302.535313443]: [closed_loop_controller_dmq] received bspline traj_id=17 duration=10.182[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126305.177096491]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126305.178433417]: [getLocalTarget] route blocked; use lateral escape target (-11.64 14.96 0.30)[0m
+
+[rebo replan]: -------------------------------------18
+start: -10.2  13.2   0.3,    -0.244     0.269 -1.63e-16
+goal:-11.6    15   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.005,total_t(ms)=0.005,cost=0.004
+[0mfirst_optimize_step_success=1
+total time:[42m0.000102[0m,optimize:6.25e-05,refine:3.95e-05
+[33m[WARN] [1784126305.178754162]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-11.64,14.96) trajectory_id=18[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126305.178854634]: [closed_loop_controller_dmq] received bspline traj_id=18 duration=10.182[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126308.173947511]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126308.175293818]: [getLocalTarget] route blocked; use lateral escape target (-11.74 15.08 0.30)[0m
+
+[rebo replan]: -------------------------------------19
+start: -10.6  13.7   0.3,    -0.193     0.249 -1.98e-16
+goal:-11.7  15.1   0.3, 0 0 0
+[32miter(+1)=1,time(ms)=0.007,total_t(ms)=0.007,cost=0.003
+[0mfirst_optimize_step_success=1
+total time:[42m0.000134[0m,optimize:8.48e-05,refine:4.88e-05
+[33m[WARN] [1784126308.175665966]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-11.74,15.08) trajectory_id=19[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126308.175783049]: [closed_loop_controller_dmq] received bspline traj_id=19 duration=8.000[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126311.402662499]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126311.405974944]: [getLocalTarget] route blocked; use lateral escape target (-11.87 15.25 0.30)[0m
+
+[rebo replan]: -------------------------------------20
+start: -11.1  14.2   0.3,   -0.187    0.233 1.82e-17
+goal:-11.9  15.2   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.016,total_t(ms)=0.016,cost=0.004
+[0mfirst_optimize_step_success=1
+total time:[42m0.000181[0m,optimize:0.000117,refine:6.42e-05
+[33m[WARN] [1784126311.406550933]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-11.87,15.25) trajectory_id=20[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126311.406734416]: [closed_loop_controller_dmq] received bspline traj_id=20 duration=5.818[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to REPLAN_TRAJ
+[33m[WARN] [1784126314.874913900]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126314.875794118]: [getLocalTarget] route blocked; use lateral escape target (-12.27 14.50 0.30)[0m
+
+[rebo replan]: -------------------------------------21
+start: -11.5  14.8   0.3,  -0.147   0.185 1.4e-16
+goal:-12.3  14.5   0.3, 0 0 0
+[31m[ERROR] [1784126314.879816997]: a star error, force return![0m
+[32miter(+1)=3,time(ms)=0.010,total_t(ms)=0.010,cost=0.014
+[0mfirst_optimize_step_success=1
+total time:[42m0.00404[0m,optimize:0.00403,refine:1.64e-05
+[33m[WARN] [1784126314.879919517]: SCAN_LOCAL_PLAN_REJECTED target=(-12.27,14.50) collision_time=1.56 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------22
+start: -11.5  14.8   0.3,  -0.147   0.185 1.4e-16
+goal:-12.3  14.5   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.004,total_t(ms)=0.004,cost=0.025
+[0mfirst_optimize_step_success=1
+total time:[42m8.08e-05[0m,optimize:6.39e-05,refine:1.69e-05
+[33m[WARN] [1784126314.880805300]: SCAN_LOCAL_PLAN_SUCCESS retry_count=0 target=(-12.27,14.50) trajectory_id=21[0m
+[FSM]: from REPLAN_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126314.880878398]: [closed_loop_controller_dmq] received bspline traj_id=21 duration=3.879[0m
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: state: EXEC_TRAJ
+[FSM]: from EXEC_TRAJ to GEN_NEW_TRAJ
+[33m[WARN] [1784126318.770685981]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126318.771414537]: [getLocalTarget] route blocked; use lateral escape target (-12.66 14.34 0.30)[0m
+
+[rebo replan]: -------------------------------------23
+start: -11.9  14.7   0.3, -0.000925 -1.43e-05  2.49e-08
+goal:-12.7  14.3   0.3, 0 0 0
+[33m[WARN] [1784126318.771503118]: First 3 control points in obstacles! restarting optimisation, t=0.000000[0m
+[33m[WARN] [1784126318.771513652]: First 3 control points in obstacles! restarting optimisation, t=0.000000[0m
+[33m[WARN] [1784126318.771524999]: First 3 control points in obstacles! restarting optimisation, t=0.000000[0m
+[32miter(+1)=3,time(ms)=0.007,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.002,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.002,keep optimizing
+[0mfirst_optimize_step_success=0
+[33m[WARN] [1784126318.771534870]: [SCANReplanFSM] initial planning failed; retry_count=1 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------24
+start:  -12 14.6  0.3,  -0.174 -0.0867       0
+goal:-11.9  15.4   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.002,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.001,keep optimizing
+[0mfirst_optimize_step_success=0
+
+[rebo replan]: -------------------------------------25
+start:  -12 14.6  0.3,   -0.18 -0.0785       0
+goal:-11.4  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.009,cost=0.047
+[0mfirst_optimize_step_success=1
+Need to reallocate time.
+total time:[42m0.000113[0m,optimize:6.23e-05,refine:5.05e-05
+[33m[WARN] [1784126319.175344502]: SCAN_LOCAL_PLAN_REJECTED target=(-11.37,15.13) collision_time=1.01 reason=FOOTPRINT_COLLISION[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------26
+start:  -12 14.6  0.3,  -0.185 -0.0716       0
+goal:-11.4  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.002,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.001,keep optimizing
+[0mfirst_optimize_step_success=0
+
+[rebo replan]: -------------------------------------27
+start: -12.1  14.6   0.3,  -0.192 -0.0692       0
+goal:-11.5  15.1   0.3, 0 0 0
+[31m[ERROR] [1784126319.606567301]: a star error, force return![0m
+[32miter(+1)=3,time(ms)=0.017,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.004,keep optimizing
+[0m[32miter(+1)=1,time(ms)=0.004,keep optimizing
+[0mfirst_optimize_step_success=0
+[33m[WARN] [1784126319.803402556]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126319.805048007]: [getLocalTarget] route blocked; use lateral escape target (-11.49 15.09 0.30)[0m
+
+[rebo replan]: -------------------------------------28
+start: -12.1  14.6   0.3,  -0.184 -0.0692       0
+goal:-11.5  15.1   0.3, 0 0 0
+[31m[ERROR] [1784126319.814440458]: a star error[0m
+[32miter(+1)=3,time(ms)=0.016,keep optimizing
+[0miter=5,time(ms)=9.19,rebound.
+[32miter(+1)=3,time(ms)=0.012,keep optimizing
+[0miter=5,time(ms)=0.0515,rebound.
+[32miter(+1)=7,time(ms)=0.026,total_t(ms)=9.357,cost=0.277
+[0mfirst_optimize_step_success=1
+total time:[42m0.00954[0m,optimize:0.00949,refine:5.04e-05
+[33m[WARN] [1784126319.814859219]: SCAN_LOCAL_PLAN_SUCCESS retry_count=5 target=(-11.49,15.09) trajectory_id=22[0m
+[FSM]: from GEN_NEW_TRAJ to EXEC_TRAJ
+[33m[WARN] [1784126319.815036365]: [closed_loop_controller_dmq] received bspline traj_id=22 duration=3.879[0m
+[FSM]: state: EXEC_TRAJ
+[33m[WARN] [1784126320.370507432]: SCAN_SAFETY_REPLAN trajectory_id=22 collision_time_ahead=0.33[0m
+
+[rebo replan]: -------------------------------------29
+start: -12.2  14.6   0.3,    -0.154    -0.058 -1.47e-16
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.007,total_t(ms)=0.007,cost=0.020
+[0mfirst_optimize_step_success=1
+total time:[42m5.85e-05[0m,optimize:4.39e-05,refine:1.46e-05
+[33m[WARN] [1784126320.371280935]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.39 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------30
+start: -12.2  14.6   0.3,    -0.154    -0.058 -1.47e-16
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.003,total_t(ms)=0.003,cost=0.021
+[0mfirst_optimize_step_success=1
+total time:[42m6.92e-05[0m,optimize:5.7e-05,refine:1.22e-05
+[33m[WARN] [1784126320.371997622]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.39 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126320.372003083]: Suddenly discovered obstacles. emergency stop! time=0.330000[0m
+[SAFETY]: from EXEC_TRAJ to EMERGENCY_STOP
+[FSM]: from EMERGENCY_STOP to GEN_NEW_TRAJ
+[33m[WARN] [1784126320.372147146]: [closed_loop_controller_dmq] received bspline traj_id=23 duration=3.000[0m
+
+[rebo replan]: -------------------------------------31
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.13e-05[0m,optimize:5.49e-05,refine:1.64e-05
+[33m[WARN] [1784126320.382706480]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126320.382723792]: [SCANReplanFSM] initial planning failed; retry_count=1 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------32
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.012,total_t(ms)=0.012,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000115[0m,optimize:8.92e-05,refine:2.6e-05
+[33m[WARN] [1784126320.587548913]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------33
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.010,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.45e-05[0m,optimize:6.55e-05,refine:1.9e-05
+[33m[WARN] [1784126320.796165622]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126320.995205675]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126320.996352806]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------34
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.011,total_t(ms)=0.011,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000102[0m,optimize:7.8e-05,refine:2.38e-05
+[33m[WARN] [1784126320.996500498]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------35
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.015,total_t(ms)=0.015,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000135[0m,optimize:0.0001,refine:3.45e-05
+[33m[WARN] [1784126321.197263406]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------36
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.009,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.53e-05[0m,optimize:5.17e-05,refine:1.36e-05
+[33m[WARN] [1784126321.406220634]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126321.406237076]: [SCANReplanFSM] initial planning failed; retry_count=6 retry_after=0.20s[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------37
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.27e-05[0m,optimize:5.77e-05,refine:1.5e-05
+[33m[WARN] [1784126321.629877045]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------38
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.012,total_t(ms)=0.012,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.05e-05[0m,optimize:6.29e-05,refine:1.76e-05
+[33m[WARN] [1784126321.831891348]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126322.039994590]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126322.040945430]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------39
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.010,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.25e-05[0m,optimize:6.31e-05,refine:1.95e-05
+[33m[WARN] [1784126322.041067840]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------40
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.011,total_t(ms)=0.011,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.51e-05[0m,optimize:6.45e-05,refine:2.06e-05
+[33m[WARN] [1784126322.245226139]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------41
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.018,total_t(ms)=0.019,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000173[0m,optimize:0.000128,refine:4.48e-05
+[33m[WARN] [1784126322.446990432]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126322.447028249]: [SCANReplanFSM] initial planning failed; retry_count=11 retry_after=0.20s[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------42
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.2e-05[0m,optimize:5.44e-05,refine:1.75e-05
+[33m[WARN] [1784126322.654995996]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------43
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.009,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.47e-05[0m,optimize:6.11e-05,refine:1.36e-05
+[33m[WARN] [1784126322.854989685]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126323.070743362]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126323.071845921]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------44
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.011,total_t(ms)=0.011,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m9.69e-05[0m,optimize:7.37e-05,refine:2.32e-05
+[33m[WARN] [1784126323.071997359]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------45
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.26e-05[0m,optimize:5.87e-05,refine:1.39e-05
+[33m[WARN] [1784126323.272095164]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------46
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.19e-05[0m,optimize:5.44e-05,refine:1.75e-05
+[33m[WARN] [1784126323.477710132]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126323.477747921]: [SCANReplanFSM] initial planning failed; retry_count=16 retry_after=0.20s[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------47
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.014,total_t(ms)=0.015,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000124[0m,optimize:9.95e-05,refine:2.47e-05
+[33m[WARN] [1784126323.683650867]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------48
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.015,total_t(ms)=0.015,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000138[0m,optimize:0.000102,refine:3.67e-05
+[33m[WARN] [1784126323.890793118]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126324.089285083]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126324.089954542]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------49
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.53e-05[0m,optimize:5.07e-05,refine:1.46e-05
+[33m[WARN] [1784126324.090047942]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------50
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.5e-05[0m,optimize:5.03e-05,refine:1.47e-05
+[33m[WARN] [1784126324.291223459]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------51
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.011,total_t(ms)=0.011,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000104[0m,optimize:7.98e-05,refine:2.46e-05
+[33m[WARN] [1784126324.493365004]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126324.493390090]: [SCANReplanFSM] initial planning failed; retry_count=21 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------52
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.018,total_t(ms)=0.018,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.00016[0m,optimize:0.000117,refine:4.28e-05
+[33m[WARN] [1784126324.696294122]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------53
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.020,total_t(ms)=0.021,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000207[0m,optimize:0.000129,refine:7.8e-05
+[33m[WARN] [1784126324.906259453]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126325.137689244]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126325.138704845]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------54
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.74e-05[0m,optimize:6.62e-05,refine:2.12e-05
+[33m[WARN] [1784126325.138833954]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------55
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.028,total_t(ms)=0.029,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000255[0m,optimize:0.000192,refine:6.24e-05
+[33m[WARN] [1784126325.363522907]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------56
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.89e-05[0m,optimize:6.06e-05,refine:1.84e-05
+[33m[WARN] [1784126325.574125440]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126325.574144321]: [SCANReplanFSM] initial planning failed; retry_count=26 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------57
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.009,total_t(ms)=0.010,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.65e-05[0m,optimize:6.04e-05,refine:1.62e-05
+[33m[WARN] [1784126325.776075866]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[FSM]: state: GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------58
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.48e-05[0m,optimize:4.95e-05,refine:1.53e-05
+[33m[WARN] [1784126325.976747057]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126326.182214070]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126326.183085266]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------59
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.82e-05[0m,optimize:6.53e-05,refine:2.29e-05
+[33m[WARN] [1784126326.183220212]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------60
+start: -12.2  14.6   0.3,  0 -0  0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.42e-05[0m,optimize:5.71e-05,refine:1.71e-05
+[33m[WARN] [1784126326.383927407]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126326.383950941]: Replan failed 30 times. Emergency stop; keep_reference_path=1.[0m
+[finishProcess]: from GEN_NEW_TRAJ to EMERGENCY_STOP
+[33m[WARN] [1784126326.393159195]: [closed_loop_controller_dmq] received bspline traj_id=24 duration=3.000[0m
+[FSM]: from EMERGENCY_STOP to GEN_NEW_TRAJ
+
+[rebo replan]: -------------------------------------61
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.014,total_t(ms)=0.014,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000126[0m,optimize:9.51e-05,refine:3.08e-05
+[33m[WARN] [1784126326.593378888]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126326.593408404]: [SCANReplanFSM] initial planning failed; retry_count=1 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------62
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.018,total_t(ms)=0.018,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000195[0m,optimize:0.000133,refine:6.17e-05
+[33m[WARN] [1784126326.800418288]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------63
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.017,total_t(ms)=0.017,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000159[0m,optimize:0.00012,refine:3.86e-05
+[33m[WARN] [1784126327.004341090]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[FSM]: state: GEN_NEW_TRAJ
+[33m[WARN] [1784126327.251594309]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126327.252562376]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------64
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.018,total_t(ms)=0.018,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000147[0m,optimize:0.00012,refine:2.61e-05
+[33m[WARN] [1784126327.252783065]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------65
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.011,total_t(ms)=0.011,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m7.84e-05[0m,optimize:6.23e-05,refine:1.61e-05
+[33m[WARN] [1784126327.472798389]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------66
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.05e-05[0m,optimize:4.71e-05,refine:1.35e-05
+[33m[WARN] [1784126327.676786693]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[33m[WARN] [1784126327.676801012]: [SCANReplanFSM] initial planning failed; retry_count=6 retry_after=0.20s[0m
+
+[rebo replan]: -------------------------------------67
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.007,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.53e-05[0m,optimize:4.68e-05,refine:1.84e-05
+[33m[WARN] [1784126327.879405351]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------68
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.014,total_t(ms)=0.014,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m8.24e-05[0m,optimize:6.68e-05,refine:1.55e-05
+[33m[WARN] [1784126328.081990961]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+[FSM]: state: GEN_NEW_TRAJ
+[33m[WARN] [1784126328.284359898]: [getLocalTarget] route target or connecting path blocked; search lateral escape[0m
+[33m[WARN] [1784126328.285043405]: [getLocalTarget] route blocked; use lateral escape target (-11.53 15.07 0.30)[0m
+
+[rebo replan]: -------------------------------------69
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.008,total_t(ms)=0.008,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m6.37e-05[0m,optimize:4.96e-05,refine:1.4e-05
+[33m[WARN] [1784126328.285136977]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
+
+[rebo replan]: -------------------------------------70
+start: -12.2  14.6   0.3, 0 0 0
+goal:-11.5  15.1   0.3, 0 0 0
+[32miter(+1)=3,time(ms)=0.020,total_t(ms)=0.020,cost=0.015
+[0mfirst_optimize_step_success=1
+total time:[42m0.000145[0m,optimize:0.000103,refine:4.22e-05
+[33m[WARN] [1784126328.486710527]: SCAN_LOCAL_PLAN_REJECTED target=(-11.53,15.07) collision_time=0.00 reason=FOOTPRINT_COLLISION[0m
