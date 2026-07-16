@@ -8,12 +8,57 @@
 #include <memory>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 namespace navdog_scan_adapter
 {
 class ScanLocalPlannerAdapterTestPeer
 {
 public:
+  static void setReplanResults(
+      ScanLocalPlannerAdapter& adapter,
+      const std::vector<bool>& results,
+      std::vector<bool>& random_flags)
+  {
+    auto index = std::make_shared<std::size_t>(0);
+    adapter.replan_attempt_for_test_ =
+        [results, index, &random_flags](bool random) {
+          random_flags.push_back(random);
+          const bool result = *index < results.size()
+              ? results[*index]
+              : false;
+          ++(*index);
+          return result;
+        };
+  }
+
+  static bool replan(
+      ScanLocalPlannerAdapter& adapter,
+      const navdog::LocalPlanRequest& request,
+      bool& deterministic_success,
+      bool& random_success)
+  {
+    return adapter.doReboundReplan(
+        request, deterministic_success, random_success);
+  }
+
+  static void storeResult(
+      ScanLocalPlannerAdapter& adapter,
+      const navdog::LocalPlanRequest& request,
+      bool success)
+  {
+    navdog::LocalTrajectory trajectory{};
+    if (success)
+    {
+      trajectory.task_sequence = request.task_sequence;
+      trajectory.plan_sequence = request.plan_sequence;
+      trajectory.purpose = request.purpose;
+      trajectory.duration_sec = 1.0;
+      trajectory.valid = true;
+    }
+    adapter.storePlanResult(request, trajectory);
+  }
+
   static void setPending(
       ScanLocalPlannerAdapter& adapter,
       const navdog::LocalPlanRequest& request)
@@ -142,6 +187,83 @@ navdog::LocalPlanRequest makeRequest(std::uint64_t plan_sequence)
   request.max_vx = 0.4;
   request.valid = true;
   return request;
+}
+
+TEST(ScanLocalPlannerAdapterTest, DeterministicSuccessUsesOneAttempt)
+{
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), nullptr);
+  std::vector<bool> random_flags;
+  ScanLocalPlannerAdapterTestPeer::setReplanResults(
+      adapter, {true}, random_flags);
+  bool deterministic = false;
+  bool random = false;
+
+  const auto request = makeRequest(1);
+  const bool success = ScanLocalPlannerAdapterTestPeer::replan(
+      adapter, request, deterministic, random);
+  EXPECT_TRUE(success);
+  ScanLocalPlannerAdapterTestPeer::storeResult(
+      adapter, request, success);
+  EXPECT_TRUE(deterministic);
+  EXPECT_FALSE(random);
+  ASSERT_EQ(random_flags.size(), 1u);
+  EXPECT_FALSE(random_flags[0]);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 1),
+            navdog::LocalPlanState::READY);
+}
+
+TEST(ScanLocalPlannerAdapterTest, RandomFallbackRunsAfterDeterministicFailure)
+{
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), nullptr);
+  std::vector<bool> random_flags;
+  ScanLocalPlannerAdapterTestPeer::setReplanResults(
+      adapter, {false, true}, random_flags);
+  bool deterministic = false;
+  bool random = false;
+
+  const auto request = makeRequest(1);
+  const bool success = ScanLocalPlannerAdapterTestPeer::replan(
+      adapter, request, deterministic, random);
+  EXPECT_TRUE(success);
+  ScanLocalPlannerAdapterTestPeer::storeResult(
+      adapter, request, success);
+  EXPECT_FALSE(deterministic);
+  EXPECT_TRUE(random);
+  ASSERT_EQ(random_flags.size(), 2u);
+  EXPECT_FALSE(random_flags[0]);
+  EXPECT_TRUE(random_flags[1]);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 1),
+            navdog::LocalPlanState::READY);
+}
+
+TEST(ScanLocalPlannerAdapterTest, BothFailuresStopAfterTwoAttempts)
+{
+  ScanLocalPlannerAdapter adapter(
+      navdog::PlannerTriggerConfig{},
+      std::make_shared<FakeInflatedGridQuery3D>(), nullptr);
+  std::vector<bool> random_flags;
+  ScanLocalPlannerAdapterTestPeer::setReplanResults(
+      adapter, {false, false, true}, random_flags);
+  bool deterministic = false;
+  bool random = false;
+
+  const auto request = makeRequest(1);
+  const bool success = ScanLocalPlannerAdapterTestPeer::replan(
+      adapter, request, deterministic, random);
+  EXPECT_FALSE(success);
+  ScanLocalPlannerAdapterTestPeer::storeResult(
+      adapter, request, success);
+  EXPECT_FALSE(deterministic);
+  EXPECT_FALSE(random);
+  ASSERT_EQ(random_flags.size(), 2u);
+  EXPECT_FALSE(random_flags[0]);
+  EXPECT_TRUE(random_flags[1]);
+  EXPECT_EQ(adapter.localPlanState(request.purpose, 7, 1),
+            navdog::LocalPlanState::FAILED);
 }
 
 navdog::LocalTrajectory makeSampledTrajectory()

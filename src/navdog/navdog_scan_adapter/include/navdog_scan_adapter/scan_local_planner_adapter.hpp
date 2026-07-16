@@ -9,6 +9,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -76,7 +77,13 @@ private:
       double source_stamp_sec);
 
   bool doReboundReplan(
-      const navdog::LocalPlanRequest& request);
+      const navdog::LocalPlanRequest& request,
+      bool& deterministic_success,
+      bool& random_success);
+
+  void storePlanResult(
+      const navdog::LocalPlanRequest& request,
+      const navdog::LocalTrajectory& trajectory);
 
   bool checkTrajectoryCollision(
       const navdog::LocalTrajectory& trajectory,
@@ -105,6 +112,10 @@ private:
   navdog::LocalPlanState completed_state_{
       navdog::LocalPlanState::IDLE};
   navdog::LocalTrajectory cached_trajectory_{};
+
+  // Test seam for the two initialization choices. Production always calls
+  // SCANPlannerManager directly.
+  std::function<bool(bool)> replan_attempt_for_test_{};
 };
 
 }  // namespace navdog_scan_adapter

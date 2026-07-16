@@ -54,6 +54,8 @@ public:
       OccupancyQuery3D* query) noexcept;
 
 private:
+  friend class NavigationCoordinatorTestPeer;
+
   void enqueuePlannerAction(
       const PlannerAction& action);
 
@@ -134,6 +136,8 @@ private:
       const RouteProgress& progress,
       double now_sec);
 
+  bool promotePendingLocalPlan(double now_sec);
+
   bool trajectoryEndingSoon(
       const LocalTrajectory& trajectory,
       double exec_time_sec) const noexcept;
@@ -148,7 +152,9 @@ private:
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
-      RoutePoint& out_target) const;
+      double minimum_candidate_arc_m,
+      RoutePoint& out_target,
+      double& out_target_arc_m) const;
 
   void resetNearGoalBlockedTimer() noexcept;
 
@@ -179,25 +185,33 @@ private:
   LocalPlannerAdapter* local_planner_adapter_{nullptr};
   OccupancyQuery3D* occupancy_query_{nullptr};
 
+  struct LocalPlanKey
+  {
+    std::uint64_t task_sequence{0};
+    std::uint64_t plan_sequence{0};
+    NavigationMode purpose{NavigationMode::NONE};
+
+    bool valid() const noexcept
+    {
+      return task_sequence != 0 && plan_sequence != 0 &&
+             purpose != NavigationMode::NONE;
+    }
+
+    void reset() noexcept
+    {
+      task_sequence = 0;
+      plan_sequence = 0;
+      purpose = NavigationMode::NONE;
+    }
+  };
+
   NavigationMode last_mode_{NavigationMode::NONE};
-  std::uint64_t last_local_plan_task_sequence_{0};
-  std::uint64_t last_local_plan_plan_sequence_{0};
+  LocalPlanKey pending_local_plan_{};
+  LocalPlanKey active_local_plan_{};
   double last_local_plan_request_stamp_sec_{0.0};
   bool last_local_plan_failed_{false};
-
-  std::uint64_t expected_local_plan_sequence_{0};
-  std::uint64_t expected_local_plan_task_sequence_{0};
-  NavigationMode expected_local_plan_purpose_{NavigationMode::NONE};
-
-  std::uint64_t accepted_task_sequence_{0};
-  std::uint64_t accepted_plan_sequence_{0};
-  NavigationMode accepted_purpose_{NavigationMode::NONE};
-
-  // Last requested target for change detection.
-  double last_request_target_x_{0.0};
-  double last_request_target_y_{0.0};
-
-  bool force_replan_{false};
+  double local_avoid_target_arc_m_{0.0};
+  bool local_avoid_target_valid_{false};
   double near_goal_blocked_since_sec_{0.0};
   bool near_goal_blocked_timer_active_{false};
   NavState state_before_pause_{NavState::IDLE};

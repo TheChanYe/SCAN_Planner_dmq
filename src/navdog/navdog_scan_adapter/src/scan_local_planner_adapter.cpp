@@ -1,6 +1,7 @@
 #include "navdog_scan_adapter/scan_local_planner_adapter.hpp"
 
 #include <bspline_opt/uniform_bspline.h>
+#include <ros/ros.h>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,19 @@ constexpr double kSampleDtSec = 0.05;
 // LOCAL_AVOID starts. Checking t=0 would reject every escape trajectory.
 constexpr double kCollisionStartGraceSec = 0.30;
 constexpr double kCollisionLookAheadSec = 0.05;
+
+const char* modeName(navdog::NavigationMode mode) noexcept
+{
+  switch (mode)
+  {
+    case navdog::NavigationMode::LOCAL_AVOID:
+      return "LOCAL_AVOID";
+    case navdog::NavigationMode::ROUTE_REJOIN:
+      return "ROUTE_REJOIN";
+    default:
+      return "NONE";
+  }
+}
 
 bool finitePoint(const navdog::RoutePoint& point, bool require_z)
 {
@@ -143,34 +157,60 @@ void ScanLocalPlannerAdapter::planningLoop()
     if (!has_request)
       continue;
 
-    const bool ok = doReboundReplan(request);
+    ROS_INFO_STREAM(
+        "LOCAL_PLAN_REQUEST task=" << request.task_sequence
+        << " plan=" << request.plan_sequence
+        << " mode=" << modeName(request.purpose)
+        << " start=(" << request.start.x << "," << request.start.y << ")"
+        << " target=(" << request.target.x << "," << request.target.y << ")");
 
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
+    bool deterministic_success = false;
+    bool random_success = false;
+    const bool ok = doReboundReplan(
+        request, deterministic_success, random_success);
+    const navdog::LocalTrajectory trajectory = ok
+        ? sampleLocalTrajData(
+              request.task_sequence,
+              request.plan_sequence,
+              request.purpose,
+              request.request_stamp_sec)
+        : navdog::LocalTrajectory{};
+    storePlanResult(request, trajectory);
+    const bool ready = trajectory.valid;
 
-      if (shutdown_)
-        return;
+    ROS_INFO_STREAM(
+        "LOCAL_PLAN_RESULT task=" << request.task_sequence
+        << " plan=" << request.plan_sequence
+        << " deterministic="
+        << (deterministic_success ? "SUCCESS" : "FAILED")
+        << " random="
+        << (deterministic_success
+                ? "SKIPPED"
+                : (random_success ? "SUCCESS" : "FAILED"))
+        << " state="
+        << (ready ? "READY" : "FAILED")
+        << " duration=" << trajectory.duration_sec);
+  }
+}
 
-      has_active_request_ = false;
-      completed_request_ = request;
+void ScanLocalPlannerAdapter::storePlanResult(
+    const navdog::LocalPlanRequest& request,
+    const navdog::LocalTrajectory& trajectory)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (shutdown_)
+    return;
 
-      if (ok)
-      {
-        cached_trajectory_ = sampleLocalTrajData(
-            request.task_sequence,
-            request.plan_sequence,
-            request.purpose,
-            request.request_stamp_sec);
-        completed_state_ = cached_trajectory_.valid
-                     ? navdog::LocalPlanState::READY
-                     : navdog::LocalPlanState::FAILED;
-      }
-      else
-      {
-        cached_trajectory_ = navdog::LocalTrajectory{};
-        completed_state_ = navdog::LocalPlanState::FAILED;
-      }
-    }
+  has_active_request_ = false;
+  completed_request_ = request;
+  if (trajectory.valid)
+  {
+    cached_trajectory_ = trajectory;
+    completed_state_ = navdog::LocalPlanState::READY;
+  }
+  else
+  {
+    completed_state_ = navdog::LocalPlanState::FAILED;
   }
 }
 
@@ -179,9 +219,14 @@ void ScanLocalPlannerAdapter::planningLoop()
 // =============================================================================
 
 bool ScanLocalPlannerAdapter::doReboundReplan(
-    const navdog::LocalPlanRequest& request)
+    const navdog::LocalPlanRequest& request,
+    bool& deterministic_success,
+    bool& random_success)
 {
-  if (!planner_manager_)
+  deterministic_success = false;
+  random_success = false;
+
+  if (!planner_manager_ && !replan_attempt_for_test_)
     return false;
 
   Eigen::Vector3d start_pt(
@@ -195,17 +240,25 @@ bool ScanLocalPlannerAdapter::doReboundReplan(
   Eigen::Vector3d end_vel(
       request.target_vel.x, request.target_vel.y, 0.0);
 
-  const bool flag_poly_init = true;
-  const bool flag_random_poly_traj = false;
+  const auto attempt = [&](bool random_poly) {
+    if (replan_attempt_for_test_)
+      return replan_attempt_for_test_(random_poly);
+    return planner_manager_->reboundReplan(
+        start_pt,
+        start_vel,
+        start_acc,
+        end_pt,
+        end_vel,
+        true,
+        random_poly);
+  };
 
-  return planner_manager_->reboundReplan(
-      start_pt,
-      start_vel,
-      start_acc,
-      end_pt,
-      end_vel,
-      flag_poly_init,
-      flag_random_poly_traj);
+  deterministic_success = attempt(false);
+  if (deterministic_success)
+    return true;
+
+  random_success = attempt(true);
+  return random_success;
 }
 
 // =============================================================================
@@ -326,8 +379,8 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::getLocalTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (completed_request_.task_sequence != task_sequence ||
-      completed_request_.purpose != purpose)
+  if (cached_trajectory_.task_sequence != task_sequence ||
+      cached_trajectory_.purpose != purpose)
   {
     return navdog::LocalTrajectory{};
   }
@@ -345,8 +398,8 @@ bool ScanLocalPlannerAdapter::hasValidTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (completed_request_.task_sequence != task_sequence ||
-      completed_request_.purpose != purpose)
+  if (cached_trajectory_.task_sequence != task_sequence ||
+      cached_trajectory_.purpose != purpose)
   {
     return false;
   }
@@ -404,9 +457,9 @@ bool ScanLocalPlannerAdapter::isTrajectoryColliding(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (completed_request_.task_sequence != task_sequence ||
-      completed_request_.purpose != purpose ||
-      completed_request_.plan_sequence != plan_sequence)
+  if (cached_trajectory_.task_sequence != task_sequence ||
+      cached_trajectory_.purpose != purpose ||
+      cached_trajectory_.plan_sequence != plan_sequence)
   {
     return true;
   }

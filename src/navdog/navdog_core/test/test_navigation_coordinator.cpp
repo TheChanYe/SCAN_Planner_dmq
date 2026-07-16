@@ -6,6 +6,24 @@
 
 namespace navdog
 {
+class NavigationCoordinatorTestPeer
+{
+public:
+  static std::uint64_t activePlanSequence(
+      const NavigationCoordinator& coordinator) noexcept
+  {
+    return coordinator.active_local_plan_.plan_sequence;
+  }
+
+  static bool localPlanningContextIsClear(
+      const NavigationCoordinator& coordinator) noexcept
+  {
+    return !coordinator.pending_local_plan_.valid() &&
+           !coordinator.active_local_plan_.valid() &&
+           !coordinator.local_avoid_target_valid_;
+  }
+};
+
 namespace
 {
 
@@ -3087,10 +3105,10 @@ TEST(NavigationCoordinatorTest,
 }
 
 // =============================================================================
-// ExpiredTrajectoryStops
+// A safe active trajectory is still used while its replacement is planned.
 // =============================================================================
 
-TEST(NavigationCoordinatorTest, ExpiredTrajectoryStops)
+TEST(NavigationCoordinatorTest, NearEndingTrajectoryContinuesUntilEnd)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -3105,14 +3123,11 @@ TEST(NavigationCoordinatorTest, ExpiredTrajectoryStops)
   input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
 
-  // elapsed = 2.1 - 1.0 = 1.1s > duration = 1.0s -> expired.
   CoreOutput output = coordinator.update(input, 2.1);
 
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
-  EXPECT_EQ(output.final_cmd.vx, 0.0);
-  EXPECT_EQ(output.final_cmd.source,
-            CommandSource::TRACKING_STOP);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
 }
 
 // =============================================================================
@@ -3154,6 +3169,9 @@ TEST(NavigationCoordinatorTest,
   EXPECT_TRUE(output.final_cmd.source == CommandSource::PLANNER ||
               output.final_cmd.source == CommandSource::SAFETY_SLOW);
   EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_TRUE(
+      NavigationCoordinatorTestPeer::localPlanningContextIsClear(
+          coordinator));
 }
 
 // =============================================================================
@@ -3532,7 +3550,9 @@ TEST(NavigationCoordinatorTest, WrongPlanSequenceRejected)
 
 TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsAtZero)
 {
-  NavigationCoordinator coordinator;
+  NavdogConfig config;
+  config.planner_trigger.min_remaining_duration_sec = 3.0;
+  NavigationCoordinator coordinator(config);
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
@@ -3547,28 +3567,31 @@ TEST(NavigationCoordinatorTest, NewPlanSequenceRestartsAtZero)
 
   // First plan, start execution.
   coordinator.update(input, 2.0);
-  coordinator.update(input, 2.1);
+  coordinator.update(input, 2.05);
 
   // Second plan with new plan_sequence.
   LocalTrajectory trajectory2 = makeTestLocalTrajectory(
-      1u, 2u, NavigationMode::LOCAL_AVOID, 2.4, 2.0);
+      1u, 2u, NavigationMode::LOCAL_AVOID, 2.1, 2.0);
   adapter.setTrajectory(trajectory2);
-  adapter.setState(LocalPlanState::READY);
-
-  // Simulate that requestLocalPlan has been called for plan_sequence 2.
-  // Because the fake adapter does not update expected sequences, we
-  // trigger a replan by marking the first trajectory as ending soon.
-  adapter.setCollisionFlag(true);
-  CoreOutput output = coordinator.update(input, 2.2);
+  adapter.setStateRequest(adapter.lastRequest(), LocalPlanState::READY);
+  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.1);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.1, 0.5);
+  CoreOutput output = coordinator.update(input, 2.1);
 
   EXPECT_EQ(output.navigation_mode.mode,
             NavigationMode::LOCAL_AVOID);
   EXPECT_GT(output.final_cmd.vx, 0.0);
+  EXPECT_EQ(
+      NavigationCoordinatorTestPeer::activePlanSequence(coordinator),
+      2u);
 }
 
-TEST(NavigationCoordinatorTest, OldPlanRejectedWhileNewPlanPending)
+TEST(NavigationCoordinatorTest, HealthyActivePlanRunsWhileNewPlanPending)
 {
-  NavigationCoordinator coordinator;
+  NavdogConfig config;
+  config.planner_trigger.min_remaining_duration_sec = 3.0;
+  NavigationCoordinator coordinator(config);
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
@@ -3582,23 +3605,22 @@ TEST(NavigationCoordinatorTest, OldPlanRejectedWhileNewPlanPending)
       makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
   coordinator.update(input, 2.0);
 
-  // Force a replan so the coordinator expects plan_sequence 2, then
-  // simulate that the adapter is still PLANNING the new trajectory.
-  adapter.setCollisionFlag(true);
+  // A refresh is requested because the active trajectory is near its end.
   coordinator.update(input, 2.05);
   adapter.setStateRequest(
       adapter.lastRequest(), LocalPlanState::PLANNING);
 
-  // Old trajectory with plan_sequence 1 must not be executed while a new
-  // plan is pending.
+  // The healthy active trajectory remains the velocity source.
   CoreOutput output = coordinator.update(input, 2.1);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
-  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+  EXPECT_NE(output.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_GT(output.final_cmd.vx, 0.0);
 }
 
-TEST(NavigationCoordinatorTest, FailedReplanDoesNotReuseOldTrajectory)
+TEST(NavigationCoordinatorTest, FailedRefreshKeepsHealthyActiveAndAdvancesTarget)
 {
-  NavigationCoordinator coordinator;
+  NavdogConfig config;
+  config.planner_trigger.min_remaining_duration_sec = 3.0;
+  NavigationCoordinator coordinator(config);
   setupToTracking(coordinator);
 
   FakeLocalPlannerAdapter adapter;
@@ -3614,19 +3636,46 @@ TEST(NavigationCoordinatorTest, FailedReplanDoesNotReuseOldTrajectory)
   // First plan accepted.
   coordinator.update(input, 2.0);
 
-  // Force a replan by collision; adapter will now reject requests.
-  adapter.setCollisionFlag(true);
-  adapter.setAcceptRequests(false);
+  // Request plan 2, then report its failure while plan 1 remains safe.
   coordinator.update(input, 2.05);
+  const LocalPlanRequest failed_request = adapter.lastRequest();
+  adapter.setStateRequest(failed_request, LocalPlanState::FAILED);
 
-  // The old trajectory must not be reused while replan is failing.
-  coordinator.update(input, 2.4);
-  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.45);
+  CoreOutput during_retry = coordinator.update(input, 2.1);
+  EXPECT_GT(during_retry.final_cmd.vx, 0.0);
+
+  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.4);
   input.route_corridor_observation =
-      makeBlockedScanObservationAt(1u, 0.0, 2.45, 0.5);
-  CoreOutput output = coordinator.update(input, 2.45);
-  EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
-  EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
+      makeBlockedScanObservationAt(1u, 0.0, 2.4, 0.5);
+  coordinator.update(input, 2.4);
+  EXPECT_GT(adapter.lastRequest().target.x, failed_request.target.x);
+}
+
+TEST(NavigationCoordinatorTest, FailedInitialPlanStopsAndAdvancesTarget)
+{
+  NavigationCoordinator coordinator;
+  setupToTracking(coordinator);
+
+  FakeLocalPlannerAdapter adapter;
+  attachLocalPlanner(coordinator, adapter);
+  CoreInput input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.0);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.0, 0.5);
+
+  CoreOutput first = coordinator.update(input, 2.0);
+  const LocalPlanRequest failed_request = adapter.lastRequest();
+  EXPECT_EQ(first.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(first.final_cmd.vx, 0.0);
+
+  coordinator.update(input, 2.05);  // Reject invalid READY result.
+  input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.31);
+  input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.31, 0.5);
+  CoreOutput retry = coordinator.update(input, 2.31);
+
+  EXPECT_EQ(retry.final_cmd.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(retry.final_cmd.vx, 0.0);
+  EXPECT_GT(adapter.lastRequest().target.x, failed_request.target.x);
 }
 
 TEST(NavigationCoordinatorTest, ModeChangeRejectsOldTrajectory)
@@ -3929,15 +3978,23 @@ TEST(NavigationCoordinatorTest, TrajectoryStopsAfterDuration)
       makeBlockedScanObservationAt(1u, 0.0, 2.05, 0.5);
   coordinator.update(step_input, 2.05);
 
+  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.10);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.10, 0.5);
+  coordinator.update(step_input, 2.10);
+
+  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.15);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.15, 0.5);
+  coordinator.update(step_input, 2.15);
+  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.20);
+  step_input.route_corridor_observation =
+      makeBlockedScanObservationAt(1u, 0.0, 2.20, 0.5);
+  coordinator.update(step_input, 2.20);
   step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.25);
   step_input.route_corridor_observation =
       makeBlockedScanObservationAt(1u, 0.0, 2.25, 0.5);
-  coordinator.update(step_input, 2.25);
-
-  step_input = makeTrackingInput(0.0, 0.0, 0.0, 1u, 0.0, 2.45);
-  step_input.route_corridor_observation =
-      makeBlockedScanObservationAt(1u, 0.0, 2.45, 0.5);
-  CoreOutput output = coordinator.update(step_input, 2.45);
+  CoreOutput output = coordinator.update(step_input, 2.25);
 
   EXPECT_EQ(output.final_cmd.source, CommandSource::TRACKING_STOP);
   EXPECT_DOUBLE_EQ(output.final_cmd.vx, 0.0);
@@ -4023,7 +4080,7 @@ TEST(NavigationCoordinatorTest, OnlyOneOutstandingRequestExists)
   EXPECT_EQ(adapter.requestCount(), count_after_first);
 }
 
-TEST(NavigationCoordinatorTest, TargetChangeTriggersReplan)
+TEST(NavigationCoordinatorTest, HealthyActivePlanIsNotRefreshedEveryCycle)
 {
   NavigationCoordinator coordinator;
   setupToTracking(coordinator);
@@ -4049,8 +4106,8 @@ TEST(NavigationCoordinatorTest, TargetChangeTriggersReplan)
       makeBlockedScanObservationAt(1u, 3.0, 2.2, 0.5);
   coordinator.update(moved_input, 2.2);
 
-  EXPECT_GT(adapter.requestCount(), count_after_first);
-  EXPECT_NE(adapter.lastRequest().target.x, first_request.target.x);
+  EXPECT_EQ(adapter.requestCount(), count_after_first);
+  EXPECT_EQ(adapter.lastRequest().target.x, first_request.target.x);
 }
 
 TEST(NavigationCoordinatorTest, CollisionTriggersReplan)
