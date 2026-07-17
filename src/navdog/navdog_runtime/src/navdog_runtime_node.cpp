@@ -198,8 +198,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
       ROS_INFO("NAV_MODE %s -> %s blocked_forward=%.3f blocked_lateral=0.600",
           navigationModeName(output.navigation_mode.previous_mode),
           navigationModeName(output.navigation_mode.mode),
-          input.route_corridor_observation.assessment
-              .first_blocked_distance_ahead_m);
+          input.route_corridor_observation.first_blocked_distance_ahead_m);
     }
     else if (output.navigation_mode.previous_mode ==
                  navdog::NavigationMode::LOCAL_AVOID)
