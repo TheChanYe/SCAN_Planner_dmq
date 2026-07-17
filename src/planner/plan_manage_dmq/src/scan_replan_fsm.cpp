@@ -44,41 +44,9 @@ namespace scan_planner
     nh.param("fsm/thresh_replan", replan_thresh_, -1.0);
     nh.param("fsm/thresh_no_replan", no_replan_thresh_, -1.0);
     nh.param("fsm/planning_horizon", planning_horizon_, -1.0);
-    nh.param("fsm/escape_min_radius", escape_min_radius_, 0.5);
-    nh.param("fsm/escape_max_radius", escape_max_radius_, 2.5);
-    nh.param("fsm/escape_radius_step", escape_radius_step_, 0.25);
-    nh.param("fsm/escape_max_lateral_from_route",
-             escape_max_lateral_from_route_, 1.6);
-    if (!std::isfinite(escape_min_radius_) ||
-        !std::isfinite(escape_max_radius_) ||
-        !std::isfinite(escape_radius_step_) ||
-        !std::isfinite(escape_max_lateral_from_route_) ||
-        escape_min_radius_ <= 0.0 ||
-        escape_max_radius_ < escape_min_radius_ ||
-        escape_radius_step_ <= 0.0 ||
-        escape_max_lateral_from_route_ <= 0.0)
-    {
-      ROS_FATAL("[SCANReplanFSM] invalid escape search parameters");
-      ros::shutdown();
-      return;
-    }
     nh.param("fsm/emergency_time_", emergency_time_, 1.0);
     nh.param("fsm/fail_safe", enable_fail_safe_, true);
     nh.param("fsm/max_replan_fail_count", max_replan_fail_count_, 30);
-    nh.param("fsm/replan_retry_interval_sec", replan_retry_interval_sec_, 0.20);
-    nh.param("fsm/safety_replan_cooldown_sec",
-             safety_replan_cooldown_sec_, 0.50);
-    if (!std::isfinite(replan_retry_interval_sec_) ||
-        replan_retry_interval_sec_ < 0.05 ||
-        !std::isfinite(safety_replan_cooldown_sec_) ||
-        safety_replan_cooldown_sec_ < 0.10)
-    {
-      ROS_FATAL("[SCANReplanFSM] invalid replanning interval");
-      ros::shutdown();
-      return;
-    }
-    next_replan_attempt_time_ = ros::Time(0);
-    last_safety_replan_time_ = ros::Time(0);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
@@ -442,8 +410,6 @@ namespace scan_planner
 
     if (success)
     {
-      next_replan_attempt_time_ = ros::Time(0);
-
       /*** FSM ***/
       if (exec_state_ == WAIT_TARGET)
       {
@@ -470,10 +436,7 @@ namespace scan_planner
     active_waypoints_.clear();
     current_wp_ = 0;
     replan_fail_count_ = 0;
-    last_escape_side_ = 0;
     need_hover_stop_ = false;
-    next_replan_attempt_time_ = ros::Time(0);
-    last_safety_replan_time_ = ros::Time(0);
     exec_state_ = WAIT_TARGET;
     ROS_WARN("[SCANReplanFSM] native takeover state reset");
   }
@@ -655,19 +618,7 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
-      const ros::Time now = ros::Time::now();
-
-      if (!next_replan_attempt_time_.isZero() &&
-          now < next_replan_attempt_time_)
-      {
-        break;
-      }
-
       setStartStateFromOdomOrCurrentTraj();
-
-      // Eigen::Vector3d rot_x = odom_orient_.toRotationMatrix().block(0, 0, 3, 1);
-      // start_yaw_(0)         = atan2(rot_x(1), rot_x(0));
-      // start_yaw_(1) = start_yaw_(2) = 0.0;
 
       bool flag_random_poly_init;
       if (timesOfConsecutiveStateCalls().first == 1)
@@ -680,49 +631,31 @@ namespace scan_planner
       {
 
         replan_fail_count_ = 0;
-        next_replan_attempt_time_ = ros::Time(0);
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
       }
       else
       {
         ++replan_fail_count_;
-
-        next_replan_attempt_time_ =
-            now + ros::Duration(replan_retry_interval_sec_);
-
         ROS_WARN_THROTTLE(
             1.0,
             "[SCANReplanFSM] initial planning failed; "
-            "retry_count=%d retry_after=%.2fs",
-            replan_fail_count_,
-            replan_retry_interval_sec_);
+            "retry_count=%d",
+            replan_fail_count_);
       }
       break;
     }
 
     case REPLAN_TRAJ:
     {
-      const ros::Time now = ros::Time::now();
-
-      if (!next_replan_attempt_time_.isZero() &&
-          now < next_replan_attempt_time_)
-      {
-        break;
-      }
-
       if (planFromCurrentTraj())
       {
         replan_fail_count_ = 0;
-        next_replan_attempt_time_ = ros::Time(0);
         changeFSMExecState(EXEC_TRAJ, "FSM");
       }
       else
       {
         ++replan_fail_count_;
-
-        next_replan_attempt_time_ =
-            now + ros::Duration(replan_retry_interval_sec_);
       }
 
       break;
@@ -1001,20 +934,6 @@ namespace scan_planner
       if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
       {
         const double collision_time_ahead = t - t_cur;
-        if (!last_safety_replan_time_.isZero() &&
-            (now - last_safety_replan_time_).toSec() <
-                safety_replan_cooldown_sec_)
-        {
-          ROS_WARN_THROTTLE(
-              1.0,
-              "SCAN_SAFETY_REPLAN_SUPPRESSED trajectory_id=%d "
-              "collision_time_ahead=%.2f cooldown=%.2f",
-              info->traj_id_, collision_time_ahead,
-              safety_replan_cooldown_sec_);
-          return;
-        }
-
-        last_safety_replan_time_ = now;
         ROS_WARN("SCAN_SAFETY_REPLAN trajectory_id=%d "
                  "collision_time_ahead=%.2f",
                  info->traj_id_, collision_time_ahead);
@@ -1049,10 +968,9 @@ namespace scan_planner
     {
       ROS_WARN_THROTTLE(
           1.0,
-          "SCAN_LOCAL_TARGET_UNAVAILABLE retry_count=%d next_retry_sec=%.2f "
+          "SCAN_LOCAL_TARGET_UNAVAILABLE retry_count=%d "
           "start=(%.2f,%.2f)",
           replan_fail_count_,
-          replan_retry_interval_sec_,
           start_pt_(0), start_pt_(1));
       return false;
     }
@@ -1348,156 +1266,6 @@ namespace scan_planner
 
     if (found_route_target)
       return true;
-
-    if (route_path_blocked)
-    {
-      ROS_WARN_THROTTLE(
-          1.0,
-          "[getLocalTarget] route target or connecting path blocked; "
-          "search lateral escape");
-    }
-
-    // --- Phase 3: lateral escape search (robot-centred) ----------------
-    // Only reached when every route sample in [0.8, planning_horizon_] is
-    // occupied, out of bounds, or unknown.
-
-    // Compute a route direction for the escape scoring heuristics.
-    double route_yaw;
-    {
-      // Use the tangent of the original route at the robot projection.  A
-      // vector from an off-route robot pose to a stale progress point can
-      // point backwards and make consecutive escape targets oscillate.
-      const double lookahead_t = std::min(dist_min_t + 0.5, duration);
-      const Eigen::Vector3d route_pt = global_data.getPosition(dist_min_t);
-      const Eigen::Vector3d lookahead_pt = global_data.getPosition(lookahead_t);
-      if (route_pt.allFinite() && lookahead_pt.allFinite() &&
-          (lookahead_pt - route_pt).head<2>().norm() > 1e-3)
-        route_yaw = estimateYawFromSegment(route_pt, lookahead_pt);
-      else
-        route_yaw = estimateYawFromSegment(start_pt_, end_pt_);
-    }
-    if (!std::isfinite(route_yaw))
-      route_yaw = getOdomYaw();
-
-    Eigen::Vector2d route_dir(std::cos(route_yaw), std::sin(route_yaw));
-    if (!route_dir.allFinite() || route_dir.norm() < 1e-6)
-      route_dir = Eigen::Vector2d::UnitX();
-    const Eigen::Vector2d route_normal(-route_dir.y(), route_dir.x());
-
-    // sampleGlobalPosition helper for route-distance checks
-    auto sampleGlobalPosition =
-        [&](double query_t, Eigen::Vector3d &point) -> bool
-    {
-      if (!std::isfinite(query_t))
-        return false;
-
-      query_t = std::max(0.0, std::min(query_t, duration));
-
-      if (query_t >= duration - 1e-6)
-        point = end_pt_;
-      else
-        point = global_data.getPosition(query_t);
-
-      return point.allFinite();
-    };
-
-    const auto routeDistanceAndProgress =
-        [&](const Eigen::Vector3d &candidate,
-            double &lateral_distance,
-            double &route_time) -> bool
-    {
-      lateral_distance = std::numeric_limits<double>::infinity();
-      route_time = dist_min_t;
-      const double sample_step = std::max(0.05, t_step * 0.5);
-      for (double t = dist_min_t; t <= duration + 1e-6;
-           t += sample_step)
-      {
-        Eigen::Vector3d route_point;
-        if (!sampleGlobalPosition(std::min(t, duration), route_point))
-          continue;
-        const double distance =
-            (candidate - route_point).head<2>().norm();
-        if (distance < lateral_distance)
-        {
-          lateral_distance = distance;
-          route_time = std::min(t, duration);
-        }
-      }
-      return std::isfinite(lateral_distance);
-    };
-
-    bool found_escape = false;
-    double best_score = std::numeric_limits<double>::infinity();
-    Eigen::Vector3d escape = start_pt_;
-    int selected_side = 0;
-
-    for (double radius = escape_min_radius_;
-         radius <= escape_max_radius_ + 1e-6;
-         radius += escape_radius_step_)
-    {
-      for (int angle_index = 0; angle_index < 24; ++angle_index)
-      {
-        const double angle = route_yaw +
-            2.0 * M_PI * static_cast<double>(angle_index) / 24.0;
-        Eigen::Vector3d candidate = start_pt_;
-        candidate.x() += radius * std::cos(angle);
-        candidate.y() += radius * std::sin(angle);
-        candidate.z() = odom_pos_(2);
-        if (!candidate.allFinite() ||
-            (candidate - start_pt_).head<2>().norm() < 0.25 ||
-            map->getInflateOccupancy(
-                candidate, estimateYawFromSegment(start_pt_, candidate)) != 0)
-          continue;
-        if (!pathIsFree(candidate))
-          continue;
-
-        double lateral_distance = 0.0;
-        double candidate_route_time = 0.0;
-        if (!routeDistanceAndProgress(
-                candidate, lateral_distance, candidate_route_time) ||
-            lateral_distance > escape_max_lateral_from_route_ ||
-            candidate_route_time + 1e-6 < dist_min_t)
-          continue;
-
-        const Eigen::Vector2d displacement =
-            candidate.head<2>() - start_pt_.head<2>();
-        const double forward_progress = displacement.dot(route_dir);
-        if (forward_progress < -0.05)
-          continue;
-        const double signed_side = displacement.dot(route_normal);
-        const int side = signed_side > 0.05 ? 1 :
-                         (signed_side < -0.05 ? -1 : 0);
-        const double side_switch_penalty =
-            last_escape_side_ != 0 && side != 0 && side != last_escape_side_
-                ? 1.0
-                : 0.0;
-        const double score =
-            2.0 * lateral_distance + 0.30 * radius -
-            0.80 * forward_progress + side_switch_penalty;
-
-        if (score < best_score)
-        {
-          best_score = score;
-          escape = candidate;
-          selected_side = side;
-          found_escape = true;
-        }
-      }
-    }
-
-    if (found_escape)
-    {
-      local_target_pt_ = escape;
-      local_target_vel_.setZero();
-      if (selected_side != 0)
-        last_escape_side_ = selected_side;
-      ROS_WARN_THROTTLE(
-          1.0,
-          "[getLocalTarget] route blocked; use lateral escape "
-          "target (%.2f %.2f %.2f)",
-          escape.x(), escape.y(), escape.z());
-      return true;
-    }
 
     // --- no safe target found ------------------------------------------
     ROS_WARN_THROTTLE(

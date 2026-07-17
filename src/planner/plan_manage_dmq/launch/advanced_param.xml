@@ -13,16 +13,10 @@
   <arg name="fy"/>
 
   <!-- public parameters -->
-  <arg name="max_vel" default="0.75"/>
+  <arg name="scan_max_vel" default="0.22"/>
   <arg name="max_acc" default="0.5"/>
   <arg name="planning_horizon" default="7.5"/>
   <arg name="max_replan_fail_count" default="1000"/>
-  <arg name="replan_retry_interval_sec" default="0.20"/>
-  <arg name="safety_replan_cooldown_sec" default="0.50"/>
-  <arg name="escape_min_radius" default="0.5"/>
-  <arg name="escape_max_radius" default="2.0"/>
-  <arg name="escape_radius_step" default="0.25"/>
-  <arg name="escape_max_lateral_from_route" default="1.2"/>
 
   <!-- main node -->
   <node pkg="scan_planner_dmq" name="scan_planner_dmq_node" type="scan_planner_dmq_node" output="screen" clear_params="true">
@@ -40,15 +34,11 @@
     <param name="fsm/thresh_no_replan" value="0.1" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
-    <param name="fsm/fail_safe" value="true" type="bool"/> 
+    <param name="fsm/fail_safe" value="true" type="bool"/>
     <param name="fsm/max_replan_fail_count" value="$(arg max_replan_fail_count)" type="int"/>
-    <param name="fsm/replan_retry_interval_sec" value="$(arg replan_retry_interval_sec)" type="double"/>
-    <param name="fsm/safety_replan_cooldown_sec" value="$(arg safety_replan_cooldown_sec)" type="double"/>
-    <param name="fsm/escape_min_radius" value="$(arg escape_min_radius)" type="double"/>
-    <param name="fsm/escape_max_radius" value="$(arg escape_max_radius)" type="double"/>
-    <param name="fsm/escape_radius_step" value="$(arg escape_radius_step)" type="double"/>
-    <param name="fsm/escape_max_lateral_from_route" value="$(arg escape_max_lateral_from_route)" type="double"/>
     <param name="fsm/is_real_world" value="$(arg is_real_world)" type="bool"/>
+
+    <remap from="/initial_path" to="/native_scan/initial_path"/>
 
     <!-- sliding map -->
     <param name="grid_map/resolution" value="0.05" />
@@ -84,7 +74,7 @@
     <param name="grid_map/vis_height" value="0.3" type="double"/>
 
     <!-- planner manager -->
-    <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="manager/max_vel" value="$(arg scan_max_vel)" type="double"/>
     <param name="manager/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="manager/max_jerk" value="4" type="double"/>
     <param name="manager/control_points_distance" value="0.2" type="double"/>
@@ -97,7 +87,7 @@
     <param name="optimization/lambda_feasibility" value="0.1" type="double"/>
     <param name="optimization/lambda_fitness" value="1.0" type="double"/>
     <param name="optimization/dist0" value="0.2" type="double"/>
-    <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="optimization/max_vel" value="$(arg scan_max_vel)" type="double"/>
     <param name="optimization/vel_tolerance" value="1.0" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="optimization/acc_tolerance" value="1.0" type="double"/>
@@ -109,9 +99,9 @@
   <param name="closed_loop_controller/heading_error_threshold" value="0.8" type="double"/>
   <param name="closed_loop_controller/kp_pos" value="0.8" type="double"/>
   <param name="closed_loop_controller/kp_yaw" value="1.5" type="double"/>
-  <param name="closed_loop_controller/max_vx" value="$(arg max_vel)" type="double"/>
-  <param name="closed_loop_controller/max_vy" value="0.35" type="double"/>
-  <param name="closed_loop_controller/max_vyaw" value="1.0" type="double"/>
+  <param name="closed_loop_controller/max_vx" value="$(arg scan_max_vel)" type="double"/>
+  <param name="closed_loop_controller/max_vy" value="0.18" type="double"/>
+  <param name="closed_loop_controller/max_vyaw" value="0.65" type="double"/>
   <param name="closed_loop_controller/finish_dist" value="0.15" type="double"/>
 
 </launch>

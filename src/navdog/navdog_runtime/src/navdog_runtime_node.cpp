@@ -2,6 +2,7 @@
 #include "navdog_runtime/ros1_config_loader.hpp"
 
 #include <navdog_protocol/mqtt_codec.hpp>
+#include <plan_env/grid_map.h>
 #include <tf/transform_datatypes.h>
 
 #include <cmath>
@@ -50,23 +51,12 @@ bool NavdogRuntimeNode::initialize()
     return false;
   }
 
-  planner_manager_ = std::make_shared<scan_planner::SCANPlannerManager>();
-  auto visualization =
-      std::make_shared<scan_planner::PlanningVisualization>(private_nh_);
-  planner_manager_->initPlanModules(private_nh_, visualization);
-  if (!planner_manager_->grid_map_)
-  {
-    ROS_ERROR("SCANPlannerManager did not create GridMap");
-    return false;
-  }
+  // Create a standalone GridMap for corridor/obstacle evaluation.
+  // The native SCAN node (scan_planner_dmq_node) owns its own GridMap.
+  auto standalone_grid_map = std::make_shared<GridMap>();
+  standalone_grid_map->initMap(private_nh_);
   grid_query_ = std::make_shared<navdog_scan_adapter::ScanGridMapQuery>(
-      planner_manager_->grid_map_);
-  occupancy_query_ =
-      std::make_shared<navdog_scan_adapter::OccupancyQueryAdapter>(grid_query_);
-  // The adapter is unconditional: Core alone decides when a local plan is needed.
-  local_planner_adapter_.reset(new navdog_scan_adapter::ScanLocalPlannerAdapter(
-      application_config_.scan_adapter.planner_trigger,
-      grid_query_, planner_manager_));
+      standalone_grid_map);
   corridor_evaluator_.reset(
       new navdog_scan_adapter::ScanRouteCorridorEvaluator3D(
           application_config_.core.route_corridor, grid_query_));
@@ -74,8 +64,8 @@ bool NavdogRuntimeNode::initialize()
       new navdog_scan_adapter::ScanObstacleSummaryEvaluator3D(
           navdog_scan_adapter::ScanObstacleSummaryEvaluator3D::Config{},
           grid_query_));
-  coordinator_->setLocalPlannerAdapter(local_planner_adapter_.get());
-  coordinator_->setOccupancyQuery(occupancy_query_.get());
+
+  private_nh_.param("grid_map/body_height", body_height_, 0.3);
 
   mqtt_.reset(new navdog_protocol::MqttBridge(application_config_.mqtt));
   if (!mqtt_->start())
@@ -86,8 +76,8 @@ bool NavdogRuntimeNode::initialize()
       ros::TransportHints().tcpNoDelay());
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
-  local_trajectory_publisher_ =
-      nh_.advertise<nav_msgs::Path>("/navdog/local_trajectory", 1, true);
+  native_scan_path_publisher_ =
+      nh_.advertise<nav_msgs::Path>("/native_scan/initial_path", 1, true);
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
@@ -199,6 +189,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
           navigationModeName(output.navigation_mode.previous_mode),
           navigationModeName(output.navigation_mode.mode),
           input.route_corridor_observation.first_blocked_distance_ahead_m);
+      publishNativeScanReferencePath(last_route_progress_);
     }
     else if (output.navigation_mode.previous_mode ==
                  navdog::NavigationMode::LOCAL_AVOID)
@@ -211,7 +202,6 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
   publishOutput(output, now_sec);
-  publishLocalTrajectory(output);
   if (last_status_publish_.isZero() ||
       (ros::Time::now() - last_status_publish_).toSec() >=
           1.0 / application_config_.runtime_io.status_rate_hz)
@@ -269,51 +259,49 @@ void NavdogRuntimeNode::publishRoute()
   route_publisher_.publish(path);
 }
 
-void NavdogRuntimeNode::publishLocalTrajectory(
-    const navdog::CoreOutput& output)
+void NavdogRuntimeNode::publishNativeScanReferencePath(
+    const navdog::RouteProgress& progress)
 {
-  const navdog::LocalTrajectory& trajectory =
-      coordinator_->activeLocalTrajectory();
-  if (output.navigation_mode.mode != navdog::NavigationMode::LOCAL_AVOID ||
-      !trajectory.valid)
-  {
-    if (local_trajectory_visible_)
-    {
-      nav_msgs::Path empty;
-      empty.header.stamp = ros::Time::now();
-      empty.header.frame_id = "world";
-      local_trajectory_publisher_.publish(empty);
-      local_trajectory_visible_ = false;
-      published_local_plan_sequence_ = 0;
-    }
+  if (!coordinator_ || !coordinator_->routeManager().hasRoute())
     return;
-  }
 
-  if (trajectory.plan_sequence == published_local_plan_sequence_)
+  const auto& route = coordinator_->routeManager().route();
+  if (route.size() < 2)
     return;
 
   nav_msgs::Path path;
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "world";
-  for (const auto& point : trajectory.points)
+
+  // First point: current robot position (lowered to ground reference)
+  {
+    std::lock_guard<std::mutex> lock(odom_mutex_);
+    geometry_msgs::PoseStamped pose;
+    pose.header = path.header;
+    pose.pose.position.x = robot_.x;
+    pose.pose.position.y = robot_.y;
+    pose.pose.position.z = robot_.z - body_height_;
+    pose.pose.orientation = tf::createQuaternionMsgFromYaw(robot_.yaw);
+    path.poses.push_back(pose);
+  }
+
+  // Remaining points: all route waypoints.
+  // Z coordinate: route_point.z - body_height_ (convert body height to ground reference)
+  for (const auto& point : route)
   {
     geometry_msgs::PoseStamped pose;
     pose.header = path.header;
     pose.pose.position.x = point.x;
     pose.pose.position.y = point.y;
-    pose.pose.position.z = point.z;
+    pose.pose.position.z = point.z - body_height_;
     pose.pose.orientation = tf::createQuaternionMsgFromYaw(
         point.has_yaw ? point.yaw : 0.0);
     path.poses.push_back(pose);
   }
-  local_trajectory_publisher_.publish(path);
-  ROS_INFO("LOCAL_PLAN_PROMOTED task=%lu plan=%lu points=%lu duration=%.3f",
-      static_cast<unsigned long>(trajectory.task_sequence),
-      static_cast<unsigned long>(trajectory.plan_sequence),
-      static_cast<unsigned long>(trajectory.points.size()),
-      trajectory.duration_sec);
-  published_local_plan_sequence_ = trajectory.plan_sequence;
-  local_trajectory_visible_ = true;
+
+  native_scan_path_publisher_.publish(path);
+  ROS_INFO("NATIVE_SCAN_PATH_PUBLISHED points=%lu",
+      static_cast<unsigned long>(path.poses.size()));
 }
 
 void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,

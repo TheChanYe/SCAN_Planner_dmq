@@ -13,7 +13,6 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kLocalAvoidSearchStepM = 0.20;
 
 }  // namespace
 
@@ -33,7 +32,6 @@ NavigationCoordinator::NavigationCoordinator(
           config.route_corridor_observation),
       navigation_mode_manager_(config.navigation_mode),
       route_follower_(config.route_follower),
-      trajectory_follower_(config.trajectory_follower),
       goal_controller_(config.goal_controller),
       safety_supervisor_(config.safety, config.limits)
 {
@@ -49,11 +47,10 @@ void NavigationCoordinator::reset()
   task_manager_.reset();
   pending_planner_actions_.clear();
   clearPlanningContext();
-  clearLocalPlanningContext();
+  resetNearGoalBlockedTimer();
   start_align_controller_.reset();
   route_manager_.reset();
   navigation_mode_manager_.reset();
-  trajectory_follower_.reset();
   goal_controller_.reset();
   safety_supervisor_.reset();
 
@@ -62,28 +59,14 @@ void NavigationCoordinator::reset()
 }
 
 // =============================================================================
-// setLocalPlannerAdapter
+// resetNearGoalBlockedTimer
 // =============================================================================
 
-void NavigationCoordinator::setLocalPlannerAdapter(
-    LocalPlannerAdapter* adapter) noexcept
+void NavigationCoordinator::resetNearGoalBlockedTimer() noexcept
 {
-  local_planner_adapter_ = adapter;
+  near_goal_blocked_since_sec_ = 0.0;
+  near_goal_blocked_timer_active_ = false;
 }
-
-// =============================================================================
-// setOccupancyQuery
-// =============================================================================
-
-void NavigationCoordinator::setOccupancyQuery(
-    OccupancyQuery3D* query) noexcept
-{
-  occupancy_query_ = query;
-}
-
-// =============================================================================
-// enqueuePlannerAction
-// =============================================================================
 
 void NavigationCoordinator::enqueuePlannerAction(
     const PlannerAction& action)
@@ -129,29 +112,6 @@ void NavigationCoordinator::clearPlanningContext() noexcept
   planning_request_sent_ = false;
   planning_started_sec_ = 0.0;
   expected_trajectory_id_ = 0;
-}
-
-// =============================================================================
-// clearLocalPlanningContext
-// =============================================================================
-
-void NavigationCoordinator::clearLocalPlanningContext() noexcept
-{
-  pending_local_plan_.reset();
-  active_local_trajectory_ = LocalTrajectory{};
-  last_local_plan_request_stamp_sec_ = 0.0;
-  last_local_plan_failed_ = false;
-  local_avoid_target_arc_m_ = 0.0;
-  local_avoid_target_valid_ = false;
-  resetNearGoalBlockedTimer();
-
-  trajectory_follower_.reset();
-}
-
-void NavigationCoordinator::resetNearGoalBlockedTimer() noexcept
-{
-  near_goal_blocked_since_sec_ = 0.0;
-  near_goal_blocked_timer_active_ = false;
 }
 
 // =============================================================================
@@ -298,7 +258,7 @@ void NavigationCoordinator::enterFailedState() noexcept
   pending_planner_actions_.clear();
 
   clearPlanningContext();
-  clearLocalPlanningContext();
+  resetNearGoalBlockedTimer();
   start_align_controller_.reset();
   route_manager_.reset();
   navigation_mode_manager_.reset();
@@ -329,445 +289,6 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 }
 
 // =============================================================================
-// selectLocalAvoidTarget
-// =============================================================================
-
-bool NavigationCoordinator::selectLocalAvoidTarget(
-    const NavigationTask& task,
-    const RobotState& robot,
-    const RouteProgress& progress,
-    double minimum_candidate_arc_m,
-    RoutePoint& out_target,
-    double& out_target_arc_m) const
-{
-  out_target = RoutePoint{};
-  out_target_arc_m = 0.0;
-
-  if (task.points.size() < 2 ||
-      !progress.valid ||
-      !std::isfinite(progress.arc_length_m) ||
-      !std::isfinite(progress.total_length_m))
-  {
-    return false;
-  }
-
-  if (!occupancy_query_ || !occupancy_query_->ready())
-    return false;
-
-  const double remaining =
-      progress.total_length_m - progress.arc_length_m;
-  const bool terminal_only =
-      remaining + kEpsilon <
-          config_.local_avoid_target.min_forward_distance_m;
-  const double min_arc = terminal_only
-      ? progress.total_length_m
-      : progress.arc_length_m +
-          config_.local_avoid_target.min_forward_distance_m;
-  const double max_arc = std::min(
-      progress.total_length_m,
-      progress.arc_length_m +
-          config_.local_avoid_target.max_forward_distance_m);
-
-  if (min_arc > max_arc)
-    return false;
-
-  const double preferred_arc = std::max(
-      min_arc,
-      std::min(
-          progress.arc_length_m +
-              config_.local_avoid_target.default_forward_distance_m,
-          progress.total_length_m));
-
-  std::vector<double> candidate_arcs;
-  candidate_arcs.reserve(64);
-
-  const bool cursor_valid = std::isfinite(minimum_candidate_arc_m) &&
-      minimum_candidate_arc_m > progress.arc_length_m + kEpsilon;
-  const double search_start_arc = cursor_valid
-      ? std::min(max_arc, std::max(min_arc, minimum_candidate_arc_m))
-      : preferred_arc;
-  const double failed_arc = minimum_candidate_arc_m - kLocalAvoidSearchStepM;
-
-  // First sweep starts at the cursor (or the normal preferred arc).
-  double arc = search_start_arc;
-  while (arc <= max_arc + kEpsilon)
-  {
-    if (!cursor_valid || std::abs(arc - failed_arc) > kEpsilon)
-      candidate_arcs.push_back(arc);
-    arc += kLocalAvoidSearchStepM;
-  }
-
-  // After reaching the maximum, wrap once through the lower range. When a
-  // failure cursor is active, omit the target immediately preceding it.
-  arc = min_arc;
-  while (arc < search_start_arc - kEpsilon)
-  {
-    if (!cursor_valid || std::abs(arc - failed_arc) > kEpsilon)
-      candidate_arcs.push_back(arc);
-    arc += kLocalAvoidSearchStepM;
-  }
-
-  if (!cursor_valid || std::abs(min_arc - failed_arc) > kEpsilon)
-    candidate_arcs.push_back(min_arc);
-  if (max_arc > min_arc + kEpsilon &&
-      (!cursor_valid || std::abs(max_arc - failed_arc) > kEpsilon))
-    candidate_arcs.push_back(max_arc);
-
-  for (double candidate_arc : candidate_arcs)
-  {
-    if (candidate_arc <= progress.arc_length_m)
-      continue;
-    if (candidate_arc > progress.total_length_m + kEpsilon)
-      continue;
-
-    RoutePoint candidate{};
-    if (!route_manager_.pointAtArcLength(candidate_arc, candidate))
-      continue;
-
-    if (!std::isfinite(candidate.x) ||
-        !std::isfinite(candidate.y) ||
-        !std::isfinite(candidate.z) ||
-        !std::isfinite(candidate.yaw))
-    {
-      continue;
-    }
-
-    const double yaw = candidate.has_yaw
-                           ? candidate.yaw
-                           : robot.yaw;
-
-    if (!occupancy_query_->isFree(
-            candidate.x,
-            candidate.y,
-            candidate.z,
-            yaw))
-    {
-      continue;
-    }
-
-    out_target = candidate;
-    out_target_arc_m = candidate_arc;
-    return true;
-  }
-
-  return false;
-}
-
-// =============================================================================
-// trajectoryEndingSoon
-// =============================================================================
-
-bool NavigationCoordinator::trajectoryEndingSoon(
-    const LocalTrajectory& trajectory,
-    double exec_time_sec) const noexcept
-{
-  if (!trajectory.valid ||
-      !std::isfinite(trajectory.duration_sec))
-  {
-    return true;
-  }
-
-  const double remaining =
-      trajectory.duration_sec - exec_time_sec;
-
-  return remaining <=
-         config_.planner_trigger.min_remaining_duration_sec;
-}
-
-// =============================================================================
-// isTrajectoryExecutable
-// =============================================================================
-
-bool NavigationCoordinator::isTrajectoryExecutable(
-    const LocalTrajectory& trajectory,
-    NavigationMode expected_mode,
-    std::uint64_t expected_task_sequence,
-    std::uint64_t expected_plan_sequence) const noexcept
-{
-  if (!trajectory.valid)
-    return false;
-
-  if (trajectory.purpose != expected_mode)
-    return false;
-
-  if (trajectory.task_sequence != expected_task_sequence)
-    return false;
-
-  if (trajectory.plan_sequence != expected_plan_sequence)
-    return false;
-
-  if (!std::isfinite(trajectory.duration_sec) ||
-      trajectory.duration_sec <= 0.0)
-  {
-    return false;
-  }
-
-  return true;
-}
-
-bool NavigationCoordinator::promotePendingLocalPlan(double now_sec)
-{
-  if (!local_planner_adapter_ || !pending_local_plan_.valid() ||
-      local_planner_adapter_->localPlanState(
-          pending_local_plan_.purpose,
-          pending_local_plan_.task_sequence,
-          pending_local_plan_.plan_sequence) != LocalPlanState::READY)
-  {
-    return false;
-  }
-
-  const LocalTrajectory trajectory =
-      local_planner_adapter_->getLocalTrajectory(
-          pending_local_plan_.purpose,
-          pending_local_plan_.task_sequence);
-  const double age = now_sec - trajectory.source_stamp_sec;
-  if (!isTrajectoryExecutable(
-          trajectory,
-          pending_local_plan_.purpose,
-          pending_local_plan_.task_sequence,
-          pending_local_plan_.plan_sequence) ||
-      !std::isfinite(trajectory.source_stamp_sec) ||
-      !std::isfinite(age) ||
-      age < -config_.planner_trigger.trajectory_future_tolerance_sec ||
-      age > config_.planner_trigger.trajectory_source_max_age_sec ||
-      local_planner_adapter_->isTrajectoryColliding(trajectory, 0.0))
-  {
-    return false;
-  }
-
-  active_local_trajectory_ = trajectory;
-  pending_local_plan_.reset();
-  trajectory_follower_.reset();
-  last_local_plan_failed_ = false;
-  local_avoid_target_arc_m_ = 0.0;
-  local_avoid_target_valid_ = false;
-  return true;
-}
-
-// =============================================================================
-// needsNewLocalPlan
-// =============================================================================
-
-bool NavigationCoordinator::needsNewLocalPlan(
-    NavigationMode mode,
-    const RouteProgress& progress,
-    double now_sec,
-    LocalReplanReason& reason)
-{
-  (void)now_sec;
-  reason = LocalReplanReason::NONE;
-  if (mode != NavigationMode::LOCAL_AVOID)
-  {
-    return false;
-  }
-
-  // Mode just entered.
-  if (last_mode_ != mode)
-  {
-    reason = LocalReplanReason::ENTER_AVOID;
-    return true;
-  }
-
-  if (active_local_trajectory_.valid &&
-      active_local_trajectory_.task_sequence != progress.task_sequence)
-  {
-    reason = LocalReplanReason::TASK_CHANGED;
-    return true;
-  }
-
-  if (!active_local_trajectory_.valid ||
-      active_local_trajectory_.purpose != mode)
-  {
-    reason = LocalReplanReason::ENTER_AVOID;
-    return true;
-  }
-
-  if (last_local_plan_failed_)
-  {
-    reason = LocalReplanReason::PREVIOUS_FAILED;
-    return true;
-  }
-
-  if (!local_planner_adapter_)
-  {
-    reason = LocalReplanReason::ENTER_AVOID;
-    return true;
-  }
-
-  const double exec_time_sec = trajectory_follower_.trajectoryTimeSec();
-  if (exec_time_sec >= active_local_trajectory_.duration_sec ||
-      trajectoryEndingSoon(active_local_trajectory_, exec_time_sec))
-  {
-    reason = LocalReplanReason::TRAJECTORY_ENDING;
-    return true;
-  }
-
-  if (local_planner_adapter_->isTrajectoryColliding(
-          active_local_trajectory_, exec_time_sec))
-  {
-    reason = LocalReplanReason::FUTURE_COLLISION;
-    return true;
-  }
-
-  return false;
-}
-
-// =============================================================================
-// requestLocalPlanIfNeeded
-// =============================================================================
-
-void NavigationCoordinator::requestLocalPlanIfNeeded(
-    const NavigationTask& task,
-    const RobotState& robot,
-    const RouteProgress& progress,
-    NavigationMode mode,
-    double max_vx,
-    double now_sec)
-{
-  if (mode != NavigationMode::LOCAL_AVOID)
-  {
-    return;
-  }
-
-  if (!std::isfinite(robot.x) || !std::isfinite(robot.y) ||
-      !std::isfinite(robot.z) || !std::isfinite(robot.yaw) ||
-      !std::isfinite(robot.vx) || !std::isfinite(robot.vy) ||
-      !std::isfinite(robot.yaw_rate))
-  {
-    return;
-  }
-
-  if (!local_planner_adapter_)
-  {
-    return;
-  }
-
-  if (!occupancy_query_ || !occupancy_query_->ready())
-  {
-    return;
-  }
-
-  // Resolve the one outstanding request before deciding whether another is
-  // needed. A READY result is promoted atomically; a FAILED result advances
-  // the LOCAL_AVOID arc cursor exactly once.
-  if (pending_local_plan_.valid())
-  {
-    const LocalPlanState state = local_planner_adapter_->localPlanState(
-        pending_local_plan_.purpose,
-        pending_local_plan_.task_sequence,
-        pending_local_plan_.plan_sequence);
-
-    if (state == LocalPlanState::QUEUED ||
-        state == LocalPlanState::PLANNING)
-    {
-      return;
-    }
-
-    if (state == LocalPlanState::READY &&
-        promotePendingLocalPlan(now_sec))
-    {
-      return;
-    }
-    if (
-        (state == LocalPlanState::READY ||
-         state == LocalPlanState::FAILED) &&
-        !last_local_plan_failed_)
-    {
-      last_local_plan_failed_ = true;
-      if (mode == NavigationMode::LOCAL_AVOID &&
-          local_avoid_target_valid_)
-      {
-        local_avoid_target_arc_m_ += kLocalAvoidSearchStepM;
-      }
-    }
-  }
-
-  LocalReplanReason replan_reason = LocalReplanReason::NONE;
-  if (!needsNewLocalPlan(mode, progress, now_sec, replan_reason))
-  {
-    return;
-  }
-
-  if (last_local_plan_failed_)
-  {
-    const double elapsed = now_sec - last_local_plan_request_stamp_sec_;
-    if (!std::isfinite(elapsed) ||
-        elapsed < config_.planner_trigger.replan_retry_interval_sec)
-    {
-      return;
-    }
-  }
-
-  LocalPlanRequest request{};
-  request.purpose = mode;
-  request.reason = replan_reason;
-  request.task_sequence = task.sequence;
-  request.plan_sequence = std::max(
-      pending_local_plan_.plan_sequence,
-      active_local_trajectory_.plan_sequence) + 1;
-  request.max_vx = max_vx;
-  request.robot_z = robot.z;
-  request.request_stamp_sec = now_sec;
-  request.valid = true;
-
-  request.start.x = robot.x;
-  request.start.y = robot.y;
-  request.start.z = robot.z;
-  request.start.has_yaw = true;
-  request.start.yaw = robot.yaw;
-
-  request.start_vel.x = robot.vx;
-  request.start_vel.y = robot.vy;
-  request.start_vel.has_yaw = true;
-  request.start_vel.yaw = robot.yaw_rate;
-
-  RoutePoint target{};
-  bool target_ok = false;
-  double target_arc_m = 0.0;
-
-  target_ok = selectLocalAvoidTarget(
-      task,
-      robot,
-      progress,
-      local_avoid_target_valid_ ? local_avoid_target_arc_m_ : 0.0,
-      target,
-      target_arc_m);
-  if (!target_ok)
-    return;
-  request.target = target;
-  request.target_vel = RoutePoint{};
-
-  if (!target_ok)
-  {
-    return;
-  }
-
-  if (local_planner_adapter_->requestLocalPlan(request))
-  {
-    pending_local_plan_.task_sequence = request.task_sequence;
-    pending_local_plan_.plan_sequence = request.plan_sequence;
-    pending_local_plan_.purpose = request.purpose;
-    last_local_plan_request_stamp_sec_ = now_sec;
-    last_local_plan_failed_ = false;
-    if (mode == NavigationMode::LOCAL_AVOID)
-    {
-      local_avoid_target_arc_m_ = target_arc_m;
-      local_avoid_target_valid_ = true;
-    }
-  }
-  else
-  {
-    last_local_plan_failed_ = true;
-    last_local_plan_request_stamp_sec_ = now_sec;
-    if (mode == NavigationMode::LOCAL_AVOID)
-    {
-      local_avoid_target_arc_m_ = target_arc_m + kLocalAvoidSearchStepM;
-      local_avoid_target_valid_ = true;
-    }
-  }
-}
-
-// =============================================================================
 // executeRouteFollow
 // =============================================================================
 
@@ -780,7 +301,6 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
     double now_sec)
 {
   (void)now_sec;
-  trajectory_follower_.reset();
 
   // Do not bypass corridor blocking state away from the finish region.
   if (mode_status.route_blocked_near ||
@@ -849,7 +369,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
 
       // Full cleanup: do not leave a stale local trajectory / safety state
       // after the task is successfully completed.
-      clearLocalPlanningContext();
+      resetNearGoalBlockedTimer();
       safety_supervisor_.reset();
     }
 
@@ -873,62 +393,13 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
     double now_sec)
 {
   (void)task;
+  (void)robot;
+  (void)progress;
   (void)mode_status;
   (void)max_vx;
-
-  if (!local_planner_adapter_)
-  {
-    trajectory_follower_.reset();
-    return makeZeroCommand(
-        CommandSource::TRACKING_STOP, now_sec);
-  }
-
-  promotePendingLocalPlan(now_sec);
-
-  if (!active_local_trajectory_.valid)
-    return makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
-
-  const LocalTrajectory& trajectory = active_local_trajectory_;
-
-  if (!isTrajectoryExecutable(
-          trajectory,
-          NavigationMode::LOCAL_AVOID,
-          progress.task_sequence,
-          active_local_trajectory_.plan_sequence))
-  {
-    trajectory_follower_.reset();
-    return makeZeroCommand(
-        CommandSource::TRACKING_STOP, now_sec);
-  }
-
-  const double exec_time_sec =
-      trajectory_follower_.trajectoryTimeSec();
-
-  if (exec_time_sec >= trajectory.duration_sec)
-  {
-    trajectory_follower_.reset();
-    return makeZeroCommand(
-        CommandSource::TRACKING_STOP, now_sec);
-  }
-
-  if (local_planner_adapter_->isTrajectoryColliding(
-          active_local_trajectory_, exec_time_sec))
-  {
-    trajectory_follower_.reset();
-    active_local_trajectory_ = LocalTrajectory{};
-    return makeZeroCommand(
-        CommandSource::TRACKING_STOP, now_sec);
-  }
-
-  return trajectory_follower_.update(
-      trajectory,
-      robot,
-      max_vx,
-      config_.limits.max_vy,
-      config_.limits.max_yaw_rate,
-      NavigationMode::LOCAL_AVOID,
-      progress.task_sequence,
-      now_sec);
+  // LOCAL_AVOID velocity is produced by the native SCAN closed-loop
+  // controller and selected by the Mux.  Coordinator outputs zero.
+  return makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
 }
 
 // =============================================================================
@@ -976,7 +447,7 @@ VelocityCommand NavigationCoordinator::executeMode(
         config_.goal_controller.obstacle_finish_timeout_sec)
     {
       state_ = NavState::SUCCEEDED;
-      clearLocalPlanningContext();
+      resetNearGoalBlockedTimer();
       safety_supervisor_.reset();
     }
 
@@ -984,15 +455,10 @@ VelocityCommand NavigationCoordinator::executeMode(
   }
   resetNearGoalBlockedTimer();
 
-  // A mode transition invalidates both local-plan slots and the avoid-target
-  // cursor before the first request for the new mode.
   if (last_mode_ != mode_status.mode)
   {
-    clearLocalPlanningContext();
+    resetNearGoalBlockedTimer();
   }
-
-  requestLocalPlanIfNeeded(
-      task, robot, progress, mode_status.mode, max_vx, now_sec);
 
   VelocityCommand raw_cmd =
       makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
@@ -1050,7 +516,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
         return TaskHandleResult::REJECTED_INVALID_TASK;
       }
       clearPlanningContext();
-      clearLocalPlanningContext();
+      resetNearGoalBlockedTimer();
       start_align_controller_.reset();
       navigation_mode_manager_.reset();
       goal_controller_.reset();
@@ -1069,7 +535,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
 
     case TaskHandleResult::CANCELLED:
       clearPlanningContext();
-      clearLocalPlanningContext();
+      resetNearGoalBlockedTimer();
       start_align_controller_.reset();
       route_manager_.reset();
       navigation_mode_manager_.reset();
@@ -1226,7 +692,6 @@ CoreOutput NavigationCoordinator::update(
         case StartAlignResult::ALIGNED:
           state_ = NavState::TRACKING;
           start_align_controller_.reset();
-          trajectory_follower_.reset();
           goal_controller_.reset();
 
           final_cmd =
@@ -1467,10 +932,6 @@ CoreOutput NavigationCoordinator::update(
       safety_context.map_valid = input.obstacles.valid;
       safety_context.map_stamp_sec = input.obstacles.stamp_sec;
     }
-    if (output.navigation_mode.mode == NavigationMode::LOCAL_AVOID)
-    {
-      safety_context.trajectory = active_local_trajectory_;
-    }
     final_cmd = safety_supervisor_.apply(final_cmd, safety_context,
         task_manager_.session().max_vx, now_sec);
   }
@@ -1499,12 +960,6 @@ NavState NavigationCoordinator::state() const noexcept
 const NavdogConfig& NavigationCoordinator::config() const noexcept
 {
   return config_;
-}
-
-const LocalTrajectory&
-NavigationCoordinator::activeLocalTrajectory() const noexcept
-{
-  return active_local_trajectory_;
 }
 
 }  // namespace navdog

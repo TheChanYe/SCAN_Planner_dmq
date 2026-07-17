@@ -592,14 +592,14 @@ Visualization Manager:
     - Alpha: 1
       Buffer Length: 1
       Class: rviz/Path
-      Color: 255; 0; 0
-      Enabled: false
+      Color: 255; 255; 0
+      Enabled: true
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
       Line Style: Lines
       Line Width: 0.029999999329447746
-      Name: Path
+      Name: NativeScanInitialPath
       Offset:
         X: 0
         Y: 0
@@ -610,7 +610,7 @@ Visualization Manager:
       Radius: 0.029999999329447746
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
-      Topic: /navdog/global_route
+      Topic: /native_scan/initial_path
       Unreliable: false
       Value: false
   Enabled: true

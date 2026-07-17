@@ -68,17 +68,6 @@ route_follower:
   kp_yaw: 1.2
   heading_turn_only_threshold_rad: 0.2
   max_vx: 0.5
-trajectory_follower:
-  time_forward_sec: 0.5
-  kp_pos: 0.8
-  kp_yaw: 1.5
-planner_trigger:
-  replan_retry_interval_sec: 0.3
-  target_change_threshold_m: 0.5
-  min_remaining_duration_sec: 0.05
-  trajectory_expiry_margin_sec: 0.2
-  trajectory_source_max_age_sec: 1.0
-  trajectory_future_tolerance_sec: 0.05
 route_corridor_observation:
   map_timeout_sec: 1.5
   max_progress_lag_m: 0.5

@@ -23,10 +23,9 @@ include_directories(include SYSTEM
 add_library(navdog_runtime
   src/navdog_runtime_node.cpp
   src/ros1_config_loader.cpp
-  src/final_command_publisher.cpp
 )
 target_link_libraries(navdog_runtime
-  navdog_protocol navdog_core navdog_scan_adapter scan_planner_manager_dmq
+  navdog_protocol navdog_core navdog_scan_adapter
   ${catkin_LIBRARIES})
 add_dependencies(navdog_runtime ${catkin_EXPORTED_TARGETS})
 
@@ -34,14 +33,9 @@ add_executable(navdog_runtime_node src/main.cpp)
 target_link_libraries(navdog_runtime_node navdog_runtime)
 
 add_executable(cmd_vel_owner_mux src/cmd_vel_owner_mux.cpp)
-target_link_libraries(cmd_vel_owner_mux navdog_runtime ${catkin_LIBRARIES})
+target_link_libraries(cmd_vel_owner_mux ${catkin_LIBRARIES})
 
 if(CATKIN_ENABLE_TESTING)
-  catkin_add_gtest(test_final_command_publisher
-    test/test_final_command_publisher.cpp)
-  if(TARGET test_final_command_publisher)
-    target_link_libraries(test_final_command_publisher navdog_runtime)
-  endif()
   catkin_add_gtest(test_runtime_mapping test/test_runtime_mapping.cpp)
   if(TARGET test_runtime_mapping)
     target_link_libraries(test_runtime_mapping navdog_runtime)

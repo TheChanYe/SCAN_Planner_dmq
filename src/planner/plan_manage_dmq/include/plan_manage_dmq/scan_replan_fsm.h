@@ -58,8 +58,6 @@ namespace scan_planner
     std::vector<Eigen::Vector3d> preset_waypoints_;
     int waypoint_num_;
     double planning_horizon_;
-    double escape_min_radius_, escape_max_radius_, escape_radius_step_;
-    double escape_max_lateral_from_route_;
     double emergency_time_;
     double rviz_goal_height_;
     double self_inflation_z_up_, self_inflation_z_down_;
@@ -76,12 +74,7 @@ namespace scan_planner
     int continuously_called_times_{0};
     int replan_fail_count_{0};
     int max_replan_fail_count_{30};
-    int last_escape_side_{0};
     ros::Time last_freeze_update_time_;
-    double replan_retry_interval_sec_{0.20};
-    ros::Time next_replan_attempt_time_;
-    double safety_replan_cooldown_sec_{0.50};
-    ros::Time last_safety_replan_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;

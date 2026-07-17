@@ -44,13 +44,6 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("route_follower/kp_yaw", c.route_follower.kp_yaw);
   LOAD("route_follower/heading_turn_only_threshold_rad", c.route_follower.heading_turn_only_threshold_rad);
   LOAD("route_follower/max_vx", c.route_follower.max_vx);
-  LOAD("trajectory_follower/time_forward_sec", c.trajectory_follower.time_forward_sec);
-  LOAD("trajectory_follower/kp_pos", c.trajectory_follower.kp_pos);
-  LOAD("trajectory_follower/kp_yaw", c.trajectory_follower.kp_yaw);
-  LOAD("local_avoid_target/default_forward_distance_m", c.local_avoid_target.default_forward_distance_m);
-  LOAD("local_avoid_target/min_forward_distance_m", c.local_avoid_target.min_forward_distance_m);
-  LOAD("local_avoid_target/max_forward_distance_m", c.local_avoid_target.max_forward_distance_m);
-  LOAD("local_avoid_target/route_yaw_tolerance_rad", c.local_avoid_target.route_yaw_tolerance_rad);
   LOAD("goal_controller/near_goal_switch_dist", c.goal_controller.near_goal_switch_dist);
   LOAD("goal_controller/near_goal_kp_v", c.goal_controller.near_goal_kp_v);
   LOAD("goal_controller/near_goal_min_v", c.goal_controller.near_goal_min_v);
@@ -61,14 +54,6 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("goal_controller/obstacle_finish_timeout_sec", c.goal_controller.obstacle_finish_timeout_sec);
   LOAD("goal_controller/finish_dist", c.goal_controller.finish_dist);
   LOAD("goal_controller/finish_yaw_tolerance_deg", c.goal_controller.finish_yaw_tolerance_deg);
-  LOAD("planner_trigger/replan_retry_interval_sec", c.planner_trigger.replan_retry_interval_sec);
-  LOAD("planner_trigger/trajectory_expiry_margin_sec", c.planner_trigger.trajectory_expiry_margin_sec);
-  LOAD("planner_trigger/min_remaining_duration_sec", c.planner_trigger.min_remaining_duration_sec);
-  LOAD("planner_trigger/trajectory_source_max_age_sec", c.planner_trigger.trajectory_source_max_age_sec);
-  LOAD("planner_trigger/trajectory_future_tolerance_sec", c.planner_trigger.trajectory_future_tolerance_sec);
-  LOAD("planner_trigger/target_change_threshold_m", c.planner_trigger.target_change_threshold_m);
-
-  app.scan_adapter.planner_trigger = c.planner_trigger;
   app.runtime_io.control_rate_hz = c.runtime.control_rate_hz;
   app.runtime_io.status_rate_hz = c.runtime.status_rate_hz;
   LOAD("odom_topic", app.runtime_io.odom_topic);
