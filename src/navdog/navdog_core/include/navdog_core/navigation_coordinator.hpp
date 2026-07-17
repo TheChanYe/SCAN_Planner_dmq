@@ -103,6 +103,7 @@ private:
 
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
+  NavState last_logged_state_{NavState::IDLE};
 
   navdog_task::TaskManager task_manager_{};
   RouteManager route_manager_{};

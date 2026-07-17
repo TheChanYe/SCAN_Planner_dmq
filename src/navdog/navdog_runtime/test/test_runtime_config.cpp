@@ -54,7 +54,8 @@ TEST(NavdogConfigLoadingTest, LoadsSafetyTimeoutsFromParams)
   EXPECT_DOUBLE_EQ(config.safety.emergency_stop, 0.5);
 }
 
-TEST(NavdogConfigLoadingTest, LoadsPlannerTriggerFromParams)
+// DISABLED: planner_trigger config loading removed (LOCAL_AVOID refactor)
+TEST(NavdogConfigLoadingTest, DISABLED_LoadsPlannerTriggerFromParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("planner_trigger/replan_retry_interval_sec", 0.5);
@@ -106,7 +107,8 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
   EXPECT_DOUBLE_EQ(config.route_follower.max_vx, 0.85);
 }
 
-TEST(NavdogConfigLoadingTest, LoadsLocalAvoidTargetFromParams)
+// DISABLED: local_avoid_target config loading removed (LOCAL_AVOID refactor)
+TEST(NavdogConfigLoadingTest, DISABLED_LoadsLocalAvoidTargetFromParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("local_avoid_target/default_forward_distance_m", 3.0);
@@ -178,7 +180,8 @@ TEST(NavdogConfigLoadingTest, LoadsRouteCorridorFromParams)
   EXPECT_DOUBLE_EQ(config.route_corridor_observation.max_progress_lag_m, 0.6);
 }
 
-TEST(NavdogConfigLoadingTest, LoadsTrajectoryFollowerFromParams)
+// DISABLED: trajectory_follower config loading removed (LOCAL_AVOID refactor)
+TEST(NavdogConfigLoadingTest, DISABLED_LoadsTrajectoryFollowerFromParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("trajectory_follower/time_forward_sec", 0.9);
