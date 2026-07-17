@@ -75,6 +75,7 @@ namespace scan_planner
     int replan_fail_count_{0};
     int max_replan_fail_count_{30};
     ros::Time last_freeze_update_time_;
+    ros::Time last_replan_attempt_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;

@@ -437,6 +437,7 @@ namespace scan_planner
     current_wp_ = 0;
     replan_fail_count_ = 0;
     need_hover_stop_ = false;
+    last_replan_attempt_time_ = ros::Time(0);
     exec_state_ = WAIT_TARGET;
     ROS_WARN("[SCANReplanFSM] native takeover state reset");
   }
@@ -618,14 +619,26 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
+      // Rate-limit retries: first attempt is deterministic, second is
+      // random, then wait at least 100ms for a map update before retrying.
+      const int consecutive = timesOfConsecutiveStateCalls().first;
+      if (consecutive >= 3)
+      {
+        const ros::Time now = ros::Time::now();
+        const double since_last = (now - last_replan_attempt_time_).toSec();
+        if (since_last < 0.10)
+          break;  // wait for map update
+      }
+
       setStartStateFromOdomOrCurrentTraj();
 
       bool flag_random_poly_init;
-      if (timesOfConsecutiveStateCalls().first == 1)
+      if (consecutive == 1)
         flag_random_poly_init = false;
       else
         flag_random_poly_init = true;
 
+      last_replan_attempt_time_ = ros::Time::now();
       bool success = callReboundReplan(true, flag_random_poly_init);
       if (success)
       {
@@ -1019,11 +1032,10 @@ namespace scan_planner
 
       auto info = &planner_manager_->local_data_;
 
-      ROS_WARN("SCAN_LOCAL_PLAN_SUCCESS retry_count=%d target=(%.2f,%.2f) "
-               "trajectory_id=%d",
-               replan_fail_count_,
+      ROS_WARN("SCAN_LOCAL_PLAN_SUCCESS target=(%.2f,%.2f) "
+               "trajectory_id=%d duration=%.3f",
                local_target_pt_(0), local_target_pt_(1),
-               info->traj_id_);
+               info->traj_id_, info->duration_);
 
       /* publish traj */
       scan_planner::Bspline bspline;
@@ -1063,6 +1075,9 @@ namespace scan_planner
     planner_manager_->EmergencyStop(stop_pos);
 
     auto info = &planner_manager_->local_data_;
+
+    ROS_WARN("SCAN_EMERGENCY_STOP_SPLINE trajectory_id=%d position=(%.2f,%.2f,%.2f)",
+        info->traj_id_, stop_pos(0), stop_pos(1), stop_pos(2));
 
     /* publish traj */
     scan_planner::Bspline bspline;
@@ -1191,7 +1206,9 @@ namespace scan_planner
       return false;
     }
 
-    // --- occupancy helper ----------------------------------------------
+    // --- occupancy helper: only check the candidate point itself ----------
+    // The straight-line path from robot to target is NOT checked.
+    // Obstacle avoidance is handled by reboundReplan (A* + B-spline optimisation).
     auto targetIsFree =
         [&](const Eigen::Vector3d &point) -> bool
     {
@@ -1207,34 +1224,15 @@ namespace scan_planner
       return map->getInflateOccupancy(point, yaw) == 0;
     };
 
-    const auto pathIsFree = [&](const Eigen::Vector3d &candidate) -> bool
-    {
-      const double distance =
-          (candidate - start_pt_).head<2>().norm();
-      const int steps = std::max(
-          2, static_cast<int>(std::ceil(distance / 0.10)));
-      const double yaw = estimateYawFromSegment(start_pt_, candidate);
-      if (!std::isfinite(yaw))
-        return false;
-      for (int step = 1; step <= steps; ++step)
-      {
-        const double ratio = static_cast<double>(step) / steps;
-        const Eigen::Vector3d point =
-            start_pt_ + ratio * (candidate - start_pt_);
-        if (map->getInflateOccupancy(point, yaw) != 0)
-          return false;
-      }
-      return true;
-    };
-
-    // --- Phase 2: route target search (backward from planning_horizon_) -
+    // --- Phase 2: find the farthest free route sample ---------------------
+    // Walk backward from planning_horizon_ so we pick the farthest free
+    // point first.  Only the candidate point itself is checked; the path
+    // from the robot to the target is left to reboundReplan + A* + B-spline
+    // optimisation.
     const double min_target_dist = 0.8;
     const double max_target_dist = planning_horizon_;
 
-    // Find the farthest free sample within [min_target_dist, max_target_dist].
-    // Walk backward so we pick the farthest free point first.
     bool found_route_target = false;
-    bool route_path_blocked = false;
     for (int i = static_cast<int>(samples.size()) - 1; i >= 0; --i)
     {
       if (!std::isfinite(samples[i].dist))
@@ -1247,16 +1245,7 @@ namespace scan_planner
         break;  // all remaining samples are too close
 
       if (!targetIsFree(samples[i].pos))
-      {
-        route_path_blocked = true;
         continue;
-      }
-
-      if (route_path_blocked || !pathIsFree(samples[i].pos))
-      {
-        route_path_blocked = true;
-        break;
-      }
 
       local_target_pt_ = samples[i].pos;
       local_target_vel_.setZero();
@@ -1265,7 +1254,12 @@ namespace scan_planner
     }
 
     if (found_route_target)
+    {
+      ROS_INFO("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f",
+          local_target_pt_(0), local_target_pt_(1), local_target_pt_(2),
+          (local_target_pt_ - start_pt_).norm());
       return true;
+    }
 
     // --- no safe target found ------------------------------------------
     ROS_WARN_THROTTLE(
