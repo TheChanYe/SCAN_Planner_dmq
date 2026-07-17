@@ -45,8 +45,6 @@ private:
       double& out_yaw,
       bool& out_has_yaw) const noexcept;
 
-  bool isYawAligned(double heading_error) const noexcept;
-
   TrajectoryFollowerConfig config_{};
 
   double exec_time_sec_{0.0};

@@ -26,6 +26,29 @@ TEST(MqttCodec, RejectsMalformedAndEncodesStatus)
             navdog_protocol::MqttCodec::encodeStatus(5, 2));
 }
 
+TEST(MqttCodec, AcceptsSingleDestinationPoint)
+{
+  navdog_task::NavigationEvent event{};
+  bool charging = false;
+  ASSERT_TRUE(navdog_protocol::MqttCodec::parseTaskMessage(
+      R"({"ctrl":1,"navigation_data":{"max_vx":0.3,"points":[{"x":1.2,"y":-0.4}]}})",
+      0.3, 0.4, 9, event, charging));
+  EXPECT_EQ(navdog_task::NavigationEventType::START_TASK, event.type);
+  ASSERT_EQ(1u, event.task.points.size());
+  EXPECT_DOUBLE_EQ(1.2, event.task.points.front().x);
+  EXPECT_DOUBLE_EQ(-0.4, event.task.points.front().y);
+  EXPECT_DOUBLE_EQ(0.3, event.task.points.front().z);
+}
+
+TEST(MqttCodec, RejectsTaskWithoutDestination)
+{
+  navdog_task::NavigationEvent event{};
+  bool charging = false;
+  EXPECT_FALSE(navdog_protocol::MqttCodec::parseTaskMessage(
+      R"({"ctrl":1,"navigation_data":{"points":[]}})",
+      0.3, 0.4, 10, event, charging));
+}
+
 TEST(MqttCodec, PauseResumeAreCompatible)
 {
   navdog_task::NavigationEvent event{};

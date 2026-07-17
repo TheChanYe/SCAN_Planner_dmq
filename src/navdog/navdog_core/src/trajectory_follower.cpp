@@ -170,17 +170,6 @@ bool TrajectoryFollower::sampleTrajectory(
 }
 
 // =============================================================================
-// isYawAligned
-// =============================================================================
-
-bool TrajectoryFollower::isYawAligned(
-    double heading_error) const noexcept
-{
-  return std::abs(heading_error) <=
-         config_.heading_turn_only_threshold_rad;
-}
-
-// =============================================================================
 // update
 // =============================================================================
 
@@ -317,24 +306,16 @@ VelocityCommand TrajectoryFollower::update(
           std::min(max_yaw_rate,
               config_.kp_yaw * yaw_err));
 
-  const bool aligned = isYawAligned(yaw_err);
-
-  if (!aligned)
-  {
-    cmd.vx = 0.0;
-    cmd.vy = 0.0;
-    cmd.yaw_rate = vyaw_cmd;
-    cmd.source = CommandSource::PLANNER;
-    cmd.valid = true;
-    // Do not advance exec_time_sec_ while turning in place.
-    return cmd;
-  }
-
   const double pos_err_x = pos_des_x - robot.x;
   const double pos_err_y = pos_des_y - robot.y;
 
   double vel_world_x = vel_des_x + config_.kp_pos * pos_err_x;
   double vel_world_y = vel_des_y + config_.kp_pos * pos_err_y;
+  const double heading_scale = std::max(
+      0.0,
+      std::cos(std::min(std::abs(yaw_err), kPi * 0.5)));
+  vel_world_x *= heading_scale;
+  vel_world_y *= heading_scale;
 
   const double norm = std::hypot(vel_world_x, vel_world_y);
   const double max_world_v = std::max(max_vx, max_vy);

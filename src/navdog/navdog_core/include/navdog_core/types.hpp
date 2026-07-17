@@ -310,8 +310,7 @@ enum class NavigationMode : std::uint8_t
   NONE = 0,
 
   ROUTE_FOLLOW,
-  LOCAL_AVOID,
-  ROUTE_REJOIN
+  LOCAL_AVOID
 };
 
 // =============================================================================
@@ -323,8 +322,7 @@ enum class ReferenceIntent : std::uint8_t
   NONE = 0,
 
   GLOBAL_ROUTE,
-  LOCAL_AVOIDANCE,
-  FORWARD_ROUTE_REJOIN
+  LOCAL_AVOIDANCE
 };
 
 // =============================================================================
@@ -338,21 +336,11 @@ enum class NavigationModeReason : std::uint8_t
   INITIALIZED,
 
   ROUTE_CLEAR,
-  BLOCKED_FAR_AHEAD,
-  BLOCK_CONFIRMING,
   BLOCK_IMMEDIATE,
-  BLOCK_CONFIRMED,
 
   ROUTE_ONLY_BLOCKED,
 
   LOCAL_AVOID_ACTIVE,
-  CLEAR_CONFIRMING,
-  CLEAR_CONFIRMED,
-
-  ROUTE_REJOIN_ACTIVE,
-  REJOIN_CONFIRMING,
-  REJOIN_COMPLETE,
-  REJOIN_BLOCKED,
 
   WAITING_FOR_CORRIDOR,
   WAITING_FOR_ROBOT,
@@ -389,7 +377,7 @@ struct NavigationModeStatus
   // 当前有效评估是否为 BLOCKED。
   bool route_blocked{false};
 
-  // BLOCKED 且 first_blocked_distance <= avoid_enter_distance。
+  // BLOCKED 且 first_blocked_distance <= 2.0 m。
   bool route_blocked_near{false};
 
   // 当前任务是否允许进入 LOCAL_AVOID。
@@ -406,13 +394,6 @@ struct NavigationModeStatus
 
   // 连续 CLEAR 持续时间。
   double clear_confirm_elapsed_sec{0.0};
-
-  // 接回条件连续满足时间。
-  double rejoin_confirm_elapsed_sec{0.0};
-
-  // 进入当前 ROUTE_REJOIN 时，不允许接到此 arc 之前。
-  double rejoin_min_arc_length_m{0.0};
-  bool has_rejoin_anchor{false};
 
   // 本任务累计进入 LOCAL_AVOID 的次数。
   std::uint32_t avoidance_cycle_count{0};
@@ -462,10 +443,18 @@ struct TimedTrajectoryPoint
 };
 
 // =============================================================================
-// 4.16f 局部轨迹
-//
-// SCAN LocalTrajData 经 adapter 采样后得到的通用轨迹描述。
+// 4.16f 局部重规划原因与请求
 // =============================================================================
+
+enum class LocalReplanReason : std::uint8_t
+{
+  NONE = 0,
+  ENTER_AVOID,
+  TRAJECTORY_ENDING,
+  FUTURE_COLLISION,
+  PREVIOUS_FAILED,
+  TASK_CHANGED
+};
 
 struct LocalPlanRequest
 {
@@ -476,6 +465,7 @@ struct LocalPlanRequest
   RoutePoint target_vel{};
 
   NavigationMode purpose{NavigationMode::NONE};
+  LocalReplanReason reason{LocalReplanReason::NONE};
 
   std::uint64_t task_sequence{0};
   std::uint64_t plan_sequence{0};
@@ -558,9 +548,7 @@ public:
   // 检查当前轨迹从 from_time_sec 开始是否与三维膨胀占据发生碰撞。
   // 没有轨迹、查询不可用或地图外时返回 true（视为不可执行）。
   virtual bool isTrajectoryColliding(
-      NavigationMode purpose,
-      std::uint64_t task_sequence,
-      std::uint64_t plan_sequence,
+      const LocalTrajectory& trajectory,
       double from_time_sec) const = 0;
 };
 

@@ -38,7 +38,10 @@ bool MqttCodec::parseTaskMessage(const std::string& payload,
   if (ctrl != 1 || sequence == 0) return false;
   const Json::Value& data = root["navigation_data"];
   const Json::Value& points = data["points"];
-  if (!data.isObject() || !points.isArray() || points.size() < 2) return false;
+  // A task may contain only its destination.  The navigation core supports
+  // single-point routes, so rejecting them here would silently discard valid
+  // MQTT tasks before TaskManager can see them.
+  if (!data.isObject() || !points.isArray() || points.empty()) return false;
   event.type = navdog_task::NavigationEventType::START_TASK;
   event.task.sequence = sequence;
   event.task.mode = navdog_task::TaskMode::NORMAL_AVOID;

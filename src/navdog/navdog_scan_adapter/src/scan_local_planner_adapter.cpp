@@ -28,8 +28,25 @@ const char* modeName(navdog::NavigationMode mode) noexcept
   {
     case navdog::NavigationMode::LOCAL_AVOID:
       return "LOCAL_AVOID";
-    case navdog::NavigationMode::ROUTE_REJOIN:
-      return "ROUTE_REJOIN";
+    default:
+      return "NONE";
+  }
+}
+
+const char* replanReasonName(navdog::LocalReplanReason reason) noexcept
+{
+  switch (reason)
+  {
+    case navdog::LocalReplanReason::ENTER_AVOID:
+      return "ENTER_AVOID";
+    case navdog::LocalReplanReason::TRAJECTORY_ENDING:
+      return "TRAJECTORY_ENDING";
+    case navdog::LocalReplanReason::FUTURE_COLLISION:
+      return "FUTURE_COLLISION";
+    case navdog::LocalReplanReason::PREVIOUS_FAILED:
+      return "PREVIOUS_FAILED";
+    case navdog::LocalReplanReason::TASK_CHANGED:
+      return "TASK_CHANGED";
     default:
       return "NONE";
   }
@@ -48,8 +65,7 @@ bool finitePoint(const navdog::RoutePoint& point, bool require_z)
 bool validRequest(const navdog::LocalPlanRequest& request)
 {
   const bool valid_purpose =
-      request.purpose == navdog::NavigationMode::LOCAL_AVOID ||
-      request.purpose == navdog::NavigationMode::ROUTE_REJOIN;
+      request.purpose == navdog::NavigationMode::LOCAL_AVOID;
   return request.valid && valid_purpose &&
       request.task_sequence != 0 && request.plan_sequence != 0 &&
       finitePoint(request.start, true) &&
@@ -160,6 +176,7 @@ void ScanLocalPlannerAdapter::planningLoop()
     ROS_INFO_STREAM(
         "LOCAL_PLAN_REQUEST task=" << request.task_sequence
         << " plan=" << request.plan_sequence
+        << " reason=" << replanReasonName(request.reason)
         << " mode=" << modeName(request.purpose)
         << " start=(" << request.start.x << "," << request.start.y << ")"
         << " target=(" << request.target.x << "," << request.target.y << ")");
@@ -205,7 +222,7 @@ void ScanLocalPlannerAdapter::storePlanResult(
   completed_request_ = request;
   if (trajectory.valid)
   {
-    cached_trajectory_ = trajectory;
+    completed_candidate_ = trajectory;
     completed_state_ = navdog::LocalPlanState::READY;
   }
   else
@@ -379,13 +396,13 @@ navdog::LocalTrajectory ScanLocalPlannerAdapter::getLocalTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (cached_trajectory_.task_sequence != task_sequence ||
-      cached_trajectory_.purpose != purpose)
+  if (completed_candidate_.task_sequence != task_sequence ||
+      completed_candidate_.purpose != purpose)
   {
     return navdog::LocalTrajectory{};
   }
 
-  return cached_trajectory_;
+  return completed_candidate_;
 }
 
 // =============================================================================
@@ -398,14 +415,14 @@ bool ScanLocalPlannerAdapter::hasValidTrajectory(
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (cached_trajectory_.task_sequence != task_sequence ||
-      cached_trajectory_.purpose != purpose)
+  if (completed_candidate_.task_sequence != task_sequence ||
+      completed_candidate_.purpose != purpose)
   {
     return false;
   }
 
-  return cached_trajectory_.valid &&
-         cached_trajectory_.duration_sec > kEpsilon;
+  return completed_candidate_.valid &&
+         completed_candidate_.duration_sec > kEpsilon;
 }
 
 // =============================================================================
@@ -450,22 +467,11 @@ navdog::LocalPlanState ScanLocalPlannerAdapter::localPlanState(
 // =============================================================================
 
 bool ScanLocalPlannerAdapter::isTrajectoryColliding(
-    navdog::NavigationMode purpose,
-    std::uint64_t task_sequence,
-    std::uint64_t plan_sequence,
+    const navdog::LocalTrajectory& trajectory,
     double from_time_sec) const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-
-  if (cached_trajectory_.task_sequence != task_sequence ||
-      cached_trajectory_.purpose != purpose ||
-      cached_trajectory_.plan_sequence != plan_sequence)
-  {
-    return true;
-  }
-
-  return checkTrajectoryCollision(
-      cached_trajectory_, from_time_sec);
+  return checkTrajectoryCollision(trajectory, from_time_sec);
 }
 
 // =============================================================================

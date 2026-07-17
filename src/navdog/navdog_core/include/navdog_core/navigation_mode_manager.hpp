@@ -89,14 +89,6 @@ private:
       const RouteProgress& progress,
       double now_sec);
 
-  void resetBlockedEvidence() noexcept;
-  void resetClearEvidence() noexcept;
-  void resetRejoinEvidence() noexcept;
-
-  double shortestAngularDistance(
-      double from,
-      double to) const noexcept;
-
   NavigationModeConfig config_{};
   NavigationModeStatus status_{};
 
@@ -105,14 +97,6 @@ private:
   double last_update_stamp_sec_{0.0};
   bool has_last_update_stamp_{false};
 
-  double blocked_since_sec_{0.0};
-  bool blocked_timer_active_{false};
-
-  double clear_since_sec_{0.0};
-  bool clear_timer_active_{false};
-
-  double rejoin_since_sec_{0.0};
-  bool rejoin_timer_active_{false};
 };
 
 }  // namespace navdog

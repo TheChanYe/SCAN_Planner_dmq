@@ -11,6 +11,8 @@ namespace
 {
 
 constexpr double kEpsilon = 1e-9;
+constexpr double kCorridorHalfWidthM = 0.60;
+constexpr double kClearLookaheadM = 2.50;
 
 }  // namespace
 
@@ -56,10 +58,6 @@ ScanRouteCorridorEvaluator3D::evaluate(
     return assessment;
 
   // --- Configuration ---
-  if (!std::isfinite(config_.lookahead_distance_m) ||
-      config_.lookahead_distance_m <= 0.0)
-    return assessment;
-
   // --- Initialize assessment ---
   assessment.source =
       navdog::RouteCorridorSource::SCAN_INFLATED_GRID_3D;
@@ -78,7 +76,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
   // --- Determine check distance ---
   const double check_distance = std::min(
-      config_.lookahead_distance_m,
+      kClearLookaheadM,
       progress.remaining_distance_m);
 
   if (check_distance <= 0.0)
@@ -115,40 +113,44 @@ ScanRouteCorridorEvaluator3D::evaluate(
       double seg_yaw,
       double dist_from_start) -> bool
   {
-    assessment.samples_checked++;
-
-    InflatedGridQueryResult result =
-        grid_->query(px, py, robot.z, seg_yaw);
-
-    switch (result)
+    const double normal_x = -std::sin(seg_yaw);
+    const double normal_y = std::cos(seg_yaw);
+    for (double lateral = -kCorridorHalfWidthM;
+         lateral <= kCorridorHalfWidthM + kEpsilon;
+         lateral += sample_step)
     {
-      case InflatedGridQueryResult::FREE:
-        return true;  // continue
-
-      case InflatedGridQueryResult::OCCUPIED:
+      ++assessment.samples_checked;
+      const InflatedGridQueryResult result = grid_->query(
+          px + lateral * normal_x,
+          py + lateral * normal_y,
+          robot.z,
+          seg_yaw);
+      if (result == InflatedGridQueryResult::OCCUPIED)
+      {
         assessment.blocked = true;
-        assessment.first_blocked_distance_ahead_m =
-            dist_from_start;
+        assessment.first_blocked_distance_ahead_m = dist_from_start;
         assessment.first_blocked_arc_length_m =
             progress.arc_length_m + dist_from_start;
         assessment.checked_distance_m = dist_from_start;
         assessment.valid = true;
         assessment.out_of_map = false;
-        return false;  // stop
-
-      case InflatedGridQueryResult::OUT_OF_MAP:
+        return false;
+      }
+      if (result == InflatedGridQueryResult::OUT_OF_MAP)
+      {
         assessment.out_of_map = true;
         assessment.checked_distance_m = dist_from_start;
         assessment.valid = true;
-        return false;  // stop
-
-      case InflatedGridQueryResult::INVALID:
+        return false;
+      }
+      if (result == InflatedGridQueryResult::INVALID)
+      {
         assessment.checked_distance_m = dist_from_start;
         assessment.valid = false;
-        return false;  // stop
+        return false;
+      }
     }
-
-    return false;
+    return true;
   };
 
   // Process a segment from (sx, sy) to (ex, ey) with a yaw.

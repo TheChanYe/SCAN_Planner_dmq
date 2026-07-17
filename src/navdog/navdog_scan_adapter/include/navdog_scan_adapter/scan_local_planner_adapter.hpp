@@ -60,9 +60,7 @@ public:
       std::uint64_t plan_sequence) const override;
 
   bool isTrajectoryColliding(
-      navdog::NavigationMode purpose,
-      std::uint64_t task_sequence,
-      std::uint64_t plan_sequence,
+      const navdog::LocalTrajectory& trajectory,
       double from_time_sec) const override;
 
 private:
@@ -111,7 +109,7 @@ private:
   navdog::LocalPlanRequest completed_request_{};
   navdog::LocalPlanState completed_state_{
       navdog::LocalPlanState::IDLE};
-  navdog::LocalTrajectory cached_trajectory_{};
+  navdog::LocalTrajectory completed_candidate_{};
 
   // Test seam for the two initialization choices. Production always calls
   // SCANPlannerManager directly.

@@ -16,27 +16,6 @@ namespace
 // NavdogConfigLoadsModeThresholds
 // =============================================================================
 
-TEST(NavdogConfigLoadingTest, LoadsModeThresholdsFromParams)
-{
-  ros::NodeHandle nh("~");
-  // Set custom navigation_mode params
-  nh.setParam("navigation_mode/avoid_enter_distance_m", 2.0);
-  nh.setParam("navigation_mode/avoid_immediate_distance_m", 0.9);
-  nh.setParam("navigation_mode/avoid_block_confirm_sec", 0.3);
-  nh.setParam("navigation_mode/route_clear_confirm_sec", 0.5);
-  nh.setParam("navigation_mode/rejoin_confirm_sec", 0.4);
-  nh.setParam("navigation_mode/rejoin_lateral_tolerance_m", 0.25);
-
-  const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
-
-  EXPECT_DOUBLE_EQ(config.navigation_mode.avoid_enter_distance_m, 2.0);
-  EXPECT_DOUBLE_EQ(config.navigation_mode.avoid_immediate_distance_m, 0.9);
-  EXPECT_DOUBLE_EQ(config.navigation_mode.avoid_block_confirm_sec, 0.3);
-  EXPECT_DOUBLE_EQ(config.navigation_mode.route_clear_confirm_sec, 0.5);
-  EXPECT_DOUBLE_EQ(config.navigation_mode.rejoin_confirm_sec, 0.4);
-  EXPECT_DOUBLE_EQ(config.navigation_mode.rejoin_lateral_tolerance_m, 0.25);
-}
-
 TEST(NavdogConfigLoadingTest, LoadsLimitsFromParams)
 {
   ros::NodeHandle nh("~");
@@ -127,18 +106,18 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
   EXPECT_DOUBLE_EQ(config.route_follower.max_vx, 0.85);
 }
 
-TEST(NavdogConfigLoadingTest, LoadsRejoinTargetFromParams)
+TEST(NavdogConfigLoadingTest, LoadsLocalAvoidTargetFromParams)
 {
   ros::NodeHandle nh("~");
-  nh.setParam("rejoin_target/default_forward_distance_m", 3.0);
-  nh.setParam("rejoin_target/min_forward_distance_m", 0.8);
-  nh.setParam("rejoin_target/max_forward_distance_m", 3.5);
+  nh.setParam("local_avoid_target/default_forward_distance_m", 3.0);
+  nh.setParam("local_avoid_target/min_forward_distance_m", 0.8);
+  nh.setParam("local_avoid_target/max_forward_distance_m", 3.5);
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
 
-  EXPECT_DOUBLE_EQ(config.rejoin_target.default_forward_distance_m, 3.0);
-  EXPECT_DOUBLE_EQ(config.rejoin_target.min_forward_distance_m, 0.8);
-  EXPECT_DOUBLE_EQ(config.rejoin_target.max_forward_distance_m, 3.5);
+  EXPECT_DOUBLE_EQ(config.local_avoid_target.default_forward_distance_m, 3.0);
+  EXPECT_DOUBLE_EQ(config.local_avoid_target.min_forward_distance_m, 0.8);
+  EXPECT_DOUBLE_EQ(config.local_avoid_target.max_forward_distance_m, 3.5);
 }
 
 TEST(NavdogConfigLoadingTest, LoadsTaskConfigFromParams)
@@ -378,9 +357,9 @@ TEST(ConfigValidationTest, AccelLimitsRejectedWhenNonPositive)
 
 TEST(ConfigValidationTest, NavigationModeThresholdsMustBePositive)
 {
-  EXPECT_TRUE(isValidTimeout(0.2));   // avoid_block_confirm_sec
-  EXPECT_TRUE(isValidTimeout(0.4));   // route_clear_confirm_sec
-  EXPECT_TRUE(isValidTimeout(0.3));   // rejoin_confirm_sec
+  EXPECT_TRUE(isValidTimeout(0.2));
+  EXPECT_TRUE(isValidTimeout(0.4));
+  EXPECT_TRUE(isValidTimeout(0.3));
   EXPECT_FALSE(isValidTimeout(0.0));
   EXPECT_FALSE(isValidTimeout(-0.1));
 }

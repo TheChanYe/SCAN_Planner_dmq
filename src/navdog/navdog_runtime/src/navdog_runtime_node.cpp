@@ -10,6 +10,22 @@
 namespace navdog_runtime
 {
 
+namespace
+{
+const char* navigationModeName(navdog::NavigationMode mode) noexcept
+{
+  switch (mode)
+  {
+    case navdog::NavigationMode::ROUTE_FOLLOW:
+      return "ROUTE_FOLLOW";
+    case navdog::NavigationMode::LOCAL_AVOID:
+      return "LOCAL_AVOID";
+    default:
+      return "NONE";
+  }
+}
+}  // namespace
+
 navdog::NavdogConfig NavdogRuntimeNode::loadNavdogConfig(ros::NodeHandle& nh)
 { return Ros1ConfigLoader::load(nh).core; }
 
@@ -70,6 +86,8 @@ bool NavdogRuntimeNode::initialize()
       ros::TransportHints().tcpNoDelay());
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
+  local_trajectory_publisher_ =
+      nh_.advertise<nav_msgs::Path>("/navdog/local_trajectory", 1, true);
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
@@ -173,9 +191,28 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   pending_planner_feedback_ = navdog::PlannerFeedback{};
 
   const navdog::CoreOutput output = coordinator_->update(input, now_sec);
+  if (output.navigation_mode.transitioned)
+  {
+    if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
+    {
+      ROS_INFO("NAV_MODE %s -> %s blocked_forward=%.3f blocked_lateral=0.600",
+          navigationModeName(output.navigation_mode.previous_mode),
+          navigationModeName(output.navigation_mode.mode),
+          input.route_corridor_observation.assessment
+              .first_blocked_distance_ahead_m);
+    }
+    else if (output.navigation_mode.previous_mode ==
+                 navdog::NavigationMode::LOCAL_AVOID)
+    {
+      ROS_INFO("NAV_MODE %s -> %s front=2.500 left=0.600 right=0.600 clear=true",
+          navigationModeName(output.navigation_mode.previous_mode),
+          navigationModeName(output.navigation_mode.mode));
+    }
+  }
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
   publishOutput(output, now_sec);
+  publishLocalTrajectory(output);
   if (last_status_publish_.isZero() ||
       (ros::Time::now() - last_status_publish_).toSec() >=
           1.0 / application_config_.runtime_io.status_rate_hz)
@@ -231,6 +268,53 @@ void NavdogRuntimeNode::publishRoute()
     path.poses.push_back(pose);
   }
   route_publisher_.publish(path);
+}
+
+void NavdogRuntimeNode::publishLocalTrajectory(
+    const navdog::CoreOutput& output)
+{
+  const navdog::LocalTrajectory& trajectory =
+      coordinator_->activeLocalTrajectory();
+  if (output.navigation_mode.mode != navdog::NavigationMode::LOCAL_AVOID ||
+      !trajectory.valid)
+  {
+    if (local_trajectory_visible_)
+    {
+      nav_msgs::Path empty;
+      empty.header.stamp = ros::Time::now();
+      empty.header.frame_id = "world";
+      local_trajectory_publisher_.publish(empty);
+      local_trajectory_visible_ = false;
+      published_local_plan_sequence_ = 0;
+    }
+    return;
+  }
+
+  if (trajectory.plan_sequence == published_local_plan_sequence_)
+    return;
+
+  nav_msgs::Path path;
+  path.header.stamp = ros::Time::now();
+  path.header.frame_id = "world";
+  for (const auto& point : trajectory.points)
+  {
+    geometry_msgs::PoseStamped pose;
+    pose.header = path.header;
+    pose.pose.position.x = point.x;
+    pose.pose.position.y = point.y;
+    pose.pose.position.z = point.z;
+    pose.pose.orientation = tf::createQuaternionMsgFromYaw(
+        point.has_yaw ? point.yaw : 0.0);
+    path.poses.push_back(pose);
+  }
+  local_trajectory_publisher_.publish(path);
+  ROS_INFO("LOCAL_PLAN_PROMOTED task=%lu plan=%lu points=%lu duration=%.3f",
+      static_cast<unsigned long>(trajectory.task_sequence),
+      static_cast<unsigned long>(trajectory.plan_sequence),
+      static_cast<unsigned long>(trajectory.points.size()),
+      trajectory.duration_sec);
+  published_local_plan_sequence_ = trajectory.plan_sequence;
+  local_trajectory_visible_ = true;
 }
 
 void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,

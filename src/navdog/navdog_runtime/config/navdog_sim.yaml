@@ -1,17 +1,6 @@
 control_rate_hz: 50.0
 status_rate_hz: 10.0
 odom_topic: /quad_0/body_pose
-cmd_vel_topic: /navdog/route_cmd_vel
-native_scan_takeover: true
-native_scan_rejoin:
-  min_forward_distance_m: 0.8
-  preferred_forward_distance_m: 1.2
-  max_forward_distance_m: 2.0
-  no_progress_timeout_sec: 3.0
-  min_progress_improvement_m: 0.10
-  max_republish_count: 2
-  release_front_clearance_m: 2.0
-  release_side_clearance_m: 0.5
 odom_twist_in_world_frame: true
 default_route_z: 0.3
 default_max_vx: 0.4
@@ -22,6 +11,10 @@ mqtt:
   keepalive_sec: 30
   client_id: navdog_runtime
   qos: 1
+  task_topic: robot/global_planning/info
+  pause_topic: robot/local_planning/pause_resume
+  status_topic: robot/local_planning/ctrl
+  max_queue_size: 32
 manager:
   max_vel: 0.75
   max_acc: 0.5
@@ -66,17 +59,8 @@ limits:
   max_accel_x: 0.5
   max_accel_y: 0.25
   max_accel_yaw: 0.8
-navigation_mode:
-  avoid_enter_distance_m: 1.5
-  avoid_immediate_distance_m: 0.65
-  avoid_block_confirm_sec: 0.15
-  local_avoid_min_hold_sec: 0.80
-  route_clear_confirm_sec: 0.60
-  rejoin_lateral_tolerance_m: 0.25
-  rejoin_heading_tolerance_rad: 0.35
-  rejoin_confirm_sec: 0.40
 route_corridor:
-  lookahead_distance_m: 3.0
+  lookahead_distance_m: 2.5
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8
@@ -88,7 +72,6 @@ trajectory_follower:
   time_forward_sec: 0.5
   kp_pos: 0.8
   kp_yaw: 1.5
-  heading_turn_only_threshold_rad: 0.2
 planner_trigger:
   replan_retry_interval_sec: 0.3
   target_change_threshold_m: 0.5

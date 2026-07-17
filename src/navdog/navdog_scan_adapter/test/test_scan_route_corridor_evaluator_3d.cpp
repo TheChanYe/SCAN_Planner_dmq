@@ -299,7 +299,7 @@ TEST(ScanRouteCorridorEvaluator3DTest, StopsAtLookahead)
   config.lookahead_distance_m = 3.0;
   ScanRouteCorridorEvaluator3D evaluator(config, grid);
 
-  // Progress at x=2, lookahead=3, so max check at x=5
+  // The runtime rule checks a fixed 2.5 m, independent of legacy config.
   // Obstacle at x=6 → beyond lookahead → not detected
   grid->addOccupied(6.0, 0.0, 0.4);
 
@@ -311,7 +311,7 @@ TEST(ScanRouteCorridorEvaluator3DTest, StopsAtLookahead)
 
   EXPECT_TRUE(assessment.valid);
   EXPECT_FALSE(assessment.blocked);
-  EXPECT_NEAR(assessment.checked_distance_m, 3.0, kEps);
+  EXPECT_NEAR(assessment.checked_distance_m, 2.5, kEps);
 }
 
 // =============================================================================
@@ -326,8 +326,8 @@ TEST(ScanRouteCorridorEvaluator3DTest, ChecksSegmentEndpoints)
   config.lookahead_distance_m = 3.0;
   ScanRouteCorridorEvaluator3D evaluator(config, grid);
 
-  // Progress at x=2, first segment endpoint at x=5 (2+3=5)
-  grid->addOccupied(5.0, 0.0, 0.4);
+  // Progress at x=2, fixed clear-check endpoint at x=4.5.
+  grid->addOccupied(4.5, 0.0, 0.4);
 
   auto assessment = evaluator.evaluate(
       makeStraightRoute(),
@@ -338,7 +338,7 @@ TEST(ScanRouteCorridorEvaluator3DTest, ChecksSegmentEndpoints)
   EXPECT_TRUE(assessment.valid);
   EXPECT_TRUE(assessment.blocked);
   EXPECT_NEAR(assessment.first_blocked_distance_ahead_m,
-              3.0, kEps);
+              2.5, kEps);
 }
 
 // =============================================================================
@@ -490,6 +490,40 @@ TEST(ScanRouteCorridorEvaluator3DTest, PassesRouteYawToGridQuery)
 
   // Should detect the obstacle
   EXPECT_TRUE(assessment.blocked);
+}
+
+TEST(ScanRouteCorridorEvaluator3DTest, DetectsObstacleInsideLateralBand)
+{
+  auto grid = std::make_shared<FakeInflatedGridQuery3D>(0.10, kNow);
+  ScanRouteCorridorEvaluator3D evaluator(
+      navdog::RouteCorridorConfig{}, grid);
+  grid->addOccupied(1.0, 0.55, 0.4);
+
+  const auto assessment = evaluator.evaluate(
+      makeStraightRoute(),
+      makeProgress(1, 0, 0.0, 0.0, 0.0, 0.0, 10.0),
+      makeRobot(0.0, 0.0), kNow);
+
+  EXPECT_TRUE(assessment.valid);
+  EXPECT_TRUE(assessment.blocked);
+  EXPECT_LE(assessment.first_blocked_distance_ahead_m, 2.0);
+}
+
+TEST(ScanRouteCorridorEvaluator3DTest, IgnoresObstacleOutsideLateralBand)
+{
+  auto grid = std::make_shared<FakeInflatedGridQuery3D>(0.10, kNow);
+  ScanRouteCorridorEvaluator3D evaluator(
+      navdog::RouteCorridorConfig{}, grid);
+  grid->addOccupied(1.0, 0.75, 0.4);
+
+  const auto assessment = evaluator.evaluate(
+      makeStraightRoute(),
+      makeProgress(1, 0, 0.0, 0.0, 0.0, 0.0, 10.0),
+      makeRobot(0.0, 0.0), kNow);
+
+  EXPECT_TRUE(assessment.valid);
+  EXPECT_FALSE(assessment.blocked);
+  EXPECT_NEAR(assessment.checked_distance_m, 2.5, kEps);
 }
 
 // =============================================================================
@@ -694,7 +728,7 @@ TEST(ScanRouteCorridorEvaluator3DTest, SkipsDegenerateSegments)
   navdog::RoutePoint p2; p2.x = 5.0; p2.y = 0.0;
   task.points.push_back(p2);
 
-  grid->addOccupied(3.0, 0.0, 0.4);
+  grid->addOccupied(2.0, 0.0, 0.4);
 
   auto assessment = evaluator.evaluate(
       task,

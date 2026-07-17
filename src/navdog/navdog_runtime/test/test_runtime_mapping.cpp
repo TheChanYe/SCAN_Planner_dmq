@@ -350,18 +350,6 @@ TEST(RuntimeNodeTest, InvalidRobotPublishesZero)
 // New tests: config defaults
 // =============================================================================
 
-TEST(NavdogConfigTest, DefaultModeThresholdsAreFinitePositive)
-{
-  navdog::NavdogConfig config{};
-  EXPECT_GT(config.navigation_mode.avoid_enter_distance_m, 0.0);
-  EXPECT_GT(config.navigation_mode.avoid_immediate_distance_m, 0.0);
-  EXPECT_GT(config.navigation_mode.avoid_block_confirm_sec, 0.0);
-  EXPECT_GT(config.navigation_mode.route_clear_confirm_sec, 0.0);
-  EXPECT_GT(config.navigation_mode.rejoin_confirm_sec, 0.0);
-  EXPECT_TRUE(std::isfinite(config.navigation_mode.avoid_enter_distance_m));
-  EXPECT_TRUE(std::isfinite(config.navigation_mode.rejoin_lateral_tolerance_m));
-}
-
 TEST(NavdogConfigTest, DefaultLimitsAreFinitePositive)
 {
   navdog::NavdogConfig config{};

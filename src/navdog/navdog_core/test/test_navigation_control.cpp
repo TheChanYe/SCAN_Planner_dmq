@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "navdog_core/goal_controller.hpp"
-#include "navdog_core/rejoin_target_selector.hpp"
 #include "navdog_core/route_follower.hpp"
 #include "navdog_core/safety_supervisor.hpp"
 #include "navdog_core/trajectory_follower.hpp"
@@ -149,7 +148,6 @@ TEST(RouteFollowerTest, OutputsNonZeroVelocity)
   config.kp_x = 0.8;
   config.kp_y = 1.0;
   config.kp_yaw = 1.2;
-  config.heading_turn_only_threshold_rad = 0.8;
   config.max_vx = 0.8;
 
   RouteFollower follower(config);
@@ -168,7 +166,6 @@ TEST(RouteFollowerTest, OutputsNonZeroVelocity)
 TEST(RouteFollowerTest, FollowsSinglePointGoal)
 {
   RouteFollowerConfig config{};
-  config.heading_turn_only_threshold_rad = 0.8;
   RouteFollower follower(config);
 
   NavigationTask task{};
@@ -191,7 +188,6 @@ TEST(RouteFollowerTest, FollowsSinglePointGoal)
 TEST(RouteFollowerTest, FollowsRepeatedPointGoal)
 {
   RouteFollowerConfig config{};
-  config.heading_turn_only_threshold_rad = 0.8;
   RouteFollower follower(config);
 
   NavigationTask task{};
@@ -219,7 +215,6 @@ TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
   config.kp_x = 0.8;
   config.kp_y = 1.0;
   config.kp_yaw = 1.2;
-  config.heading_turn_only_threshold_rad = 0.8;
   config.max_vx = 0.8;
 
   RouteFollower follower(config);
@@ -270,7 +265,6 @@ TEST(TrajectoryFollowerTest, AcceptsMatchingTrajectory)
   config.time_forward_sec = 0.1;
   config.kp_pos = 0.5;
   config.kp_yaw = 1.0;
-  config.heading_turn_only_threshold_rad = 0.8;
 
   TrajectoryFollower follower(config);
   const LocalTrajectory trajectory = makeStraightTrajectory(
@@ -348,7 +342,7 @@ TEST(TrajectoryFollowerTest, RejectsOldMode)
       0.4,
       0.35,
       0.65,
-      NavigationMode::ROUTE_REJOIN,  // expected mode mismatch
+      NavigationMode::ROUTE_FOLLOW,  // expected mode mismatch
       1,
       1.0);
 
@@ -377,10 +371,9 @@ TEST(TrajectoryFollowerTest, AcceptedTrajectoryRunsBeyondPointThreeSeconds)
   EXPECT_TRUE(cmd.valid);
 }
 
-TEST(TrajectoryFollowerTest, RotatesOnlyWithLargeHeadingError)
+TEST(TrajectoryFollowerTest, NinetyDegreeErrorHasEffectivelyZeroTranslation)
 {
   TrajectoryFollowerConfig config{};
-  config.heading_turn_only_threshold_rad = 0.3;
   config.kp_yaw = 1.0;
 
   TrajectoryFollower follower(config);
@@ -399,57 +392,45 @@ TEST(TrajectoryFollowerTest, RotatesOnlyWithLargeHeadingError)
       1.0);
 
   EXPECT_TRUE(cmd.valid);
-  EXPECT_EQ(cmd.vx, 0.0);
-  EXPECT_EQ(cmd.vy, 0.0);
+  EXPECT_NEAR(cmd.vx, 0.0, 1e-12);
+  EXPECT_NEAR(cmd.vy, 0.0, 1e-12);
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
-// =============================================================================
-// RejoinTargetSelector tests
-// =============================================================================
-
-TEST(RejoinTargetSelectorTest, TargetNotBeforeAnchor)
+TEST(TrajectoryFollowerTest, ModerateHeadingErrorKeepsTranslating)
 {
-  RejoinTargetSelectorConfig config{};
-  config.default_forward_distance_m = 2.0;
-  config.min_forward_distance_m = 1.0;
-  config.max_forward_distance_m = 3.0;
+  TrajectoryFollower follower(TrajectoryFollowerConfig{});
+  const LocalTrajectory trajectory = makeStraightTrajectory(
+      1, 1, NavigationMode::LOCAL_AVOID, 1.0, 2.0, 0.0, 1.0);
+  const RobotState robot = makeRobot(0.0, 0.0, 0.3);
 
-  RejoinTargetSelector selector(config);
-  const NavigationTask task = makeStraightTask(1, 10.0);
-  const RobotState robot = makeRobot(0.0, 0.0, 0.0);
+  const VelocityCommand cmd = follower.update(
+      trajectory, robot, 0.4, 0.35, 0.65,
+      NavigationMode::LOCAL_AVOID, 1, 1.0);
 
-  RouteProgress progress = makeProgress(1, 5.0, 5.0, 0.0);
-
-  NavigationModeStatus mode_status{};
-  mode_status.has_rejoin_anchor = true;
-  mode_status.rejoin_min_arc_length_m = 4.5;
-
-  const auto result = selector.select(
-      task, progress, mode_status, robot, nullptr);
-
-  EXPECT_TRUE(result.valid);
-  EXPECT_GE(result.target.x, 4.5);
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
-TEST(RejoinTargetSelectorTest, RejectsBehindProgress)
+TEST(TrajectoryFollowerTest, TranslationDecreasesContinuouslyWithHeadingError)
 {
-  RejoinTargetSelectorConfig config{};
-  RejoinTargetSelector selector(config);
-  const NavigationTask task = makeStraightTask(1, 10.0);
-  const RobotState robot = makeRobot(0.0, 0.0, 0.0);
+  const LocalTrajectory trajectory = makeStraightTrajectory(
+      1, 1, NavigationMode::LOCAL_AVOID, 1.0, 2.0, 0.0, 1.0);
 
-  RouteProgress progress = makeProgress(1, 5.0, 5.0, 0.0);
+  const auto velocity_at_yaw = [&trajectory](double yaw) {
+    TrajectoryFollower follower(TrajectoryFollowerConfig{});
+    return follower.update(
+        trajectory, makeRobot(0.0, 0.0, yaw), 0.4, 0.35, 0.65,
+        NavigationMode::LOCAL_AVOID, 1, 1.0).vx;
+  };
 
-  NavigationModeStatus mode_status{};
-  mode_status.has_rejoin_anchor = true;
-  mode_status.rejoin_min_arc_length_m = 2.0;
-
-  const auto result = selector.select(
-      task, progress, mode_status, robot, nullptr);
-
-  EXPECT_TRUE(result.valid);
-  EXPECT_GT(result.target.x, 5.0);
+  const double aligned_vx = velocity_at_yaw(0.0);
+  const double moderate_vx = velocity_at_yaw(0.3);
+  const double larger_vx = velocity_at_yaw(0.6);
+  EXPECT_GT(aligned_vx, moderate_vx);
+  EXPECT_GT(moderate_vx, larger_vx);
+  EXPECT_GT(larger_vx, 0.0);
 }
 
 // =============================================================================
@@ -1023,10 +1004,9 @@ TEST(SafetySupervisorTest, EmergencyStopIsImmediate)
 // TrajectoryFollower time tests
 // =============================================================================
 
-TEST(TrajectoryFollowerTimeTest, TurningFreezeDoesNotTriggerWallClockExpiry)
+TEST(TrajectoryFollowerTimeTest, HeadingCorrectionAdvancesExecutionTime)
 {
   TrajectoryFollowerConfig config{};
-  config.heading_turn_only_threshold_rad = 0.3;
   config.kp_yaw = 1.0;
 
   TrajectoryFollower follower(config);
@@ -1059,7 +1039,8 @@ TEST(TrajectoryFollowerTimeTest, TurningFreezeDoesNotTriggerWallClockExpiry)
 
   const double t2 = follower.trajectoryTimeSec();
 
-  EXPECT_NEAR(t1, t2, 1e-9);
+  EXPECT_NEAR(t1, 0.0, 1e-9);
+  EXPECT_NEAR(t2, 0.1, 1e-9);
 }
 
 TEST(TrajectoryFollowerTimeTest, AlignedMotionAdvancesExecutionTime)
@@ -1131,11 +1112,11 @@ TEST(TrajectoryFollowerTimeTest, PurposeChangeRestartsAtZero)
   EXPECT_GT(follower.trajectoryTimeSec(), 0.15);
 
   LocalTrajectory trajectory2 = makeStraightTrajectory(
-      1, 1, NavigationMode::ROUTE_REJOIN, 1.0, 2.0, 0.0, 1.0);
+      1, 1, NavigationMode::ROUTE_FOLLOW, 1.0, 2.0, 0.0, 1.0);
 
   follower.update(
       trajectory2, robot, 0.4, 0.35, 0.65,
-      NavigationMode::ROUTE_REJOIN, 1, 1.3);
+      NavigationMode::ROUTE_FOLLOW, 1, 1.3);
 
   EXPECT_NEAR(follower.trajectoryTimeSec(), 0.0, 1e-9);
 }
@@ -1260,124 +1241,6 @@ TEST(TrajectoryFollowerTimeTest, TrajectoryExpiresByExecutionTime)
 
   EXPECT_GE(
       follower.trajectoryTimeSec(), 1.0 - 1e-9);
-}
-
-// =============================================================================
-// RejoinTargetSelector tests
-// =============================================================================
-
-NavigationTask makeCurvedTask(std::uint64_t sequence = 1)
-{
-  NavigationTask task{};
-  task.sequence = sequence;
-  task.mode = TaskMode::NORMAL_AVOID;
-  task.max_vx = 0.4;
-
-  RoutePoint p0{};
-  p0.x = 0.0;
-  p0.y = 0.0;
-  p0.z = 0.0;
-  task.points.push_back(p0);
-
-  RoutePoint p1{};
-  p1.x = 5.0;
-  p1.y = 0.0;
-  p1.z = 0.0;
-  task.points.push_back(p1);
-
-  RoutePoint p2{};
-  p2.x = 8.0;
-  p2.y = 3.0;
-  p2.z = 0.0;
-  task.points.push_back(p2);
-
-  return task;
-}
-
-TEST(RejoinTargetSelectorTest, RejoinSkipsOccupiedDefaultTarget)
-{
-  RejoinTargetSelectorConfig config{};
-  config.default_forward_distance_m = 2.0;
-  config.min_forward_distance_m = 1.0;
-  config.max_forward_distance_m = 3.0;
-
-  RejoinTargetSelector selector(config);
-  const NavigationTask task = makeStraightTask(1, 10.0);
-  const RobotState robot = makeRobot(0.0, 0.0, 0.0);
-
-  RouteProgress progress = makeProgress(1, 5.0, 5.0, 0.0);
-  progress.total_length_m = 10.0;
-
-  NavigationModeStatus mode_status{};
-  mode_status.has_rejoin_anchor = true;
-  mode_status.rejoin_min_arc_length_m = 4.5;
-
-  FakeOccupancyQuery occupancy;
-  occupancy.setFree(false);
-
-  const auto result = selector.select(
-      task, progress, mode_status, robot, &occupancy);
-
-  EXPECT_FALSE(result.valid);
-}
-
-TEST(RejoinTargetSelectorTest, RejoinTargetArcIsAfterAnchor)
-{
-  RejoinTargetSelectorConfig config{};
-  config.default_forward_distance_m = 2.0;
-  config.min_forward_distance_m = 1.0;
-  config.max_forward_distance_m = 3.0;
-
-  RejoinTargetSelector selector(config);
-  const NavigationTask task = makeStraightTask(1, 10.0);
-  const RobotState robot = makeRobot(0.0, 0.0, 0.0);
-
-  RouteProgress progress = makeProgress(1, 5.0, 5.0, 0.0);
-  progress.total_length_m = 10.0;
-
-  NavigationModeStatus mode_status{};
-  mode_status.has_rejoin_anchor = true;
-  mode_status.rejoin_min_arc_length_m = 6.0;
-
-  const auto result = selector.select(
-      task, progress, mode_status, robot, nullptr);
-
-  EXPECT_TRUE(result.valid);
-  EXPECT_GE(result.target_arc_length_m, 6.0);
-  EXPECT_GT(result.target.x, 5.0);
-}
-
-TEST(RejoinTargetSelectorTest,
-     CurvedRouteRejoinDoesNotUseCurrentSegmentYawAsHardGate)
-{
-  RejoinTargetSelectorConfig config{};
-  config.default_forward_distance_m = 2.0;
-  config.min_forward_distance_m = 1.0;
-  config.max_forward_distance_m = 4.0;
-
-  RejoinTargetSelector selector(config);
-  const NavigationTask task = makeCurvedTask(1);
-  const RobotState robot = makeRobot(5.0, 0.0, 0.0);
-
-  RouteProgress progress{};
-  progress.task_sequence = 1;
-  progress.arc_length_m = 5.0;
-  progress.remaining_distance_m = 4.2426;
-  progress.total_length_m = 9.2426;
-  progress.route_yaw = 0.0;
-  progress.valid = true;
-
-  NavigationModeStatus mode_status{};
-  mode_status.has_rejoin_anchor = true;
-  mode_status.rejoin_min_arc_length_m = 4.5;
-
-  const auto result = selector.select(
-      task, progress, mode_status, robot, nullptr);
-
-  EXPECT_TRUE(result.valid);
-  EXPECT_GT(result.target_arc_length_m, 5.0);
-  // The target yaw should follow the curve tangent, not be forced to 0.
-  EXPECT_NE(result.target.yaw, 0.0);
 }
 
 // =============================================================================

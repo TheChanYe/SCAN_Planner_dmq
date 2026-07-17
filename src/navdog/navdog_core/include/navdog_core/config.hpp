@@ -131,30 +131,6 @@ struct LimitConfig
 
 struct NavigationModeConfig
 {
-  // BLOCKED 进入正式绕障判断范围。
-  double avoid_enter_distance_m{1.50};
-
-  // 小于等于该距离时，不等待确认，立即进入 LOCAL_AVOID。
-  double avoid_immediate_distance_m{0.80};
-
-  // 普通近距离 BLOCKED 必须连续保持的时间。
-  double avoid_block_confirm_sec{0.20};
-
-  // LOCAL_AVOID 进入后最短保持时间。
-  double local_avoid_min_hold_sec{0.50};
-
-  // 原始路线连续 CLEAR 后才能尝试接回。
-  double route_clear_confirm_sec{0.40};
-
-  // 接回路线的横向误差要求。
-  double rejoin_lateral_tolerance_m{0.20};
-
-  // 12 degrees。
-  double rejoin_heading_tolerance_rad{
-      0.20943951023931953};
-
-  // 横向和航向条件连续满足时间。
-  double rejoin_confirm_sec{0.30};
 };
 
 // =============================================================================
@@ -184,15 +160,13 @@ struct TrajectoryFollowerConfig
   double kp_pos{0.8};
   double kp_yaw{1.5};
 
-  double heading_turn_only_threshold_rad{
-      0.8};
 };
 
 // =============================================================================
-// 5.7e RejoinTargetSelectorConfig
+// 5.7e LocalAvoidTargetConfig
 // =============================================================================
 
-struct RejoinTargetSelectorConfig
+struct LocalAvoidTargetConfig
 {
   double default_forward_distance_m{2.5};
   double min_forward_distance_m{1.0};
@@ -270,7 +244,7 @@ struct NavdogConfig
   NavigationModeConfig navigation_mode{};
   RouteFollowerConfig route_follower{};
   TrajectoryFollowerConfig trajectory_follower{};
-  RejoinTargetSelectorConfig rejoin_target{};
+  LocalAvoidTargetConfig local_avoid_target{};
   GoalControllerConfig goal_controller{};
   PlannerTriggerConfig planner_trigger{};
 };

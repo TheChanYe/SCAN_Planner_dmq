@@ -19,7 +19,6 @@ add_library(navdog_core
   src/navigation_mode_manager.cpp
   src/route_follower.cpp
   src/trajectory_follower.cpp
-  src/rejoin_target_selector.cpp
   src/goal_controller.cpp
   src/safety_supervisor.cpp
 )

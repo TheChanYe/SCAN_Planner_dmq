@@ -44,6 +44,7 @@ private:
   void processEvents();
   void processPlannerAction(const navdog::PlannerAction& action, double now_sec);
   void publishRoute();
+  void publishLocalTrajectory(const navdog::CoreOutput& output);
   void publishOutput(const navdog::CoreOutput& output, double now_sec);
   void publishMqttStatus(const navdog::CoreOutput& output);
 
@@ -61,6 +62,7 @@ private:
 
   ros::Subscriber odom_subscriber_;
   ros::Publisher route_publisher_;
+  ros::Publisher local_trajectory_publisher_;
   ros::Publisher state_publisher_;
   ros::Publisher mode_publisher_;
   ros::Publisher final_cmd_publisher_;
@@ -71,6 +73,8 @@ private:
   navdog::RouteProgress last_route_progress_{};
   navdog::PlannerFeedback pending_planner_feedback_{};
   ros::Time last_status_publish_{};
+  std::uint64_t published_local_plan_sequence_{0};
+  bool local_trajectory_visible_{false};
 };
 
 }  // namespace navdog_runtime
