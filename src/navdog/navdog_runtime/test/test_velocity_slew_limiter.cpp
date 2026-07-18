@@ -59,10 +59,29 @@ TEST(VelocitySlewLimiterTest, DirectionReversalDecelerates)
   limiter.setCurrent(0.20, 0.0, 0.0);
 
   double vx, vy, yaw;
-  // target = -0.20, delta = -0.40, uses decel_limit
+  // target = -0.20, direction reversal: only decelerate toward zero.
   // max change = 0.80 * 0.02 = 0.016
   limiter.update(-0.20, 0.0, 0.0, 0.02, vx, vy, yaw);
   EXPECT_NEAR(vx, 0.20 - 0.016, kTolerance);
+}
+
+TEST(VelocitySlewLimiterTest, DirectionReversalCrossesZero)
+{
+  VelocitySlewLimiter::Config config;
+  config.accel_x = 0.50;
+  config.decel_x = 0.80;
+  VelocitySlewLimiter limiter(config);
+
+  // Small positive current; one decel step is enough to reach zero.
+  limiter.setCurrent(0.01, 0.0, 0.0);
+
+  double vx, vy, yaw;
+  limiter.update(-0.20, 0.0, 0.0, 0.02, vx, vy, yaw);
+  EXPECT_NEAR(vx, 0.0, kTolerance);
+
+  // Next cycle starts accelerating into the negative direction.
+  limiter.update(-0.20, 0.0, 0.0, 0.02, vx, vy, yaw);
+  EXPECT_NEAR(vx, -0.01, kTolerance);
 }
 
 TEST(VelocitySlewLimiterTest, MultipleStepsConverge)
@@ -108,15 +127,23 @@ TEST(VelocitySlewLimiterTest, YawLimitRespected)
   EXPECT_NEAR(yaw, 0.016, kTolerance);
 }
 
-TEST(VelocitySlewLimiterTest, AbnormalDtPassesThrough)
+TEST(VelocitySlewLimiterTest, AbnormalDtKeepsCurrent)
 {
   VelocitySlewLimiter limiter;
+  limiter.setCurrent(0.10, 0.20, 0.30);
+
   double vx, vy, yaw;
-  // dt > 0.2 — should pass through
-  limiter.update(0.50, 0.30, 1.0, 0.5, vx, vy, yaw);
-  EXPECT_NEAR(vx, 0.50, kTolerance);
-  EXPECT_NEAR(vy, 0.30, kTolerance);
-  EXPECT_NEAR(yaw, 1.0, kTolerance);
+  // dt > 0.2 — must keep previous velocity, not jump to target.
+  limiter.update(0.50, 0.80, 1.0, 0.5, vx, vy, yaw);
+  EXPECT_NEAR(vx, 0.10, kTolerance);
+  EXPECT_NEAR(vy, 0.20, kTolerance);
+  EXPECT_NEAR(yaw, 0.30, kTolerance);
+
+  // dt == 0 — same behaviour.
+  limiter.update(0.50, 0.80, 1.0, 0.0, vx, vy, yaw);
+  EXPECT_NEAR(vx, 0.10, kTolerance);
+  EXPECT_NEAR(vy, 0.20, kTolerance);
+  EXPECT_NEAR(yaw, 0.30, kTolerance);
 }
 
 TEST(VelocitySlewLimiterTest, RouteToScanSmoothDeceleration)

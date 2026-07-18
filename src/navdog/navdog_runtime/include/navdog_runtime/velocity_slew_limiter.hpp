@@ -13,16 +13,23 @@ class VelocitySlewLimiter
 public:
   struct Config
   {
-    double accel_x{0.50};
-    double decel_x{0.80};
-    double accel_y{0.25};
-    double decel_y{0.50};
-    double accel_yaw{0.80};
-    double decel_yaw{1.20};
+    double accel_x;
+    double decel_x;
+    double accel_y;
+    double decel_y;
+    double accel_yaw;
+    double decel_yaw;
+    Config()
+        : accel_x(0.50), decel_x(0.80),
+          accel_y(0.25), decel_y(0.50),
+          accel_yaw(0.80), decel_yaw(1.20)
+    {}
   };
 
   VelocitySlewLimiter() {}
-  explicit VelocitySlewLimiter(const Config& config) : config_(config) {}
+  explicit VelocitySlewLimiter(const Config& config)
+      : config_(config)
+  {}
 
   void setConfig(const Config& config) { config_ = config; }
 
@@ -48,12 +55,12 @@ public:
   void update(double target_vx, double target_vy, double target_yaw,
               double dt, double& out_vx, double& out_vy, double& out_yaw)
   {
-    if (dt <= 0.0 || dt > 0.2)
+    if (!std::isfinite(dt) || dt <= 0.0 || dt > 0.2)
     {
-      // Abnormal dt — pass through unchanged.
-      out_vx = vx_ = target_vx;
-      out_vy = vy_ = target_vy;
-      out_yaw = yaw_ = target_yaw;
+      // Abnormal dt — keep previous output, do NOT jump to target.
+      out_vx = vx_;
+      out_vy = vy_;
+      out_yaw = yaw_;
       return;
     }
 
@@ -67,24 +74,41 @@ public:
   }
 
 private:
+  static double clampLocal(double value, double lo, double hi)
+  {
+    return (value < lo) ? lo : (value > hi) ? hi : value;
+  }
+
   static double limitAxis(double current, double target, double dt,
                            double accel_limit, double decel_limit)
   {
+    if (!std::isfinite(current) || !std::isfinite(target) ||
+        !std::isfinite(dt) || dt <= 0.0)
+    {
+      return current;
+    }
+
+    const double accel = std::max(0.0, accel_limit);
+    const double decel = std::max(0.0, decel_limit);
+
+    // Direction reversal: this cycle only decelerates toward zero.
+    if (current * target < 0.0)
+    {
+      const double max_change = decel * dt;
+      if (std::abs(current) <= max_change)
+        return 0.0;
+      return current - std::copysign(max_change, current);
+    }
+
+    const bool increasing = std::abs(target) > std::abs(current);
+    const double rate = increasing ? accel : decel;
+    const double max_change = rate * dt;
     const double delta = target - current;
 
-    if (std::abs(delta) < 1e-6)
+    if (std::abs(delta) <= max_change)
       return target;
 
-    // Determine rate limit based on whether speed magnitude is increasing
-    // or decreasing relative to the current direction.
-    const bool same_direction = (current * delta) >= 0.0;
-    const double rate = same_direction
-        ? (std::abs(target) > std::abs(current) ? accel_limit : decel_limit)
-        : decel_limit;  // Direction reversal: decelerate toward zero first.
-
-    const double max_change = rate * dt;
-    const double clamped_delta = std::max(-max_change, std::min(delta, max_change));
-    return current + clamped_delta;
+    return current + std::copysign(max_change, delta);
   }
 
   Config config_{};

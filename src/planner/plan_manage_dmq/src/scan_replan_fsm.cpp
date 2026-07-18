@@ -446,8 +446,9 @@ namespace scan_planner
       replan_fail_count_ = 0;
       first_replan_failure_time_ = ros::Time(0);
       last_replan_attempt_time_ = ros::Time(0);
+      next_target_retry_time_ = ros::Time(0);
       initial_plan_attempt_count_ = 0;
-      emergency_stop_published_ = false;
+      emergency_stop_active_ = false;
 
       flag_escape_emergency_ = true;
       need_hover_stop_ = false;
@@ -479,7 +480,7 @@ namespace scan_planner
     first_replan_failure_time_ = ros::Time(0);
     continuously_called_times_ = 0;
     initial_plan_attempt_count_ = 0;
-    emergency_stop_published_ = false;
+    emergency_stop_active_ = false;
 
     need_hover_stop_ = false;
     flag_escape_emergency_ = true;
@@ -489,6 +490,7 @@ namespace scan_planner
     last_replan_attempt_time_ = ros::Time(0);
     last_freeze_update_time_ = ros::Time::now();
     next_emergency_retry_time_ = ros::Time(0);
+    next_target_retry_time_ = ros::Time(0);
     last_safety_replan_time_ = ros::Time(0);
 
     start_pt_ = odom_pos_;
@@ -645,17 +647,14 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
-    static int fsm_num = 0;
-    fsm_num++;
-    if (fsm_num == 100)
-    {
-      printFSMExecState();
-      if (!have_odom_)
-        cout << "no odom." << endl;
-      if (!trigger_)
-        cout << "wait for goal." << endl;
-      fsm_num = 0;
-    }
+    static const char* state_names[] = {
+        "INIT", "WAIT_TARGET", "GEN_NEW_TRAJ",
+        "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
+    ROS_DEBUG_THROTTLE(5.0,
+        "SCAN_FSM state=%s trigger=%d target=%d",
+        state_names[int(exec_state_)],
+        static_cast<int>(trigger_),
+        static_cast<int>(have_target_));
 
     switch (exec_state_)
     {
@@ -686,6 +685,13 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
+      // Rate-limit retries when no target is available.
+      if (!next_target_retry_time_.isZero() &&
+          ros::Time::now() < next_target_retry_time_)
+      {
+        break;
+      }
+
       // Rate-limit retries: wait at least 100ms between actual planning
       // attempts so the map has time to update.
       if (!replanRetryReady(0.10))
@@ -695,7 +701,6 @@ namespace scan_planner
 
       // Use independent attempt counter — NOT timesOfConsecutiveStateCalls().
       const int attempt = initial_plan_attempt_count_;
-      ++initial_plan_attempt_count_;
 
       // Alternate between deterministic and random/A* initialization.
       const bool random_init = (attempt % 2) == 1;
@@ -705,28 +710,35 @@ namespace scan_planner
       const double target_cap =
           std::max(1.2, planning_horizon_ - 0.5 * backoff_level);
 
-      ROS_INFO("SCAN_INITIAL_PLAN_ATTEMPT attempt=%d init=%s target_cap=%.2f",
-          attempt,
-          random_init ? "RANDOM" : "DETERMINISTIC",
-          target_cap);
-
       // Preserve previous trajectory on failure.
       const LocalTrajData previous_local =
           planner_manager_->local_data_;
 
-      bool success = callReboundReplan(true, random_init, target_cap);
-      if (success)
+      const ReplanResult result =
+          callReboundReplan(true, random_init, target_cap);
+
+      if (result == ReplanResult::SUCCESS)
       {
         initial_plan_attempt_count_ = 0;
         replan_fail_count_ = 0;
         first_replan_failure_time_ = ros::Time(0);
-        emergency_stop_published_ = false;
+        emergency_stop_active_ = false;
+        next_target_retry_time_ = ros::Time(0);
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
       }
-      else
+      else if (result == ReplanResult::TARGET_UNAVAILABLE)
+      {
+        // No target found — optimizer never ran. Do NOT increment
+        // attempt counter or failure count. Retry after a delay.
+        planner_manager_->local_data_ = previous_local;
+        next_target_retry_time_ =
+            ros::Time::now() + ros::Duration(0.50);
+      }
+      else  // OPTIMIZATION_FAILED
       {
         planner_manager_->local_data_ = previous_local;
+        ++initial_plan_attempt_count_;
 
         if (first_replan_failure_time_.isZero())
           first_replan_failure_time_ = ros::Time::now();
@@ -747,27 +759,36 @@ namespace scan_planner
         break;  // wait for map update, do not count as failure
       }
 
-      if (planFromCurrentTraj())
       {
-        initial_plan_attempt_count_ = 0;
-        replan_fail_count_ = 0;
-        first_replan_failure_time_ = ros::Time(0);
-        emergency_stop_published_ = false;
-        changeFSMExecState(EXEC_TRAJ, "FSM");
+        const ReplanResult result = planFromCurrentTraj();
+        if (result == ReplanResult::SUCCESS)
+        {
+          initial_plan_attempt_count_ = 0;
+          replan_fail_count_ = 0;
+          first_replan_failure_time_ = ros::Time(0);
+          emergency_stop_active_ = false;
+          next_target_retry_time_ = ros::Time(0);
+          changeFSMExecState(EXEC_TRAJ, "FSM");
+        }
+        else if (result == ReplanResult::TARGET_UNAVAILABLE)
+        {
+          // No target — don't count as optimization failure.
+          next_target_retry_time_ =
+              ros::Time::now() + ros::Duration(0.50);
+        }
+        else  // OPTIMIZATION_FAILED
+        {
+          if (first_replan_failure_time_.isZero())
+            first_replan_failure_time_ = ros::Time::now();
+
+          ++replan_fail_count_;
+
+          ROS_WARN_THROTTLE(
+              1.0,
+              "SCAN_REPLAN_FAILED count=%d",
+              replan_fail_count_);
+        }
       }
-      else
-      {
-        if (first_replan_failure_time_.isZero())
-          first_replan_failure_time_ = ros::Time::now();
-
-        ++replan_fail_count_;
-
-        ROS_WARN_THROTTLE(
-            1.0,
-            "SCAN_REPLAN_FAILED count=%d",
-            replan_fail_count_);
-      }
-
       break;
     }
 
@@ -859,10 +880,10 @@ namespace scan_planner
       {
         // Only publish the emergency stop spline once per continuous
         // failure cycle — do not regenerate a new trajectory_id each time.
-        if (!emergency_stop_published_)
+        if (!emergency_stop_active_)
         {
           callEmergencyStop(odom_pos_);
-          emergency_stop_published_ = true;
+          emergency_stop_active_ = true;
         }
       }
       else
@@ -920,7 +941,7 @@ namespace scan_planner
       // planning failure; stop first, then retry against the updated map.
       need_hover_stop_ = !keep_reference_path;
       flag_escape_emergency_ = true;
-      emergency_stop_published_ = false;
+      emergency_stop_active_ = false;
       next_emergency_retry_time_ =
           ros::Time::now() + ros::Duration(emergency_retry_interval_sec_);
       changeFSMExecState(EMERGENCY_STOP, "finishProcess");
@@ -943,7 +964,7 @@ namespace scan_planner
     return true;
   }
 
-  bool SCANReplanFSM::planFromCurrentTraj()
+  SCANReplanFSM::ReplanResult SCANReplanFSM::planFromCurrentTraj()
   {
     LocalTrajData *info = &planner_manager_->local_data_;
     ros::Time time_now = ros::Time::now();
@@ -975,11 +996,11 @@ namespace scan_planner
             Eigen::Vector3d::Zero()))
     {
       ROS_ERROR("[navi_mode=%d] Unable to refresh global trajectory from odom to current target.", navi_mode_);
-      return false;
+      return ReplanResult::OPTIMIZATION_FAILED;
     }
 
     if (!adjustGlobalTargetIfOccupied())
-      return false;
+      return ReplanResult::OPTIMIZATION_FAILED;
 
     // Preserve the previous trajectory so a failed replan does not
     // destroy a still-executable B-spline.
@@ -989,47 +1010,45 @@ namespace scan_planner
     if (navi_mode_ == NAVI_MODE::REFERENCE_PATH)
     {
       // First priority: continue the current executable trajectory.
-      bool success = callReboundReplan(false, false, planning_horizon_);
-      if (success)
+      ReplanResult result = callReboundReplan(false, false, planning_horizon_);
+      if (result == ReplanResult::SUCCESS)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=CONTINUATION");
-        return true;
+        return ReplanResult::SUCCESS;
       }
 
       // Second priority: regenerate a deterministic polynomial initial traj.
-      success = callReboundReplan(true, false, planning_horizon_);
-      if (success)
+      result = callReboundReplan(true, false, planning_horizon_);
+      if (result == ReplanResult::SUCCESS)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=DETERMINISTIC");
-        return true;
+        return ReplanResult::SUCCESS;
       }
 
       // Third priority: random / A* initialization.
-      success = callReboundReplan(true, true, planning_horizon_);
-      if (success)
+      result = callReboundReplan(true, true, planning_horizon_);
+      if (result == ReplanResult::SUCCESS)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=RANDOM");
-        return true;
+        return ReplanResult::SUCCESS;
       }
 
       // All three failed — restore the previous trajectory.
       planner_manager_->local_data_ = previous_local;
-      return false;
+      return result;
     }
 
     // Non-reference-path modes: deterministic then random.
-    bool success = callReboundReplan(true, false, planning_horizon_);
-    if (!success)
-    {
-      success = callReboundReplan(true, true, planning_horizon_);
-      if (!success)
-      {
-        planner_manager_->local_data_ = previous_local;
-        return false;
-      }
-    }
+    ReplanResult result = callReboundReplan(true, false, planning_horizon_);
+    if (result == ReplanResult::SUCCESS)
+      return ReplanResult::SUCCESS;
 
-    return true;
+    result = callReboundReplan(true, true, planning_horizon_);
+    if (result == ReplanResult::SUCCESS)
+      return ReplanResult::SUCCESS;
+
+    planner_manager_->local_data_ = previous_local;
+    return result;
   }
 
   bool SCANReplanFSM::localTrajectoryIsSafe(
@@ -1129,7 +1148,7 @@ namespace scan_planner
           ROS_WARN("SCAN_SAFETY_REPLAN urgency=EMERGENCY "
                    "collision_time_ahead=%.2f",
                    collision_time_ahead);
-          if (planFromCurrentTraj())
+          if (planFromCurrentTraj() == ReplanResult::SUCCESS)
           {
             last_safety_replan_time_ = now;
             changeFSMExecState(EXEC_TRAJ, "SAFETY");
@@ -1161,7 +1180,7 @@ namespace scan_planner
             ROS_WARN("SCAN_SAFETY_REPLAN urgency=NEAR "
                      "collision_time_ahead=%.2f action=DIRECT_REPLAN",
                      collision_time_ahead);
-            if (planFromCurrentTraj())
+            if (planFromCurrentTraj() == ReplanResult::SUCCESS)
             {
               last_safety_replan_time_ = now;
               changeFSMExecState(EXEC_TRAJ, "SAFETY");
@@ -1184,19 +1203,19 @@ namespace scan_planner
     }
   }
 
-  bool SCANReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
-                                        double target_distance_cap_m)
+  SCANReplanFSM::ReplanResult SCANReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
+                                                              double target_distance_cap_m)
   {
 
     if (!getLocalTarget(target_distance_cap_m))
     {
       ROS_WARN_THROTTLE(
-          1.0,
-          "SCAN_LOCAL_TARGET_UNAVAILABLE retry_count=%d "
-          "start=(%.2f,%.2f)",
-          replan_fail_count_,
-          start_pt_(0), start_pt_(1));
-      return false;
+          2.0,
+          "SCAN_LOCAL_TARGET_UNAVAILABLE "
+          "start=(%.2f,%.2f) dist_to_goal=%.3f",
+          start_pt_(0), start_pt_(1),
+          (end_pt_ - start_pt_).head<2>().norm());
+      return ReplanResult::TARGET_UNAVAILABLE;
     }
 
     // Never pass NaN/Inf into SCAN optimizer.
@@ -1215,7 +1234,7 @@ namespace scan_planner
           local_target_pt_(0),
           local_target_pt_(1),
           local_target_pt_(2));
-      return false;
+      return ReplanResult::TARGET_UNAVAILABLE;
     }
 
     const LocalTrajData previous_local_trajectory =
@@ -1275,9 +1294,11 @@ namespace scan_planner
       bspline_pub_.publish(bspline);
 
       visualization_->displayOptimalTraj(info->position_traj_, 0);
+
+      return ReplanResult::SUCCESS;
     }
 
-    return plan_success;
+    return ReplanResult::OPTIMIZATION_FAILED;
   }
 
   bool SCANReplanFSM::callEmergencyStop(Eigen::Vector3d stop_pos)
@@ -1473,10 +1494,45 @@ namespace scan_planner
       return true;
     }
 
-    // --- no safe target found ------------------------------------------
+    // --- Phase 3: near-global-goal fallback --------------------------------
+    // When the robot is within (no_replan_thresh_, min_target_dist) of the
+    // final global target and the final target itself is free, plan directly
+    // to it. This eliminates the 0.1~0.8 m dead zone where no ordinary route
+    // sample satisfies the 0.8 m minimum-distance rule.
+    const Eigen::Vector3d final_target =
+        global_data.getPosition(duration);
+
+    const double final_target_dist =
+        (final_target - start_pt_).head<2>().norm();
+
+    if (final_target.allFinite() &&
+        final_target_dist > no_replan_thresh_ &&
+        final_target_dist < min_target_dist &&
+        targetIsFree(final_target))
+    {
+      local_target_pt_ = final_target;
+      local_target_vel_.setZero();
+
+      ROS_INFO(
+          "SCAN_LOCAL_TARGET_SELECTED "
+          "reason=NEAR_GLOBAL_GOAL "
+          "target=(%.2f,%.2f,%.2f) dist=%.3f",
+          local_target_pt_(0),
+          local_target_pt_(1),
+          local_target_pt_(2),
+          final_target_dist);
+
+      return true;
+    }
+
+    // --- no safe target found ----------------------------------------------
     ROS_WARN_THROTTLE(
-        1.0,
-        "[getLocalTarget] no safe local target; wait for map update");
+        2.0,
+        "SCAN_LOCAL_TARGET_UNAVAILABLE "
+        "start=(%.2f,%.2f) dist_to_goal=%.3f",
+        start_pt_(0),
+        start_pt_(1),
+        (end_pt_ - start_pt_).head<2>().norm());
 
     return false;
   }

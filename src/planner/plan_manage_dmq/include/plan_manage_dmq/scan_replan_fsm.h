@@ -78,10 +78,11 @@ namespace scan_planner
     ros::Time last_freeze_update_time_;
     ros::Time last_replan_attempt_time_;
     ros::Time next_emergency_retry_time_;
+    ros::Time next_target_retry_time_{0};
 
     // Independent initial planning attempt counter (not tied to FSM state).
     int initial_plan_attempt_count_{0};
-    bool emergency_stop_published_{false};
+    bool emergency_stop_active_{false};
     double emergency_retry_interval_sec_{0.50};
 
     // Safety replan triage parameters.
@@ -107,11 +108,18 @@ namespace scan_planner
     ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_;
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
 
+    enum class ReplanResult
+    {
+      SUCCESS,
+      TARGET_UNAVAILABLE,
+      OPTIMIZATION_FAILED
+    };
+
     /* helper functions */
-    bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
-                           double target_distance_cap_m); // front-end and back-end method
-    bool callEmergencyStop(Eigen::Vector3d stop_pos);     // front-end and back-end method
-    bool planFromCurrentTraj();
+    ReplanResult callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
+                                   double target_distance_cap_m); // front-end and back-end method
+    bool callEmergencyStop(Eigen::Vector3d stop_pos);             // front-end and back-end method
+    ReplanResult planFromCurrentTraj();
     bool replanRetryReady(double interval_sec);
     bool localTrajectoryIsSafe(double &collision_time_sec);
     void setStartStateFromOdomOrCurrentTraj();
