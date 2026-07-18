@@ -13,6 +13,7 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <ros/ros.h>
+#include <std_msgs/Empty.h>
 #include <std_msgs/UInt8.h>
 
 #include <memory>
@@ -40,6 +41,8 @@ private:
   void controlCallback(const ros::TimerEvent&);
   void processEvents();
   void processPlannerAction(const navdog::PlannerAction& action, double now_sec);
+  void resetNativeScan(const char* reason);
+  void scheduleNativeScanReferencePath();
   void publishRoute();
   void publishNativeScanReferencePath(const navdog::RouteProgress& progress);
   void publishOutput(const navdog::CoreOutput& output, double now_sec);
@@ -57,6 +60,7 @@ private:
   ros::Subscriber odom_subscriber_;
   ros::Publisher route_publisher_;
   ros::Publisher native_scan_path_publisher_;
+  ros::Publisher native_scan_reset_publisher_;
   ros::Publisher state_publisher_;
   ros::Publisher mode_publisher_;
   ros::Publisher final_cmd_publisher_;
@@ -67,6 +71,9 @@ private:
   navdog::RouteProgress last_route_progress_{};
   navdog::PlannerFeedback pending_planner_feedback_{};
   ros::Time last_status_publish_{};
+
+  bool pending_native_scan_path_{false};
+  ros::Time native_scan_reset_time_{};
   double body_height_{0.3};
 };
 

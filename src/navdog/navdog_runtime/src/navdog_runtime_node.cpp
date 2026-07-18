@@ -78,6 +78,9 @@ bool NavdogRuntimeNode::initialize()
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
   native_scan_path_publisher_ =
       nh_.advertise<nav_msgs::Path>("/native_scan/initial_path", 1, true);
+  native_scan_reset_publisher_ =
+      nh_.advertise<std_msgs::Empty>(
+          "/native_scan/reset", 1, false);
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
@@ -122,6 +125,7 @@ void NavdogRuntimeNode::processEvents()
     const auto result = coordinator_->handleEvent(std::move(event));
     if (result == navdog_task::TaskHandleResult::STARTED)
     {
+      resetNativeScan("TASK_STARTED");
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
       ROS_INFO("navigation task started: sequence=%lu",
@@ -129,6 +133,7 @@ void NavdogRuntimeNode::processEvents()
     }
     else if (result == navdog_task::TaskHandleResult::CANCELLED)
     {
+      resetNativeScan("TASK_CANCELLED");
       last_route_progress_ = navdog::RouteProgress{};
       pending_planner_feedback_ = navdog::PlannerFeedback{};
       route_publisher_.publish(nav_msgs::Path{});
@@ -189,16 +194,20 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
           navigationModeName(output.navigation_mode.previous_mode),
           navigationModeName(output.navigation_mode.mode),
           input.route_corridor_observation.first_blocked_distance_ahead_m);
-      publishNativeScanReferencePath(last_route_progress_);
+      resetNativeScan("LOCAL_AVOID_ENTER");
+      pending_native_scan_path_ = true;
     }
     else if (output.navigation_mode.previous_mode ==
                  navdog::NavigationMode::LOCAL_AVOID)
     {
+      resetNativeScan("LOCAL_AVOID_EXIT");
       ROS_INFO("NAV_MODE %s -> %s front=2.500 left=0.600 right=0.600 clear=true",
           navigationModeName(output.navigation_mode.previous_mode),
           navigationModeName(output.navigation_mode.mode));
     }
   }
+  // Deferred native scan reference path: ensure reset arrives before path
+  scheduleNativeScanReferencePath();
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
   publishOutput(output, now_sec);
@@ -259,6 +268,27 @@ void NavdogRuntimeNode::publishRoute()
   route_publisher_.publish(path);
 }
 
+void NavdogRuntimeNode::resetNativeScan(const char* reason)
+{
+  native_scan_reset_publisher_.publish(std_msgs::Empty{});
+
+  pending_native_scan_path_ = false;
+  native_scan_reset_time_ = ros::Time::now();
+
+  ROS_WARN("NATIVE_SCAN_RESET reason=%s",
+      reason ? reason : "UNKNOWN");
+}
+
+void NavdogRuntimeNode::scheduleNativeScanReferencePath()
+{
+  if (pending_native_scan_path_ &&
+      (ros::Time::now() - native_scan_reset_time_).toSec() >= 0.02)
+  {
+    publishNativeScanReferencePath(last_route_progress_);
+    pending_native_scan_path_ = false;
+  }
+}
+
 void NavdogRuntimeNode::publishNativeScanReferencePath(
     const navdog::RouteProgress& progress)
 {
@@ -268,6 +298,19 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
   const auto& route = coordinator_->routeManager().route();
   if (route.size() < 2)
     return;
+
+  // Determine the first remaining route index from progress.
+  // Never re-send waypoints the robot has already passed.
+  std::size_t first_remaining_index = 0;
+  if (progress.valid &&
+      progress.task_sequence ==
+          coordinator_->taskSession().sequence)
+  {
+    first_remaining_index =
+        std::min(
+            progress.segment_index + 1,
+            route.size() - 1);
+  }
 
   nav_msgs::Path path;
   path.header.stamp = ros::Time::now();
@@ -285,10 +328,11 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
     path.poses.push_back(pose);
   }
 
-  // Remaining points: all route waypoints.
+  // Remaining points: only waypoints after the current progress segment.
   // Z coordinate: route_point.z - body_height_ (convert body height to ground reference)
-  for (const auto& point : route)
+  for (std::size_t i = first_remaining_index; i < route.size(); ++i)
   {
+    const auto& point = route[i];
     geometry_msgs::PoseStamped pose;
     pose.header = path.header;
     pose.pose.position.x = point.x;
@@ -300,8 +344,10 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
   }
 
   native_scan_path_publisher_.publish(path);
-  ROS_INFO("NATIVE_SCAN_PATH_PUBLISHED points=%lu",
-      static_cast<unsigned long>(path.poses.size()));
+  ROS_INFO("NATIVE_SCAN_PATH_PUBLISHED points=%lu "
+           "first_remaining_index=%lu",
+      static_cast<unsigned long>(path.poses.size()),
+      static_cast<unsigned long>(first_remaining_index));
 }
 
 void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,

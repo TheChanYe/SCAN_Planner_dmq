@@ -73,9 +73,11 @@ namespace scan_planner
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
-    int max_replan_fail_count_{30};
+    int max_replan_fail_count_{8};
+    ros::Time first_replan_failure_time_;
     ros::Time last_freeze_update_time_;
     ros::Time last_replan_attempt_time_;
+    ros::Time next_emergency_retry_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;
@@ -98,6 +100,7 @@ namespace scan_planner
     bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method
     bool callEmergencyStop(Eigen::Vector3d stop_pos);                          // front-end and back-end method
     bool planFromCurrentTraj();
+    bool replanRetryReady(double interval_sec);
     bool localTrajectoryIsSafe(double &collision_time_sec);
     void setStartStateFromOdomOrCurrentTraj();
 

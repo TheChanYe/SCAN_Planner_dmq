@@ -31,6 +31,22 @@ namespace scan_planner
 
     ~GlobalTrajData() {}
 
+    void reset()
+    {
+      global_duration_ = 0.0;
+      global_start_time_ = ros::Time(0);
+
+      local_start_time_ = -1.0;
+      local_end_time_ = -1.0;
+
+      time_increase_ = 0.0;
+      last_time_inc_ = 0.0;
+      last_progress_time_ = 0.0;
+
+      local_traj_.clear();
+      global_traj_ = PolynomialTraj();
+    }
+
     bool localTrajReachTarget() { return fabs(local_end_time_ - global_duration_) < 0.1; }
 
     void setGlobalTraj(const PolynomialTraj &traj, const ros::Time &time)
@@ -213,6 +229,19 @@ namespace scan_planner
     ros::Time start_time_;
     Eigen::Vector3d start_pos_;
     UniformBspline position_traj_, velocity_traj_, acceleration_traj_;
+
+    void reset()
+    {
+      traj_id_ = 0;
+      duration_ = 0.0;
+      global_time_offset = 0.0;
+      start_time_ = ros::Time(0);
+      start_pos_.setZero();
+
+      position_traj_ = UniformBspline();
+      velocity_traj_ = UniformBspline();
+      acceleration_traj_ = UniformBspline();
+    }
   };
 
 } // namespace scan_planner
