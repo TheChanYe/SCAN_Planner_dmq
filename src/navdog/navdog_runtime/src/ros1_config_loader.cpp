@@ -32,6 +32,14 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("safety/obstacle_timeout_sec", c.safety.obstacle_timeout_sec);
   LOAD("safety/planner_cmd_timeout_sec", c.safety.planner_cmd_timeout_sec);
   LOAD("safety/future_tolerance_sec", c.safety.future_tolerance_sec);
+  LOAD("navigation_mode/enter_blocked_distance_m", c.navigation_mode.enter_blocked_distance_m);
+  LOAD("navigation_mode/enter_confirm_sec", c.navigation_mode.enter_confirm_sec);
+  LOAD("navigation_mode/immediate_enter_distance_m", c.navigation_mode.immediate_enter_distance_m);
+  LOAD("navigation_mode/min_local_avoid_hold_sec", c.navigation_mode.min_local_avoid_hold_sec);
+  LOAD("navigation_mode/exit_clear_confirm_sec", c.navigation_mode.exit_clear_confirm_sec);
+  LOAD("navigation_mode/exit_front_clearance_m", c.navigation_mode.exit_front_clearance_m);
+  LOAD("navigation_mode/exit_left_clearance_m", c.navigation_mode.exit_left_clearance_m);
+  LOAD("navigation_mode/exit_right_clearance_m", c.navigation_mode.exit_right_clearance_m);
   LOAD("limits/max_vx", c.limits.max_vx);
   LOAD("limits/max_vy", c.limits.max_vy);
   LOAD("limits/max_yaw_rate", c.limits.max_yaw_rate);

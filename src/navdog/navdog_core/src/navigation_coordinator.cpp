@@ -828,6 +828,7 @@ CoreOutput NavigationCoordinator::update(
                       input.robot,
                       progress_output.progress,
                       obs_output,
+                      input.obstacles,
                       now_sec);
 
               const bool corridor_available =

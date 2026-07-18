@@ -73,11 +73,17 @@ namespace scan_planner
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
-    int max_replan_fail_count_{8};
+    int max_replan_fail_count_{12};
     ros::Time first_replan_failure_time_;
     ros::Time last_freeze_update_time_;
     ros::Time last_replan_attempt_time_;
     ros::Time next_emergency_retry_time_;
+
+    // Safety replan triage parameters.
+    double safety_immediate_replan_sec_{1.0};
+    double safety_direct_replan_sec_{3.0};
+    double safety_replan_cooldown_sec_{0.20};
+    ros::Time last_safety_replan_time_;
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;

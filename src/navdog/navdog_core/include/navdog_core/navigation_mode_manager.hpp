@@ -59,6 +59,7 @@ public:
       const RobotState& robot,
       const RouteProgress& progress,
       const RouteCorridorObservationOutput& corridor,
+      const ObstacleSummary& obstacles,
       double now_sec);
 
   const NavigationModeStatus& status() const noexcept;
@@ -93,6 +94,12 @@ private:
   NavigationModeStatus status_{};
 
   std::uint64_t active_task_sequence_{0};
+
+  double blocked_candidate_start_sec_{0.0};
+  bool blocked_candidate_active_{false};
+
+  double clear_candidate_start_sec_{0.0};
+  bool clear_candidate_active_{false};
 
   double last_update_stamp_sec_{0.0};
   bool has_last_update_stamp_{false};

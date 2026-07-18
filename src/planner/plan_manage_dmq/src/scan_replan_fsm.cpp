@@ -46,12 +46,15 @@ namespace scan_planner
     nh.param("fsm/planning_horizon", planning_horizon_, -1.0);
     nh.param("fsm/emergency_time_", emergency_time_, 1.0);
     nh.param("fsm/fail_safe", enable_fail_safe_, true);
-    nh.param("fsm/max_replan_fail_count", max_replan_fail_count_, 8);
+    nh.param("fsm/max_replan_fail_count", max_replan_fail_count_, 12);
+    nh.param("fsm/safety_immediate_replan_sec", safety_immediate_replan_sec_, 1.0);
+    nh.param("fsm/safety_direct_replan_sec", safety_direct_replan_sec_, 3.0);
+    nh.param("fsm/safety_replan_cooldown_sec", safety_replan_cooldown_sec_, 0.20);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
     nh.param("grid_map/double_cylinder_offset", self_double_cylinder_offset_, 0.0);
-    nh.param("grid_map/double_cylinder_offset", body_height_, 0.4);
+    nh.param("grid_map/body_height", body_height_, 0.30);
     nh.param("grid_map/frame_id", self_inflation_frame_id_, std::string("world"));
 
     if (navi_mode_ == NAVI_MODE::PRESET_TARGET)
@@ -82,6 +85,32 @@ namespace scan_planner
         nh.param("fsm/waypoint" + to_string(i) + "_z", preset_waypoints_[i](2), -1.0);
       }
     }
+
+    // Validate safety replan parameters.
+    if (safety_immediate_replan_sec_ <= 0.0 ||
+        safety_direct_replan_sec_ < safety_immediate_replan_sec_ ||
+        safety_replan_cooldown_sec_ < 0.0)
+    {
+      ROS_FATAL("[SCANReplanFSM] Invalid safety replan params: "
+                "immediate=%.3f direct=%.3f cooldown=%.3f",
+                safety_immediate_replan_sec_,
+                safety_direct_replan_sec_,
+                safety_replan_cooldown_sec_);
+      ros::shutdown();
+      return;
+    }
+
+    ROS_INFO("SCAN_BODY_MODEL radius=%.3f offset=%.3f "
+             "body_height=%.3f z_up=%.3f z_down=%.3f",
+        self_double_cylinder_radius_, self_double_cylinder_offset_,
+        body_height_, self_inflation_z_up_, self_inflation_z_down_);
+
+    ROS_INFO("SCAN_REPLAN_CONFIG max_fail_count=%d "
+             "immediate_sec=%.3f direct_sec=%.3f cooldown_sec=%.3f "
+             "planning_horizon=%.3f",
+        max_replan_fail_count_, safety_immediate_replan_sec_,
+        safety_direct_replan_sec_, safety_replan_cooldown_sec_,
+        planning_horizon_);
 
     /* initialize main modules */
     visualization_.reset(new PlanningVisualization(nh));
@@ -455,6 +484,7 @@ namespace scan_planner
     last_replan_attempt_time_ = ros::Time(0);
     last_freeze_update_time_ = ros::Time::now();
     next_emergency_retry_time_ = ros::Time(0);
+    last_safety_replan_time_ = ros::Time(0);
 
     start_pt_ = odom_pos_;
     start_vel_.setZero();
@@ -847,7 +877,7 @@ namespace scan_planner
         replan_fail_count_ >= max_replan_fail_count_;
     const bool exceeded_duration =
         !first_replan_failure_time_.isZero() &&
-        (now - first_replan_failure_time_).toSec() >= 0.8;
+        (now - first_replan_failure_time_).toSec() >= 1.0;
 
     if (exceeded_count && exceeded_duration)
     {
@@ -1058,7 +1088,7 @@ namespace scan_planner
     double t_2_3 = info->duration_ * 2 / 3;
     for (double t = t_cur; t < info->duration_; t += time_step)
     {
-      if (t_cur < t_2_3 && t >= t_2_3) // If t_cur < t_2_3, only the first 2/3 partition of the trajectory is considered valid and will get checked.
+      if (t_cur < t_2_3 && t >= t_2_3)
         break;
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t);
@@ -1066,29 +1096,64 @@ namespace scan_planner
       if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
       {
         const double collision_time_ahead = t - t_cur;
-        ROS_WARN("SCAN_SAFETY_REPLAN trajectory_id=%d "
-                 "collision_time_ahead=%.2f",
-                 info->traj_id_, collision_time_ahead);
-        if (planFromCurrentTraj()) // Make a chance
+
+        // --- A-class: emergency collision ---
+        if (collision_time_ahead <= safety_immediate_replan_sec_)
         {
-          changeFSMExecState(EXEC_TRAJ, "SAFETY");
-          return;
-        }
-        else
-        {
-          if (t - t_cur < emergency_time_) // 0.8s of emergency time
+          ROS_WARN("SCAN_SAFETY_REPLAN urgency=EMERGENCY "
+                   "collision_time_ahead=%.2f",
+                   collision_time_ahead);
+          if (planFromCurrentTraj())
           {
-            ROS_WARN("Suddenly discovered obstacles. emergency stop! time=%f", t - t_cur);
-            changeFSMExecState(EMERGENCY_STOP, "SAFETY");
+            last_safety_replan_time_ = now;
+            changeFSMExecState(EXEC_TRAJ, "SAFETY");
           }
           else
           {
-            //ROS_WARN("current traj in collision, replan.");
-            changeFSMExecState(REPLAN_TRAJ, "SAFETY");
+            changeFSMExecState(EMERGENCY_STOP, "SAFETY_EMERGENCY");
           }
           return;
         }
-        break;
+
+        // --- B-class: near collision ---
+        if (collision_time_ahead <= safety_direct_replan_sec_)
+        {
+          const double cooldown_elapsed =
+              (now - last_safety_replan_time_).toSec();
+          if (!last_safety_replan_time_.isZero() &&
+              cooldown_elapsed < safety_replan_cooldown_sec_)
+          {
+            ROS_WARN("SCAN_SAFETY_REPLAN urgency=NEAR "
+                     "collision_time_ahead=%.2f action=QUEUE_REPLAN "
+                     "cooldown_remaining=%.2f",
+                     collision_time_ahead,
+                     safety_replan_cooldown_sec_ - cooldown_elapsed);
+            changeFSMExecState(REPLAN_TRAJ, "SAFETY_NEAR");
+          }
+          else
+          {
+            ROS_WARN("SCAN_SAFETY_REPLAN urgency=NEAR "
+                     "collision_time_ahead=%.2f action=DIRECT_REPLAN",
+                     collision_time_ahead);
+            if (planFromCurrentTraj())
+            {
+              last_safety_replan_time_ = now;
+              changeFSMExecState(EXEC_TRAJ, "SAFETY");
+            }
+            else
+            {
+              changeFSMExecState(REPLAN_TRAJ, "SAFETY_NEAR_FAIL");
+            }
+          }
+          return;
+        }
+
+        // --- C-class: far collision ---
+        ROS_WARN("SCAN_SAFETY_REPLAN urgency=FAR "
+                 "collision_time_ahead=%.2f action=QUEUE_REPLAN",
+                 collision_time_ahead);
+        changeFSMExecState(REPLAN_TRAJ, "SAFETY_FAR");
+        return;
       }
     }
   }

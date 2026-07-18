@@ -88,6 +88,16 @@ bool NavdogRuntimeNode::initialize()
       io.final_cmd_topic, 1);
   control_timer_ = nh_.createTimer(ros::Duration(1.0 / io.control_rate_hz),
       &NavdogRuntimeNode::controlCallback, this);
+
+  const auto& nm = application_config_.core.navigation_mode;
+  ROS_INFO("NAV_MODE_CONFIG enter_dist=%.3f enter_confirm=%.3f "
+           "immediate_dist=%.3f min_avoid_hold=%.3f "
+           "exit_confirm=%.3f exit_front=%.3f exit_left=%.3f exit_right=%.3f",
+      nm.enter_blocked_distance_m, nm.enter_confirm_sec,
+      nm.immediate_enter_distance_m, nm.min_local_avoid_hold_sec,
+      nm.exit_clear_confirm_sec, nm.exit_front_clearance_m,
+      nm.exit_left_clearance_m, nm.exit_right_clearance_m);
+
   return true;
 }
 
@@ -190,7 +200,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
-      ROS_INFO("NAV_MODE %s -> %s blocked_forward=%.3f blocked_lateral=0.600",
+      ROS_INFO("NAV_MODE %s -> %s blocked_forward=%.3f",
           navigationModeName(output.navigation_mode.previous_mode),
           navigationModeName(output.navigation_mode.mode),
           input.route_corridor_observation.first_blocked_distance_ahead_m);
@@ -201,9 +211,12 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
                  navdog::NavigationMode::LOCAL_AVOID)
     {
       resetNativeScan("LOCAL_AVOID_EXIT");
-      ROS_INFO("NAV_MODE %s -> %s front=2.500 left=0.600 right=0.600 clear=true",
+      ROS_INFO("NAV_MODE %s -> %s front_min=%.3f left_min=%.3f right_min=%.3f",
           navigationModeName(output.navigation_mode.previous_mode),
-          navigationModeName(output.navigation_mode.mode));
+          navigationModeName(output.navigation_mode.mode),
+          input.obstacles.front_min,
+          input.obstacles.left_min,
+          input.obstacles.right_min);
     }
   }
   // Deferred native scan reference path: ensure reset arrives before path

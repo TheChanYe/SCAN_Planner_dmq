@@ -1,6 +1,7 @@
 #include "navdog_core/navigation_mode_manager.hpp"
 
 #include <cmath>
+#include <cstdio>
 
 namespace navdog
 {
@@ -8,7 +9,6 @@ namespace navdog
 namespace
 {
 constexpr double kTimeEpsilonSec = 1e-9;
-constexpr double kAvoidLookaheadM = 2.0;
 }
 
 NavigationModeManager::NavigationModeManager(
@@ -23,10 +23,30 @@ void NavigationModeManager::reset() noexcept
   active_task_sequence_ = 0;
   last_update_stamp_sec_ = 0.0;
   has_last_update_stamp_ = false;
+
+  blocked_candidate_active_ = false;
+  blocked_candidate_start_sec_ = 0.0;
+  clear_candidate_active_ = false;
+  clear_candidate_start_sec_ = 0.0;
 }
 
 bool NavigationModeManager::isConfigValid() const noexcept
 {
+  if (config_.enter_confirm_sec < 0.0)
+    return false;
+  if (config_.exit_clear_confirm_sec < 0.0)
+    return false;
+  if (config_.immediate_enter_distance_m <= 0.0)
+    return false;
+  if (config_.immediate_enter_distance_m >
+      config_.enter_blocked_distance_m)
+    return false;
+  if (config_.exit_front_clearance_m < 0.0)
+    return false;
+  if (config_.exit_left_clearance_m < 0.0)
+    return false;
+  if (config_.exit_right_clearance_m < 0.0)
+    return false;
   return true;
 }
 
@@ -83,6 +103,11 @@ void NavigationModeManager::initializeForTask(
   status_.mode_enter_stamp_sec = now_sec;
   status_.transition_stamp_sec = now_sec;
   active_task_sequence_ = task.sequence;
+
+  blocked_candidate_active_ = false;
+  blocked_candidate_start_sec_ = 0.0;
+  clear_candidate_active_ = false;
+  clear_candidate_start_sec_ = 0.0;
 }
 
 void NavigationModeManager::transitionTo(
@@ -103,6 +128,12 @@ void NavigationModeManager::transitionTo(
       : ReferenceIntent::GLOBAL_ROUTE;
   if (new_mode == NavigationMode::LOCAL_AVOID)
     ++status_.avoidance_cycle_count;
+
+  // Clear candidate timers on any transition.
+  blocked_candidate_active_ = false;
+  blocked_candidate_start_sec_ = 0.0;
+  clear_candidate_active_ = false;
+  clear_candidate_start_sec_ = 0.0;
 }
 
 NavigationModeOutput NavigationModeManager::update(
@@ -110,6 +141,7 @@ NavigationModeOutput NavigationModeManager::update(
     const RobotState& robot,
     const RouteProgress& progress,
     const RouteCorridorObservationOutput& corridor,
+    const ObstacleSummary& obstacles,
     double now_sec)
 {
   NavigationModeOutput output{};
@@ -201,28 +233,144 @@ NavigationModeOutput NavigationModeManager::update(
   const bool blocked_in_avoid_range = is_blocked &&
       std::isfinite(corridor.assessment.first_blocked_distance_ahead_m) &&
       corridor.assessment.first_blocked_distance_ahead_m <=
-          kAvoidLookaheadM + kTimeEpsilonSec;
+          config_.enter_blocked_distance_m + kTimeEpsilonSec;
   status_.route_blocked_near = blocked_in_avoid_range;
 
+  status_.blocked_confirm_elapsed_sec =
+      blocked_candidate_active_ ? (now_sec - blocked_candidate_start_sec_) : 0.0;
+  status_.clear_confirm_elapsed_sec =
+      clear_candidate_active_ ? (now_sec - clear_candidate_start_sec_) : 0.0;
+
+  // --- ROUTE_FOLLOW → LOCAL_AVOID ---
   if (status_.mode == NavigationMode::ROUTE_FOLLOW &&
       blocked_in_avoid_range)
   {
-    if (status_.avoidance_allowed)
-      transitionTo(NavigationMode::LOCAL_AVOID,
-          NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
-    else
+    if (!status_.avoidance_allowed)
+    {
       status_.reason = NavigationModeReason::ROUTE_ONLY_BLOCKED;
+    }
+    else
+    {
+      const double blocked_dist =
+          corridor.assessment.first_blocked_distance_ahead_m;
+
+      // Immediate enter for very close obstacles.
+      if (blocked_dist <= config_.immediate_enter_distance_m)
+      {
+        blocked_candidate_active_ = false;
+        blocked_candidate_start_sec_ = 0.0;
+
+        std::printf("NAV_MODE ROUTE_FOLLOW -> LOCAL_AVOID "
+                    "blocked_forward=%.3f confirm_hold=0.000 immediate=true\n",
+                    blocked_dist);
+        std::fflush(stdout);
+
+        transitionTo(NavigationMode::LOCAL_AVOID,
+            NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
+      }
+      else
+      {
+        // Start or continue confirmation timer.
+        if (!blocked_candidate_active_)
+        {
+          blocked_candidate_active_ = true;
+          blocked_candidate_start_sec_ = now_sec;
+        }
+
+        const double held = now_sec - blocked_candidate_start_sec_;
+        if (held >= config_.enter_confirm_sec)
+        {
+          blocked_candidate_active_ = false;
+          blocked_candidate_start_sec_ = 0.0;
+
+          std::printf("NAV_MODE ROUTE_FOLLOW -> LOCAL_AVOID "
+                      "blocked_forward=%.3f confirm_hold=%.3f immediate=false\n",
+                      blocked_dist, held);
+          std::fflush(stdout);
+
+          transitionTo(NavigationMode::LOCAL_AVOID,
+              NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
+        }
+      }
+    }
   }
-  else if (status_.mode == NavigationMode::LOCAL_AVOID && is_clear)
+  // --- LOCAL_AVOID → ROUTE_FOLLOW ---
+  else if (status_.mode == NavigationMode::LOCAL_AVOID)
   {
-    transitionTo(NavigationMode::ROUTE_FOLLOW,
-        NavigationModeReason::ROUTE_CLEAR, progress, now_sec);
+    const double mode_hold_sec =
+        now_sec - status_.mode_enter_stamp_sec;
+    const bool minimum_hold_satisfied =
+        mode_hold_sec >= config_.min_local_avoid_hold_sec;
+
+    // Check directional clearance from obstacles.
+    const double front_min = obstacles.valid
+        ? obstacles.front_min
+        : std::numeric_limits<double>::infinity();
+    const double left_min = obstacles.valid
+        ? obstacles.left_min
+        : std::numeric_limits<double>::infinity();
+    const double right_min = obstacles.valid
+        ? obstacles.right_min
+        : std::numeric_limits<double>::infinity();
+
+    const bool clearance_satisfied =
+        obstacles.valid &&
+        front_min >= config_.exit_front_clearance_m &&
+        left_min >= config_.exit_left_clearance_m &&
+        right_min >= config_.exit_right_clearance_m;
+
+    // Exit LOCAL_AVOID when:
+    //   1. Minimum hold time satisfied
+    //   2. Directional obstacle clearance satisfied (from ObstacleSummary)
+    // Note: corridor CLEAR is NOT required here because during active
+    // avoidance the corridor at the robot's current position may still
+    // report BLOCKED even though the robot has found a safe path.
+    const bool all_exit_conditions =
+        minimum_hold_satisfied &&
+        clearance_satisfied;
+
+    if (all_exit_conditions)
+    {
+      if (!clear_candidate_active_)
+      {
+        clear_candidate_active_ = true;
+        clear_candidate_start_sec_ = now_sec;
+      }
+
+      const double clear_held = now_sec - clear_candidate_start_sec_;
+      if (clear_held >= config_.exit_clear_confirm_sec)
+      {
+        std::printf("NAV_MODE LOCAL_AVOID -> ROUTE_FOLLOW "
+                    "front_min=%.3f left_min=%.3f right_min=%.3f "
+                    "corridor_clear_hold=%.3f mode_hold=%.3f\n",
+                    front_min, left_min, right_min,
+                    clear_held, mode_hold_sec);
+        std::fflush(stdout);
+
+        clear_candidate_active_ = false;
+        clear_candidate_start_sec_ = 0.0;
+
+        transitionTo(NavigationMode::ROUTE_FOLLOW,
+            NavigationModeReason::ROUTE_CLEAR, progress, now_sec);
+      }
+    }
+    else
+    {
+      // Any exit condition not met — reset clear candidate timer.
+      clear_candidate_active_ = false;
+      clear_candidate_start_sec_ = 0.0;
+    }
+
+    if (!status_.transitioned)
+      status_.reason = NavigationModeReason::LOCAL_AVOID_ACTIVE;
   }
   else
   {
-    status_.reason = status_.mode == NavigationMode::LOCAL_AVOID
-        ? NavigationModeReason::LOCAL_AVOID_ACTIVE
-        : NavigationModeReason::ROUTE_CLEAR;
+    // ROUTE_FOLLOW and not blocked.
+    blocked_candidate_active_ = false;
+    blocked_candidate_start_sec_ = 0.0;
+
+    status_.reason = NavigationModeReason::ROUTE_CLEAR;
   }
 
   if (initialized_this_update && !status_.transitioned)

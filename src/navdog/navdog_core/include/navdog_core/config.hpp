@@ -131,6 +131,29 @@ struct LimitConfig
 
 struct NavigationModeConfig
 {
+  // 前方路线走廊在该距离内阻塞时允许进入SCAN。
+  double enter_blocked_distance_m{2.0};
+
+  // 普通阻塞需要连续保持的时间。
+  double enter_confirm_sec{0.04};
+
+  // 障碍过近时不等待enter_confirm_sec，立即进入SCAN。
+  double immediate_enter_distance_m{0.45};
+
+  // 进入SCAN后的最短保持时间。
+  double min_local_avoid_hold_sec{1.0};
+
+  // 满足退出清空条件后，必须连续保持的时间。
+  double exit_clear_confirm_sec{0.50};
+
+  // 退出SCAN时要求前方障碍距离。
+  double exit_front_clearance_m{2.50};
+
+  // 退出SCAN时要求左侧障碍距离。
+  double exit_left_clearance_m{0.60};
+
+  // 退出SCAN时要求右侧障碍距离。
+  double exit_right_clearance_m{0.60};
 };
 
 // =============================================================================

@@ -195,6 +195,30 @@ TEST(NavdogConfigLoadingTest, DISABLED_LoadsTrajectoryFollowerFromParams)
   EXPECT_DOUBLE_EQ(config.trajectory_follower.kp_yaw, 1.6);
 }
 
+TEST(NavdogConfigLoadingTest, LoadsNavigationModeConfigFromParams)
+{
+  ros::NodeHandle nh("~");
+  nh.setParam("navigation_mode/enter_blocked_distance_m", 2.5);
+  nh.setParam("navigation_mode/enter_confirm_sec", 0.06);
+  nh.setParam("navigation_mode/immediate_enter_distance_m", 0.50);
+  nh.setParam("navigation_mode/min_local_avoid_hold_sec", 1.2);
+  nh.setParam("navigation_mode/exit_clear_confirm_sec", 0.60);
+  nh.setParam("navigation_mode/exit_front_clearance_m", 3.0);
+  nh.setParam("navigation_mode/exit_left_clearance_m", 0.70);
+  nh.setParam("navigation_mode/exit_right_clearance_m", 0.70);
+
+  const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
+
+  EXPECT_DOUBLE_EQ(config.navigation_mode.enter_blocked_distance_m, 2.5);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.enter_confirm_sec, 0.06);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.immediate_enter_distance_m, 0.50);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.min_local_avoid_hold_sec, 1.2);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.exit_clear_confirm_sec, 0.60);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.exit_front_clearance_m, 3.0);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.exit_left_clearance_m, 0.70);
+  EXPECT_DOUBLE_EQ(config.navigation_mode.exit_right_clearance_m, 0.70);
+}
+
 TEST(NavdogConfigLoadingTest, LoadsPlannerTimeoutFromParams)
 {
   ros::NodeHandle nh("~");
