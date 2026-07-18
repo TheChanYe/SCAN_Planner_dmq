@@ -3,6 +3,7 @@
 #include <geometry_msgs/TwistStamped.h>
 #include <std_msgs/UInt8.h>
 #include <navdog_core/types.hpp>
+#include <navdog_runtime/velocity_slew_limiter.hpp>
 
 #include <cmath>
 #include <string>
@@ -16,6 +17,7 @@ constexpr double kEpsilon = 1e-9;
 double route_cmd_timeout_sec = 0.30;
 double scan_cmd_timeout_sec = 0.30;
 double publish_rate_hz = 50.0;
+double mode_sync_grace_sec = 0.10;
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -35,8 +37,14 @@ enum class CommandOwner
 };
 
 CommandOwner previous_owner_{CommandOwner::NONE};
-bool zero_frame_pending_{false};
 double owner_change_stamp_sec_{0.0};
+double nav_state_change_stamp_sec_{0.0};
+
+// Velocity slew limiter — single instance for smooth handoff.
+navdog_runtime::VelocitySlewLimiter slew_limiter_;
+geometry_msgs::Twist last_output_cmd_{};
+double last_publish_stamp_sec_{0.0};
+bool limiter_initialized_{false};
 
 ros::Publisher cmd_vel_pub_;
 
@@ -90,13 +98,10 @@ CommandOwner effectiveOwner()
 
     case navdog::NavState::TRACKING:
       if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-      {
         return CommandOwner::ROUTE;
-      }
       if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
-      {
         return CommandOwner::SCAN;
-      }
+      // mode NONE during TRACKING — grace period.
       return CommandOwner::NONE;
 
     case navdog::NavState::IDLE:
@@ -158,6 +163,7 @@ void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
   nav_state_ = static_cast<navdog::NavState>(msg->data);
   if (nav_state_ != prev)
   {
+    nav_state_change_stamp_sec_ = ros::Time::now().toSec();
     ROS_INFO("NAV_STATE %s -> %s", navStateName(prev), navStateName(nav_state_));
   }
 }
@@ -175,38 +181,80 @@ void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 void timerCallback(const ros::TimerEvent&)
 {
   const double now_sec = ros::Time::now().toSec();
-  const CommandOwner owner = effectiveOwner();
+  CommandOwner owner = effectiveOwner();
 
-  // Detect owner change — emit one zero frame and log.
+  // --- Mode sync grace period ---
+  // During TRACKING, if mode is NONE but the state change happened very
+  // recently (< mode_sync_grace_sec), keep the previous owner to avoid
+  // a brief zero-speed blip caused by state/mode topic arrival order.
+  if (nav_state_ == navdog::NavState::TRACKING &&
+      owner == CommandOwner::NONE &&
+      previous_owner_ != CommandOwner::NONE)
+  {
+    const double since_state_change = now_sec - nav_state_change_stamp_sec_;
+    if (since_state_change < mode_sync_grace_sec)
+    {
+      owner = previous_owner_;  // Keep previous owner during grace period.
+    }
+  }
+
+  // --- Detect owner change ---
   if (owner != previous_owner_)
   {
     const auto old_owner = previous_owner_;
-    previous_owner_ = owner;
     owner_change_stamp_sec_ = now_sec;
-    zero_frame_pending_ = true;
+
+    // Initialize the slew limiter from the last output so it starts
+    // from the actual velocity, not from zero.
+    if (!limiter_initialized_)
+    {
+      slew_limiter_.setCurrent(
+          last_output_cmd_.linear.x,
+          last_output_cmd_.linear.y,
+          last_output_cmd_.angular.z);
+      limiter_initialized_ = true;
+    }
 
     ROS_INFO("CMD_OWNER %s -> %s state=%u mode=%u",
         ownerName(old_owner),
         ownerName(owner),
         static_cast<unsigned>(nav_state_),
         static_cast<unsigned>(navigation_mode_));
+
+    previous_owner_ = owner;
   }
 
-  if (zero_frame_pending_)
+  // --- Compute target command ---
+  geometry_msgs::Twist target_cmd = zeroCommand();
+  bool target_valid = false;
+
+  // States that require immediate zero — no slew limiting.
+  const bool hard_stop =
+      owner == CommandOwner::NONE ||
+      nav_state_ == navdog::NavState::IDLE ||
+      nav_state_ == navdog::NavState::PAUSED ||
+      nav_state_ == navdog::NavState::SUCCEEDED ||
+      nav_state_ == navdog::NavState::FAILED ||
+      nav_state_ == navdog::NavState::EMERGENCY_STOP;
+
+  if (hard_stop)
   {
+    // Immediate zero — reset the limiter so it doesn't try to
+    // slew from a stale velocity on the next handoff.
+    slew_limiter_.reset();
+    last_output_cmd_ = zeroCommand();
     cmd_vel_pub_.publish(zeroCommand());
-    zero_frame_pending_ = false;
+    last_publish_stamp_sec_ = now_sec;
     return;
   }
-
-  geometry_msgs::Twist output = zeroCommand();
 
   switch (owner)
   {
     case CommandOwner::ROUTE:
       if (isFresh(route_cmd_stamp_sec_, now_sec, route_cmd_timeout_sec))
       {
-        output = latest_route_cmd_;
+        target_cmd = latest_route_cmd_;
+        target_valid = true;
       }
       break;
 
@@ -215,8 +263,11 @@ void timerCallback(const ros::TimerEvent&)
       if (scan_cmd_stamp_sec_ > owner_change_stamp_sec_ + kEpsilon &&
           isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec))
       {
-        output = latest_scan_cmd_;
+        target_cmd = latest_scan_cmd_;
+        target_valid = true;
       }
+      // If SCAN command not ready yet: target remains zero, and we slew
+      // down from the current velocity to zero.
       break;
 
     case CommandOwner::NONE:
@@ -224,7 +275,26 @@ void timerCallback(const ros::TimerEvent&)
       break;
   }
 
+  // --- Apply velocity slew limiting ---
+  double dt = (last_publish_stamp_sec_ > 0.0)
+      ? (now_sec - last_publish_stamp_sec_)
+      : 1.0 / publish_rate_hz;
+
+  double out_vx, out_vy, out_yaw;
+  slew_limiter_.update(
+      target_cmd.linear.x,
+      target_cmd.linear.y,
+      target_cmd.angular.z,
+      dt, out_vx, out_vy, out_yaw);
+
+  geometry_msgs::Twist output;
+  output.linear.x = out_vx;
+  output.linear.y = out_vy;
+  output.angular.z = out_yaw;
+
   cmd_vel_pub_.publish(output);
+  last_output_cmd_ = output;
+  last_publish_stamp_sec_ = now_sec;
 }
 
 }  // namespace
@@ -239,6 +309,17 @@ int main(int argc, char** argv)
   private_nh.param("route_cmd_timeout", route_cmd_timeout_sec, 0.30);
   private_nh.param("scan_cmd_timeout", scan_cmd_timeout_sec, 0.30);
   private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
+  private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
+
+  // Slew limiter params
+  navdog_runtime::VelocitySlewLimiter::Config slew_config;
+  private_nh.param("handoff_accel_x", slew_config.accel_x, 0.50);
+  private_nh.param("handoff_decel_x", slew_config.decel_x, 0.80);
+  private_nh.param("handoff_accel_y", slew_config.accel_y, 0.25);
+  private_nh.param("handoff_decel_y", slew_config.decel_y, 0.50);
+  private_nh.param("handoff_accel_yaw", slew_config.accel_yaw, 0.80);
+  private_nh.param("handoff_decel_yaw", slew_config.decel_yaw, 1.20);
+  slew_limiter_.setConfig(slew_config);
 
   if (!std::isfinite(route_cmd_timeout_sec) || route_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(scan_cmd_timeout_sec) || scan_cmd_timeout_sec <= 0.0 ||
@@ -265,8 +346,13 @@ int main(int argc, char** argv)
   ros::Timer timer = nh.createTimer(
       ros::Duration(1.0 / publish_rate_hz), timerCallback);
 
-  ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f rate=%.1f",
-      route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz);
+  ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f "
+           "rate=%.1f grace=%.2f "
+           "handoff accel_x=%.2f decel_x=%.2f accel_yaw=%.2f decel_yaw=%.2f",
+      route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz,
+      mode_sync_grace_sec,
+      slew_config.accel_x, slew_config.decel_x,
+      slew_config.accel_yaw, slew_config.decel_yaw);
 
   ros::spin();
   return 0;

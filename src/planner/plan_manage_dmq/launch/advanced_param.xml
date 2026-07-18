@@ -36,6 +36,7 @@
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
     <param name="fsm/fail_safe" value="true" type="bool"/>
     <param name="fsm/max_replan_fail_count" value="$(arg max_replan_fail_count)" type="int"/>
+    <param name="fsm/emergency_retry_interval_sec" value="0.50" type="double"/>
     <param name="fsm/is_real_world" value="$(arg is_real_world)" type="bool"/>
 
     <remap from="/initial_path" to="/native_scan/initial_path"/>

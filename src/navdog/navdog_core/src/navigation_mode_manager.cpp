@@ -319,14 +319,22 @@ NavigationModeOutput NavigationModeManager::update(
         left_min >= config_.exit_left_clearance_m &&
         right_min >= config_.exit_right_clearance_m;
 
-    // Exit LOCAL_AVOID when:
+    // Corridor must be CLEAR for exit: confirms the original route is
+    // passable again.  Without this check the robot would exit SCAN while
+    // the corridor still reports BLOCKED, causing an immediate re-entry.
+    const bool corridor_clear =
+        is_clear &&
+        corridor.assessment.valid &&
+        corridor.assessment.task_sequence == task.sequence;
+
+    // Exit LOCAL_AVOID requires ALL of:
     //   1. Minimum hold time satisfied
-    //   2. Directional obstacle clearance satisfied (from ObstacleSummary)
-    // Note: corridor CLEAR is NOT required here because during active
-    // avoidance the corridor at the robot's current position may still
-    // report BLOCKED even though the robot has found a safe path.
+    //   2. Route corridor CLEAR
+    //   3. Directional obstacle clearance satisfied (from ObstacleSummary)
+    //   4. All of the above held continuously for exit_clear_confirm_sec
     const bool all_exit_conditions =
         minimum_hold_satisfied &&
+        corridor_clear &&
         clearance_satisfied;
 
     if (all_exit_conditions)
@@ -341,8 +349,9 @@ NavigationModeOutput NavigationModeManager::update(
       if (clear_held >= config_.exit_clear_confirm_sec)
       {
         std::printf("NAV_MODE LOCAL_AVOID -> ROUTE_FOLLOW "
+                    "corridor_clear=true "
                     "front_min=%.3f left_min=%.3f right_min=%.3f "
-                    "corridor_clear_hold=%.3f mode_hold=%.3f\n",
+                    "clear_hold=%.3f mode_hold=%.3f\n",
                     front_min, left_min, right_min,
                     clear_held, mode_hold_sec);
         std::fflush(stdout);

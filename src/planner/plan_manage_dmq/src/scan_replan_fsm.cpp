@@ -50,6 +50,7 @@ namespace scan_planner
     nh.param("fsm/safety_immediate_replan_sec", safety_immediate_replan_sec_, 1.0);
     nh.param("fsm/safety_direct_replan_sec", safety_direct_replan_sec_, 3.0);
     nh.param("fsm/safety_replan_cooldown_sec", safety_replan_cooldown_sec_, 0.20);
+    nh.param("fsm/emergency_retry_interval_sec", emergency_retry_interval_sec_, 0.50);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
@@ -107,10 +108,10 @@ namespace scan_planner
 
     ROS_INFO("SCAN_REPLAN_CONFIG max_fail_count=%d "
              "immediate_sec=%.3f direct_sec=%.3f cooldown_sec=%.3f "
-             "planning_horizon=%.3f",
+             "planning_horizon=%.3f emergency_retry_sec=%.3f",
         max_replan_fail_count_, safety_immediate_replan_sec_,
         safety_direct_replan_sec_, safety_replan_cooldown_sec_,
-        planning_horizon_);
+        planning_horizon_, emergency_retry_interval_sec_);
 
     /* initialize main modules */
     visualization_.reset(new PlanningVisualization(nh));
@@ -445,6 +446,8 @@ namespace scan_planner
       replan_fail_count_ = 0;
       first_replan_failure_time_ = ros::Time(0);
       last_replan_attempt_time_ = ros::Time(0);
+      initial_plan_attempt_count_ = 0;
+      emergency_stop_published_ = false;
 
       flag_escape_emergency_ = true;
       need_hover_stop_ = false;
@@ -475,6 +478,8 @@ namespace scan_planner
     replan_fail_count_ = 0;
     first_replan_failure_time_ = ros::Time(0);
     continuously_called_times_ = 0;
+    initial_plan_attempt_count_ = 0;
+    emergency_stop_published_ = false;
 
     need_hover_stop_ = false;
     flag_escape_emergency_ = true;
@@ -688,22 +693,34 @@ namespace scan_planner
 
       setStartStateFromOdomOrCurrentTraj();
 
-      const int consecutive = timesOfConsecutiveStateCalls().first;
-      bool flag_random_poly_init;
-      if (consecutive == 1)
-        flag_random_poly_init = false;
-      else
-        flag_random_poly_init = true;
+      // Use independent attempt counter — NOT timesOfConsecutiveStateCalls().
+      const int attempt = initial_plan_attempt_count_;
+      ++initial_plan_attempt_count_;
+
+      // Alternate between deterministic and random/A* initialization.
+      const bool random_init = (attempt % 2) == 1;
+
+      // Progressive target distance backoff.
+      const int backoff_level = std::min(attempt / 2, 4);
+      const double target_cap =
+          std::max(1.2, planning_horizon_ - 0.5 * backoff_level);
+
+      ROS_INFO("SCAN_INITIAL_PLAN_ATTEMPT attempt=%d init=%s target_cap=%.2f",
+          attempt,
+          random_init ? "RANDOM" : "DETERMINISTIC",
+          target_cap);
 
       // Preserve previous trajectory on failure.
       const LocalTrajData previous_local =
           planner_manager_->local_data_;
 
-      bool success = callReboundReplan(true, flag_random_poly_init);
+      bool success = callReboundReplan(true, random_init, target_cap);
       if (success)
       {
+        initial_plan_attempt_count_ = 0;
         replan_fail_count_ = 0;
         first_replan_failure_time_ = ros::Time(0);
+        emergency_stop_published_ = false;
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
       }
@@ -717,8 +734,8 @@ namespace scan_planner
         ++replan_fail_count_;
         ROS_WARN_THROTTLE(
             1.0,
-            "SCAN_REPLAN_FAILED count=%d",
-            replan_fail_count_);
+            "SCAN_REPLAN_FAILED count=%d attempt=%d",
+            replan_fail_count_, attempt);
       }
       break;
     }
@@ -732,8 +749,10 @@ namespace scan_planner
 
       if (planFromCurrentTraj())
       {
+        initial_plan_attempt_count_ = 0;
         replan_fail_count_ = 0;
         first_replan_failure_time_ = ros::Time(0);
+        emergency_stop_published_ = false;
         changeFSMExecState(EXEC_TRAJ, "FSM");
       }
       else
@@ -836,16 +855,22 @@ namespace scan_planner
     case EMERGENCY_STOP:
     {
 
-      if (flag_escape_emergency_) // Avoiding repeated calls
+      if (flag_escape_emergency_)
       {
-        callEmergencyStop(odom_pos_);
+        // Only publish the emergency stop spline once per continuous
+        // failure cycle — do not regenerate a new trajectory_id each time.
+        if (!emergency_stop_published_)
+        {
+          callEmergencyStop(odom_pos_);
+          emergency_stop_published_ = true;
+        }
       }
       else
       {
         if (enable_fail_safe_ && !need_hover_stop_ && odom_vel_.norm() < 0.1)
         {
-          // Rate-limit emergency recovery: wait at least 200ms between
-          // GEN_NEW_TRAJ attempts from emergency stop.
+          // Rate-limit emergency recovery: wait at least
+          // emergency_retry_interval_sec_ between GEN_NEW_TRAJ attempts.
           if (ros::Time::now() >= next_emergency_retry_time_)
             changeFSMExecState(GEN_NEW_TRAJ, "FSM");
         }
@@ -895,8 +920,9 @@ namespace scan_planner
       // planning failure; stop first, then retry against the updated map.
       need_hover_stop_ = !keep_reference_path;
       flag_escape_emergency_ = true;
+      emergency_stop_published_ = false;
       next_emergency_retry_time_ =
-          ros::Time::now() + ros::Duration(0.20);
+          ros::Time::now() + ros::Duration(emergency_retry_interval_sec_);
       changeFSMExecState(EMERGENCY_STOP, "finishProcess");
     }
   }
@@ -963,7 +989,7 @@ namespace scan_planner
     if (navi_mode_ == NAVI_MODE::REFERENCE_PATH)
     {
       // First priority: continue the current executable trajectory.
-      bool success = callReboundReplan(false, false);
+      bool success = callReboundReplan(false, false, planning_horizon_);
       if (success)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=CONTINUATION");
@@ -971,7 +997,7 @@ namespace scan_planner
       }
 
       // Second priority: regenerate a deterministic polynomial initial traj.
-      success = callReboundReplan(true, false);
+      success = callReboundReplan(true, false, planning_horizon_);
       if (success)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=DETERMINISTIC");
@@ -979,7 +1005,7 @@ namespace scan_planner
       }
 
       // Third priority: random / A* initialization.
-      success = callReboundReplan(true, true);
+      success = callReboundReplan(true, true, planning_horizon_);
       if (success)
       {
         ROS_INFO("SCAN_REPLAN_INIT type=RANDOM");
@@ -992,10 +1018,10 @@ namespace scan_planner
     }
 
     // Non-reference-path modes: deterministic then random.
-    bool success = callReboundReplan(true, false);
+    bool success = callReboundReplan(true, false, planning_horizon_);
     if (!success)
     {
-      success = callReboundReplan(true, true);
+      success = callReboundReplan(true, true, planning_horizon_);
       if (!success)
       {
         planner_manager_->local_data_ = previous_local;
@@ -1158,10 +1184,11 @@ namespace scan_planner
     }
   }
 
-  bool SCANReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj)
+  bool SCANReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
+                                        double target_distance_cap_m)
   {
 
-    if (!getLocalTarget())
+    if (!getLocalTarget(target_distance_cap_m))
     {
       ROS_WARN_THROTTLE(
           1.0,
@@ -1292,7 +1319,7 @@ namespace scan_planner
     return true;
   }
 
-  bool SCANReplanFSM::getLocalTarget()
+  bool SCANReplanFSM::getLocalTarget(double target_distance_cap_m)
   {
     auto &global_data = planner_manager_->global_data_;
 
@@ -1414,7 +1441,8 @@ namespace scan_planner
     // from the robot to the target is left to reboundReplan + A* + B-spline
     // optimisation.
     const double min_target_dist = 0.8;
-    const double max_target_dist = planning_horizon_;
+    const double max_target_dist =
+        std::max(1.0, std::min(planning_horizon_, target_distance_cap_m));
 
     bool found_route_target = false;
     for (int i = static_cast<int>(samples.size()) - 1; i >= 0; --i)
@@ -1439,9 +1467,9 @@ namespace scan_planner
 
     if (found_route_target)
     {
-      ROS_INFO("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f",
+      ROS_INFO("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f target_cap=%.2f",
           local_target_pt_(0), local_target_pt_(1), local_target_pt_(2),
-          (local_target_pt_ - start_pt_).norm());
+          (local_target_pt_ - start_pt_).norm(), max_target_dist);
       return true;
     }
 

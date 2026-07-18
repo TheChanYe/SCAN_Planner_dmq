@@ -163,10 +163,10 @@ TEST(NavigationModeManagerTest, MinHoldKeepsAvoid)
              obstacles(), 1.0);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
-  // Directional clearance OK at 1.3s, but only 0.3s in LOCAL_AVOID < 1.0s hold.
-  // Corridor may still be BLOCKED — exit doesn't depend on it.
+  // Corridor CLEAR + directional clearance OK at 1.3s,
+  // but only 0.3s in LOCAL_AVOID < 1.0s hold.
   const auto output = mgr.update(
-      task(), robot(), progress(), corridor(true, 0.30), obstacles(), 1.3);
+      task(), robot(), progress(), corridor(false), obstacles(), 1.3);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
 }
 
@@ -185,13 +185,12 @@ TEST(NavigationModeManagerTest, ClearTimeInsufficientKeepsAvoid)
              obstacles(), 1.0);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
-  // Directional clearance OK at 2.0s (hold satisfied), but only 0.3s < 0.5s.
-  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
-             obstacles(), 2.0);
+  // Corridor CLEAR + clearance OK at 2.0s (hold satisfied), but only 0.3s < 0.5s.
+  mgr.update(task(), robot(), progress(), corridor(false), obstacles(), 2.0);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
   const auto output = mgr.update(
-      task(), robot(), progress(), corridor(true, 0.30), obstacles(), 2.3);
+      task(), robot(), progress(), corridor(false), obstacles(), 2.3);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
 }
 
@@ -210,22 +209,44 @@ TEST(NavigationModeManagerTest, ClearSufficientExitsAvoid)
              obstacles(), 1.0);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
-  // Directional clearance OK at 2.0s (hold satisfied), start clear candidate.
-  // Corridor may still be BLOCKED — that's fine, exit depends on ObstacleSummary.
-  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
-             obstacles(), 2.0);
+  // Corridor CLEAR + directional clearance OK at 2.0s (hold satisfied).
+  mgr.update(task(), robot(), progress(), corridor(false), obstacles(), 2.0);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
   // Still clear at 2.3s (0.3s < 0.5s).
-  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
-             obstacles(), 2.3);
+  mgr.update(task(), robot(), progress(), corridor(false), obstacles(), 2.3);
   EXPECT_EQ(mgr.status().mode, NavigationMode::LOCAL_AVOID);
 
   // Still clear at 2.5s (0.5s >= 0.5s) — exit.
   const auto output = mgr.update(
-      task(), robot(), progress(), corridor(true, 0.30), obstacles(), 2.5);
+      task(), robot(), progress(), corridor(false), obstacles(), 2.5);
   EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
   EXPECT_EQ(output.status.previous_mode, NavigationMode::LOCAL_AVOID);
+}
+
+TEST(NavigationModeManagerTest, CorridorBlockedPreventsExit)
+{
+  NavigationModeConfig config;
+  config.min_local_avoid_hold_sec = 1.0;
+  config.exit_clear_confirm_sec = 0.5;
+  config.exit_front_clearance_m = 2.5;
+  config.exit_left_clearance_m = 0.6;
+  config.exit_right_clearance_m = 0.6;
+  NavigationModeManager mgr(config);
+
+  // Enter LOCAL_AVOID.
+  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
+             obstacles(), 1.0);
+
+  // Directional clearance OK but corridor still BLOCKED.
+  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
+             obstacles(), 2.0);
+  mgr.update(task(), robot(), progress(), corridor(true, 0.30),
+             obstacles(), 2.3);
+  const auto output = mgr.update(
+      task(), robot(), progress(), corridor(true, 0.30), obstacles(), 2.6);
+  // Should NOT exit because corridor is still BLOCKED.
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
 }
 
 TEST(NavigationModeManagerTest, SideBlockedPreventsExit)

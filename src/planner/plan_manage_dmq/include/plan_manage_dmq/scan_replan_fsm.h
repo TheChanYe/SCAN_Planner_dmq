@@ -79,6 +79,11 @@ namespace scan_planner
     ros::Time last_replan_attempt_time_;
     ros::Time next_emergency_retry_time_;
 
+    // Independent initial planning attempt counter (not tied to FSM state).
+    int initial_plan_attempt_count_{0};
+    bool emergency_stop_published_{false};
+    double emergency_retry_interval_sec_{0.50};
+
     // Safety replan triage parameters.
     double safety_immediate_replan_sec_{1.0};
     double safety_direct_replan_sec_{3.0};
@@ -103,8 +108,9 @@ namespace scan_planner
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
 
     /* helper functions */
-    bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method
-    bool callEmergencyStop(Eigen::Vector3d stop_pos);                          // front-end and back-end method
+    bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
+                           double target_distance_cap_m); // front-end and back-end method
+    bool callEmergencyStop(Eigen::Vector3d stop_pos);     // front-end and back-end method
     bool planFromCurrentTraj();
     bool replanRetryReady(double interval_sec);
     bool localTrajectoryIsSafe(double &collision_time_sec);
@@ -120,7 +126,7 @@ namespace scan_planner
     bool planNextWaypoint();
     bool isWaypointSequenceMode() const;
     bool adjustGlobalTargetIfOccupied();
-    bool getLocalTarget();
+    bool getLocalTarget(double target_distance_cap_m);
     void finishProcess();
     void publishSelfInflationMarker();
     double getOdomYaw() const;
