@@ -10,9 +10,8 @@ namespace navdog_scan_adapter
 namespace
 {
 
-constexpr double kEpsilon = 1e-9;
+constexpr double kEpsilon = 1e-9; 
 constexpr double kCorridorHalfWidthM = 0.60;
-constexpr double kClearLookaheadM = 2.50;
 
 }  // namespace
 
@@ -23,7 +22,15 @@ ScanRouteCorridorEvaluator3D::ScanRouteCorridorEvaluator3D(
       grid_(grid)
 {
 }
-
+/**
+ * @brief evaluate
+ * 评估路径走廊是否被障碍物阻挡。
+ * @param task 导航任务
+ * @param progress 路径进度
+ * @param robot 机器人状态
+ * @param now_sec 当前时间戳（秒）
+ * @return 路径走廊评估结果
+ */
 navdog::RouteCorridorAssessment
 ScanRouteCorridorEvaluator3D::evaluate(
     const navdog::NavigationTask& task,
@@ -74,11 +81,18 @@ ScanRouteCorridorEvaluator3D::evaluate(
   assessment.first_blocked_arc_length_m =
       std::numeric_limits<double>::infinity();
 
-  // --- Determine check distance ---
-  const double check_distance = std::min(
-      kClearLookaheadM,
-      progress.remaining_distance_m);
+  // 前视距由RouteCorridorConfig统一控制
+  // 配置无效时返回默认无效assessment，禁止使用错误距离继续判断。
+  if (!std::isfinite(config_.lookahead_distance_m) ||
+      config_.lookahead_distance_m <= 0.0)
+  {
+    return assessment;
+  }
 
+  const double check_distance = std::min(
+      config_.lookahead_distance_m,
+      progress.remaining_distance_m);
+  
   if (check_distance <= 0.0)
   {
     // Already at goal

@@ -88,8 +88,28 @@
         <remap from="~global_map" to="/map_generator/global_cloud"/>
   </node>
 
-  <node if="$(eval (not arg('is_real_world')) and (not arg('use_gpu')))" pkg="local_sensing_node" type="pcl_render_node" name="pcl_render_node" output="screen">
-        <remap from="~global_map" to="/map_generator/global_cloud"/>
-  </node>
+  <node if="$(eval (not arg('is_real_world')) and (not arg('use_gpu')))"
+      pkg="local_sensing_node"
+      type="pcl_render_node"
+      name="pcl_render_node"
+      output="screen">
+
+    <remap from="~global_map" to="/map_generator/global_cloud"/>
+
+    <!-- 使用完整360°激光点云，不使用MiniCF稀疏花纹。 -->
+    <param name="is_360lidar" value="1"/>
+    <param name="use_minicf_pattern" value="0"/>
+    <param name="use_avia_pattern" value="0"/>
+    <param name="use_vlp32_pattern" value="0"/>
+
+    <!-- 与GridMap最小有效距离保持一致，避免1m内障碍点被过滤。 -->
+    <param name="min_raylength" value="0.30"/>
+
+    <!-- 2.5m走廊只需要较小量程；保留10m足够仿真使用。 -->
+    <param name="sensing_horizon" value="10.0"/>
+
+    <!-- 保持原来的10Hz，暂时不增加计算压力。 -->
+    <param name="sensing_rate" value="10.0"/>
+   </node>
 
 </launch>

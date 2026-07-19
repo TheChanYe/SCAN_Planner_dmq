@@ -61,6 +61,21 @@ limits:
   max_accel_yaw: 0.8
 route_corridor:
   lookahead_distance_m: 2.5
+navigation:
+  # 路线前方该距离内检测到障碍物，允许切换到SCAN模式
+  enter_blocked_distance_m: 2.0
+  # 普通障碍物连续确认时间；50hz下等于n连续两个控制周期
+  enter_confirm_sec: 0.04
+  # 障碍距离小于该值时，不等待确认，立即进入SCAN模式
+  immediate_enter_distance_m: 0.45
+  # 进入SCAN后至少保持的a时间，防止刚进入就退出
+  min_local_avoid_hold_sec: 1.0
+  # 满足清空条件后持续多久才退出SCAN模式
+  exit_clear_confirm_sec: 0.50
+  # 退出SCAN要求的前，左，右的安全距离
+  exit_front_clearance_m: 2.50
+  exit_left_clearance_m: 0.60
+  exit_right_clearance_m: 0.60
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8
