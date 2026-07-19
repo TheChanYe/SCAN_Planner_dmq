@@ -259,12 +259,13 @@ NavigationModeOutput NavigationModeManager::update(
         blocked_candidate_active_ = false;
         blocked_candidate_start_sec_ = 0.0;
 
+        // 障碍物已经非常接近，不等待连续确认。
         transitionTo(NavigationMode::LOCAL_AVOID,
             NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
       }
       else
       {
-        // Start or continue confirmation timer.
+        // 第一次发现普通距离内阻塞时启动确认计时。
         if (!blocked_candidate_active_)
         {
           blocked_candidate_active_ = true;
@@ -272,13 +273,15 @@ NavigationModeOutput NavigationModeManager::update(
         }
 
         const double held = now_sec - blocked_candidate_start_sec_;
+
         if (held >= config_.enter_confirm_sec)
         {
           blocked_candidate_active_ = false;
           blocked_candidate_start_sec_ = 0.0;
 
+          // 障碍物不是紧急距离，但已经连续稳定存在。
           transitionTo(NavigationMode::LOCAL_AVOID,
-              NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
+              NavigationModeReason::BLOCK_CONFIRMED, progress, now_sec);
         }
       }
     }

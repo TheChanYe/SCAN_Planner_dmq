@@ -617,18 +617,40 @@ namespace scan_planner
     self_inflation_pub_.publish(marker);
   }
 
-  void SCANReplanFSM::changeFSMExecState(FSM_EXEC_STATE new_state, string pos_call)
+  void SCANReplanFSM::changeFSMExecState(
+      FSM_EXEC_STATE new_state,
+      string pos_call)
   {
-
     if (new_state == exec_state_)
       continuously_called_times_++;
     else
       continuously_called_times_ = 1;
 
-    static string state_str[7] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
-    int pre_s = int(exec_state_);
+    static const char* state_str[] = {
+        "INIT",
+        "WAIT_TARGET",
+        "GEN_NEW_TRAJ",
+        "REPLAN_TRAJ",
+        "EXEC_TRAJ",
+        "EMERGENCY_STOP"};
+
+    const int previous_state =
+        static_cast<int>(exec_state_);
+
+    const int next_state =
+        static_cast<int>(new_state);
+
+    // 同一状态的重复调用仍保留计数，但不刷屏。
+    if (new_state != exec_state_)
+    {
+      ROS_INFO(
+          "SCAN_FSM prev=%s next=%s caller=%s",
+          state_str[previous_state],
+          state_str[next_state],
+          pos_call.c_str());
+    }
+
     exec_state_ = new_state;
-    cout << "[" + pos_call + "]: from " + state_str[pre_s] + " to " + state_str[int(new_state)] << endl;
   }
 
   std::pair<int, SCANReplanFSM::FSM_EXEC_STATE> SCANReplanFSM::timesOfConsecutiveStateCalls()
@@ -1142,62 +1164,122 @@ namespace scan_planner
       {
         const double collision_time_ahead = t - t_cur;
 
-        // --- A-class: emergency collision ---
+        // 上一次安全重规划距离当前的时间。
+        // 从未执行过安全重规划时，视为冷却已经结束。
+        const double cooldown_elapsed = 
+            last_safety_replan_time_.isZero()
+            ? std::numeric_limits<double>::infinity()
+            : (now - last_safety_replan_time_).toSec();
+        
+        const bool cooldown_active = 
+            cooldown_elapsed < safety_replan_cooldown_sec_;
+
+        // ============================================================
+        // A类：紧急碰撞
+        //
+        // 紧急碰撞不受冷却限制。因为此时继续等待的风险大于重复规划。
+        // ============================================================
+
         if (collision_time_ahead <= safety_immediate_replan_sec_)
         {
-          ROS_WARN("SCAN_SAFETY_REPLAN urgency=EMERGENCY "
-                   "collision_time_ahead=%.2f",
-                   collision_time_ahead);
-          if (planFromCurrentTraj() == ReplanResult::SUCCESS)
+          ROS_WARN(
+              "SCAN_SAFETY_REPLAN "
+              "urgency=EMERGENCY "
+              "collision_time_ahead=%.2f "
+              "action=DIRECT_REPLAN",
+              collision_time_ahead);
+
+          if (planFromCurrentTraj() ==
+              ReplanResult::SUCCESS)
           {
             last_safety_replan_time_ = now;
-            changeFSMExecState(EXEC_TRAJ, "SAFETY");
+
+            changeFSMExecState(
+                EXEC_TRAJ,
+                "SAFETY_EMERGENCY_SUCCESS");
           }
           else
           {
-            changeFSMExecState(EMERGENCY_STOP, "SAFETY_EMERGENCY");
+            changeFSMExecState(
+                EMERGENCY_STOP,
+                "SAFETY_EMERGENCY_FAILED");
           }
+
           return;
         }
 
-        // --- B-class: near collision ---
+        // ============================================================
+        // B类和C类：非紧急碰撞
+        //
+        // 冷却尚未结束时保持当前可执行轨迹，不再次切入REPLAN_TRAJ。
+        // 原代码虽然打印cooldown，但仍切到REPLAN_TRAJ，实际上没有限频。
+        // ============================================================
+        if (cooldown_active)
+        {
+          ROS_DEBUG_THROTTLE(
+              1.0,
+              "SCAN_SAFETY_REPLAN_SUPPRESSED "
+              "collision_time_ahead=%.2f "
+              "cooldown_remaining=%.2f",
+              collision_time_ahead,
+              safety_replan_cooldown_sec_ -
+                  cooldown_elapsed);
+
+          return;
+        }
+        // 从这里开始代表本次确实消费了一次安全重规划机会。
+        // 在排队或直接调用规划前记录，避免规划失败后立即被安全定时器重复触发。
+        last_safety_replan_time_ = now;
+
+        // ============================================================
+        // B类：近距离碰撞
+        //
+        // 冷却结束后直接尝试从当前轨迹重规划。
+        // 失败时保留旧轨迹数据，并交给REPLAN_TRAJ继续尝试。
+        // ============================================================
         if (collision_time_ahead <= safety_direct_replan_sec_)
         {
-          const double cooldown_elapsed =
-              (now - last_safety_replan_time_).toSec();
-          if (!last_safety_replan_time_.isZero() &&
-              cooldown_elapsed < safety_replan_cooldown_sec_)
+          ROS_WARN(
+              "SCAN_SAFETY_REPLAN "
+              "urgency=NEAR "
+              "collision_time_ahead=%.2f "
+              "action=DIRECT_REPLAN",
+              collision_time_ahead);
+
+          if (planFromCurrentTraj() ==
+              ReplanResult::SUCCESS)
           {
-            ROS_WARN("SCAN_SAFETY_REPLAN urgency=NEAR "
-                     "collision_time_ahead=%.2f action=QUEUE_REPLAN "
-                     "cooldown_remaining=%.2f",
-                     collision_time_ahead,
-                     safety_replan_cooldown_sec_ - cooldown_elapsed);
-            changeFSMExecState(REPLAN_TRAJ, "SAFETY_NEAR");
+            changeFSMExecState(
+                EXEC_TRAJ,
+                "SAFETY_NEAR_SUCCESS");
           }
           else
           {
-            ROS_WARN("SCAN_SAFETY_REPLAN urgency=NEAR "
-                     "collision_time_ahead=%.2f action=DIRECT_REPLAN",
-                     collision_time_ahead);
-            if (planFromCurrentTraj() == ReplanResult::SUCCESS)
-            {
-              last_safety_replan_time_ = now;
-              changeFSMExecState(EXEC_TRAJ, "SAFETY");
-            }
-            else
-            {
-              changeFSMExecState(REPLAN_TRAJ, "SAFETY_NEAR_FAIL");
-            }
+            changeFSMExecState(
+                REPLAN_TRAJ,
+                "SAFETY_NEAR_FAILED");
           }
+
           return;
         }
 
-        // --- C-class: far collision ---
-        ROS_WARN("SCAN_SAFETY_REPLAN urgency=FAR "
-                 "collision_time_ahead=%.2f action=QUEUE_REPLAN",
-                 collision_time_ahead);
-        changeFSMExecState(REPLAN_TRAJ, "SAFETY_FAR");
+        // ============================================================
+        // C类：较远的未来碰撞
+        //
+        // 不在安全定时器中连续直接规划，只向FSM排队一次。
+        // 后续至少等待cooldown结束，才允许新一轮安全触发。
+        // ============================================================
+        ROS_WARN(
+            "SCAN_SAFETY_REPLAN "
+            "urgency=FAR "
+            "collision_time_ahead=%.2f "
+            "action=QUEUE_REPLAN",
+            collision_time_ahead);
+
+        changeFSMExecState(
+            REPLAN_TRAJ,
+            "SAFETY_FAR");
+
         return;
       }
     }

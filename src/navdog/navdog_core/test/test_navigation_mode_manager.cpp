@@ -136,6 +136,9 @@ TEST(NavigationModeManagerTest, ContinuousBlockEntersAvoid)
       task(), robot(), progress(), corridor(true, 1.5), obstacles(), 1.05);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_TRUE(output.status.transitioned);
+  EXPECT_EQ(
+    output.status.reason,
+    NavigationModeReason::BLOCK_CONFIRMED);
 }
 
 TEST(NavigationModeManagerTest, ImmediateDistanceEntersAvoid)
@@ -146,6 +149,9 @@ TEST(NavigationModeManagerTest, ImmediateDistanceEntersAvoid)
       task(), robot(), progress(), corridor(true, 0.40), obstacles(), 1.0);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_TRUE(output.status.transitioned);
+  EXPECT_EQ(
+    output.status.reason,
+    NavigationModeReason::BLOCK_IMMEDIATE);
 }
 
 TEST(NavigationModeManagerTest, MinHoldKeepsAvoid)

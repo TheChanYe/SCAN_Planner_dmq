@@ -61,7 +61,7 @@ limits:
   max_accel_yaw: 0.8
 route_corridor:
   lookahead_distance_m: 2.5
-navigation:
+navigation_mode:
   # 路线前方该距离内检测到障碍物，允许切换到SCAN模式
   enter_blocked_distance_m: 2.0
   # 普通障碍物连续确认时间；50hz下等于n连续两个控制周期

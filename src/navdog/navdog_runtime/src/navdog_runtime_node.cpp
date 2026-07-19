@@ -211,24 +211,61 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 void NavdogRuntimeNode::logNavigationChanges(
     const navdog::CoreOutput& output, const navdog::CoreInput& input)
 {
-  if (!log_state_initialized_ || output.state != last_logged_state_)
+  if (!log_mode_initialized_ ||
+      output.navigation_mode.mode !=
+          last_logged_mode_)
   {
-    ROS_INFO("NAV_STATE prev=%s next=%s seq=%lu",
-        log_state_initialized_ ? navdog::navStateName(last_logged_state_) : "UNKNOWN",
-        navdog::navStateName(output.state),
-        static_cast<unsigned long>(output.task_sequence));
-    last_logged_state_ = output.state;
-    log_state_initialized_ = true;
-  }
-  if (!log_mode_initialized_ || output.navigation_mode.mode != last_logged_mode_)
-  {
-    ROS_INFO("NAV_MODE prev=%s next=%s seq=%lu reason=%s blocked_forward=%.3f",
-        log_mode_initialized_ ? navdog::navigationModeName(last_logged_mode_) : "NONE",
-        navdog::navigationModeName(output.navigation_mode.mode),
-        static_cast<unsigned long>(output.task_sequence),
-        navdog::navigationModeReasonName(output.navigation_mode.reason),
-        input.route_corridor_observation.first_blocked_distance_ahead_m);
-    last_logged_mode_ = output.navigation_mode.mode;
+    const auto& mode =
+        output.navigation_mode;
+
+    const auto& corridor =
+        input.route_corridor_observation;
+
+    const auto& obstacles =
+        input.obstacles;
+
+    ROS_INFO(
+        "NAV_MODE "
+        "prev=%s next=%s "
+        "seq=%lu "
+        "reason=%s "
+        "corridor_valid=%d "
+        "corridor_blocked=%d "
+        "checked_distance=%.3f "
+        "blocked_forward=%.3f "
+        "obstacle_valid=%d "
+        "front_min=%.3f "
+        "left_min=%.3f "
+        "right_min=%.3f "
+        "blocked_confirm=%.3f "
+        "clear_confirm=%.3f "
+        "avoid_cycle=%u",
+        log_mode_initialized_
+            ? navdog::navigationModeName(
+                  last_logged_mode_)
+            : "NONE",
+        navdog::navigationModeName(
+            mode.mode),
+        static_cast<unsigned long>(
+            output.task_sequence),
+        navdog::navigationModeReasonName(
+            mode.reason),
+        corridor.valid ? 1 : 0,
+        corridor.blocked ? 1 : 0,
+        corridor.checked_distance_m,
+        corridor.first_blocked_distance_ahead_m,
+        obstacles.valid ? 1 : 0,
+        obstacles.front_min,
+        obstacles.left_min,
+        obstacles.right_min,
+        mode.blocked_confirm_elapsed_sec,
+        mode.clear_confirm_elapsed_sec,
+        static_cast<unsigned>(
+            mode.avoidance_cycle_count));
+
+    last_logged_mode_ =
+        mode.mode;
+
     log_mode_initialized_ = true;
   }
 }

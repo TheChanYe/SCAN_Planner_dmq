@@ -363,9 +363,11 @@ enum class NavigationModeReason : std::uint8_t
   INITIALIZED,
 
   ROUTE_CLEAR,
-  BLOCK_IMMEDIATE,
 
-  ROUTE_ONLY_BLOCKED,
+  BLOCK_IMMEDIATE, // 障碍物距离小于immediate_enter_distance_m，无需确认直接进入SCAN。
+  BLOCK_CONFIRMED, // 障碍物位于enter_blocked_distance_m内，并连续保持enter_confirm_sec。
+
+  ROUTE_ONLY_BLOCKED, 
 
   LOCAL_AVOID_ACTIVE,
 
@@ -396,6 +398,7 @@ inline const char* navigationModeReasonName(NavigationModeReason value) noexcept
     case NavigationModeReason::INITIALIZED: return "INITIALIZED";
     case NavigationModeReason::ROUTE_CLEAR: return "ROUTE_CLEAR";
     case NavigationModeReason::BLOCK_IMMEDIATE: return "BLOCK_IMMEDIATE";
+    case NavigationModeReason::BLOCK_CONFIRMED: return "BLOCK_CONFIRMED";
     case NavigationModeReason::ROUTE_ONLY_BLOCKED: return "ROUTE_ONLY_BLOCKED";
     case NavigationModeReason::LOCAL_AVOID_ACTIVE: return "LOCAL_AVOID_ACTIVE";
     case NavigationModeReason::WAITING_FOR_CORRIDOR: return "WAITING_FOR_CORRIDOR";
