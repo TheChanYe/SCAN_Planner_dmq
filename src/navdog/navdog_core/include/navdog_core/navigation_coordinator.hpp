@@ -22,15 +22,30 @@ namespace navdog
 class NavigationCoordinator
 {
 public:
+  /**
+   * @brief 纯 C++ 导航协调器，连接任务会话、路线跟随、安全门和模式机。
+   *
+   * Runtime 是唯一调用者：它负责把 ROS/MQTT/SCAN 数据转换为 CoreInput。
+   * 本类不访问 ROS、MQTT 或 /cmd_vel，所有副作用经 CoreOutput 返回。
+   */
   explicit NavigationCoordinator(
       const NavdogConfig& config = NavdogConfig{},
       const navdog_task::TaskConfig& task_config =
           navdog_task::TaskConfig{});
 
+  /** @brief 清除任务、路线、规划握手和控制器内部状态，回到 IDLE。 */
   void reset();
 
+  /** @brief 处理已解析的任务事件；START/CANCEL 等约束由 navdog_task 保证。 */
   TaskHandleResult handleEvent(NavigationEvent event);
 
+  /**
+   * @brief 执行一个控制周期并返回纯 C++ 输出。
+   *
+   * 先处理路线确认握手（PLANNING 不是 SCAN 局部规划），再执行当前状态，
+   * 最后仅对 Navdog Route 控制命令施加 SafetySupervisor。now_sec 必须有限、
+   * 单调且与输入时间戳同一时间基准；无效时间会走现有 FAILED 安全路径。
+   */
   CoreOutput update(
       const CoreInput& input,
       double now_sec);
@@ -103,8 +118,6 @@ private:
 
   NavdogConfig config_{};
   NavState state_{NavState::IDLE};
-  NavState last_logged_state_{NavState::IDLE};
-
   navdog_task::TaskManager task_manager_{};
   RouteManager route_manager_{};
   std::deque<PlannerAction> pending_planner_actions_;

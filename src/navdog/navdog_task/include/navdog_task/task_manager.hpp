@@ -13,15 +13,19 @@ class TaskManager
 public:
   explicit TaskManager(const TaskConfig& config = TaskConfig{});
 
-  void reset() noexcept;  // 重置任务管理器状态
-  TaskTransition handleEvent(NavigationEvent event); // 处理导航事件并返回任务转换结果
+  /** @brief 清空当前会话；不回退 next_sequence_，避免旧异步反馈误关联到新任务。 */
+  void reset() noexcept;
+  /** @brief 处理 START/CANCEL/PAUSE/RESUME 等事件并返回一次可观察的会话转换。 */
+  TaskTransition handleEvent(NavigationEvent event);
   const TaskSession& session() const noexcept; // 获取当前任务会话状态
   bool hasActiveTask() const noexcept; // 检查是否有正在执行的任务
 
 private:
-  bool isTaskValid(const NavigationTask& task) const noexcept;  // 检测任务是否有效
+  /** @brief 在不访问外部系统的前提下校验路线数值和任务模式。 */
+  bool isTaskValid(const NavigationTask& task) const noexcept;
   static bool isTaskModeValid(TaskMode mode) noexcept;          // 检测任务模式是否有效
-  double clampMaxVx(double max_vx) const noexcept;              // 限制最大速度在配置范围内
+  /** @brief 将有限的请求速度限在 TaskConfig 范围，单位 m/s。 */
+  double clampMaxVx(double max_vx) const noexcept;
 
   TaskConfig config_{};     // 配置参数,                                        
   TaskSession session_{};   // 当前任务会话状态

@@ -59,35 +59,6 @@ const char* ownerName(CommandOwner owner)
   }
 }
 
-const char* navStateName(navdog::NavState s)
-{
-  switch (s)
-  {
-    case navdog::NavState::IDLE:          return "IDLE";
-    case navdog::NavState::PLANNING:      return "PLANNING";
-    case navdog::NavState::START_ALIGN:   return "START_ALIGN";
-    case navdog::NavState::TRACKING:      return "TRACKING";
-    case navdog::NavState::PAUSED:        return "PAUSED";
-    case navdog::NavState::RECOVERY:      return "RECOVERY";
-    case navdog::NavState::GOAL_ALIGN:    return "GOAL_ALIGN";
-    case navdog::NavState::SUCCEEDED:     return "SUCCEEDED";
-    case navdog::NavState::EMERGENCY_STOP: return "EMERGENCY_STOP";
-    case navdog::NavState::FAILED:        return "FAILED";
-    default:                              return "UNKNOWN";
-  }
-}
-
-const char* navModeName(navdog::NavigationMode m)
-{
-  switch (m)
-  {
-    case navdog::NavigationMode::ROUTE_FOLLOW: return "ROUTE_FOLLOW";
-    case navdog::NavigationMode::LOCAL_AVOID:  return "LOCAL_AVOID";
-    case navdog::NavigationMode::NONE:
-    default:                                   return "NONE";
-  }
-}
-
 CommandOwner effectiveOwner()
 {
   switch (nav_state_)
@@ -144,7 +115,10 @@ geometry_msgs::Twist zeroCommand()
 void routeCmdCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
 {
   if (!finiteTwist(msg->twist))
+  {
+    ROS_WARN_THROTTLE(1.0, "INVALID_ROUTE_CMD");
     return;
+  }
   latest_route_cmd_ = msg->twist;
   route_cmd_stamp_sec_ = msg->header.stamp.toSec();
 }
@@ -152,30 +126,25 @@ void routeCmdCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
 void scanCmdCallback(const geometry_msgs::Twist::ConstPtr& msg)
 {
   if (!finiteTwist(*msg))
+  {
+    ROS_WARN_THROTTLE(1.0, "INVALID_SCAN_CMD");
     return;
+  }
   latest_scan_cmd_ = *msg;
   scan_cmd_stamp_sec_ = ros::Time::now().toSec();
 }
 
 void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
-  const auto prev = nav_state_;
+  const auto previous = nav_state_;
   nav_state_ = static_cast<navdog::NavState>(msg->data);
-  if (nav_state_ != prev)
-  {
+  if (nav_state_ != previous)
     nav_state_change_stamp_sec_ = ros::Time::now().toSec();
-    ROS_INFO("NAV_STATE %s -> %s", navStateName(prev), navStateName(nav_state_));
-  }
 }
 
 void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
-  const auto prev = navigation_mode_;
   navigation_mode_ = static_cast<navdog::NavigationMode>(msg->data);
-  if (navigation_mode_ != prev)
-  {
-    ROS_INFO("NAV_MODE %s -> %s", navModeName(prev), navModeName(navigation_mode_));
-  }
 }
 
 void timerCallback(const ros::TimerEvent&)
@@ -215,11 +184,11 @@ void timerCallback(const ros::TimerEvent&)
       limiter_initialized_ = true;
     }
 
-    ROS_INFO("CMD_OWNER %s -> %s state=%u mode=%u",
+    ROS_INFO("CMD_OWNER prev=%s next=%s state=%s mode=%s",
         ownerName(old_owner),
         ownerName(owner),
-        static_cast<unsigned>(nav_state_),
-        static_cast<unsigned>(navigation_mode_));
+        navdog::navStateName(nav_state_),
+        navdog::navigationModeName(navigation_mode_));
 
     previous_owner_ = owner;
   }
@@ -256,6 +225,7 @@ void timerCallback(const ros::TimerEvent&)
         target_cmd = latest_route_cmd_;
         target_valid = true;
       }
+      else ROS_WARN_THROTTLE(1.0, "ROUTE_CMD_STALE");
       break;
 
     case CommandOwner::SCAN:
@@ -266,6 +236,10 @@ void timerCallback(const ros::TimerEvent&)
         target_cmd = latest_scan_cmd_;
         target_valid = true;
       }
+      else if (scan_cmd_stamp_sec_ <= owner_change_stamp_sec_ + kEpsilon)
+        ROS_WARN_THROTTLE(1.0, "SCAN_CMD_WAITING");
+      else
+        ROS_WARN_THROTTLE(1.0, "SCAN_CMD_STALE");
       // If SCAN command not ready yet: target remains zero, and we slew
       // down from the current velocity to zero.
       break;

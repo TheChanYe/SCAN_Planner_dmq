@@ -9,7 +9,7 @@ pkg_check_modules(JSONCPP REQUIRED jsoncpp)
 catkin_package(INCLUDE_DIRS include LIBRARIES navdog_protocol
   CATKIN_DEPENDS navdog_task)
 
-add_library(navdog_protocol src/mqtt_codec.cpp src/mqtt_bridge.cpp)
+add_library(navdog_protocol src/mqtt_codec.cpp src/mqtt_bridge.cpp src/mqtt_log.cpp)
 target_include_directories(navdog_protocol PUBLIC include ${catkin_INCLUDE_DIRS}
   ${MOSQUITTO_INCLUDE_DIRS} ${JSONCPP_INCLUDE_DIRS})
 link_directories(${MOSQUITTO_LIBRARY_DIRS} ${JSONCPP_LIBRARY_DIRS})
@@ -26,6 +26,10 @@ if(CATKIN_ENABLE_TESTING)
   catkin_add_gtest(test_mqtt_bridge test/test_mqtt_bridge.cpp)
   if(TARGET test_mqtt_bridge)
     target_link_libraries(test_mqtt_bridge navdog_protocol)
+  endif()
+  catkin_add_gtest(test_mqtt_log test/test_mqtt_log.cpp)
+  if(TARGET test_mqtt_log)
+    target_link_libraries(test_mqtt_log navdog_protocol)
   endif()
 endif()
 

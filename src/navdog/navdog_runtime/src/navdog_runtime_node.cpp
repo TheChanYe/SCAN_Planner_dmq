@@ -11,22 +11,6 @@
 namespace navdog_runtime
 {
 
-namespace
-{
-const char* navigationModeName(navdog::NavigationMode mode) noexcept
-{
-  switch (mode)
-  {
-    case navdog::NavigationMode::ROUTE_FOLLOW:
-      return "ROUTE_FOLLOW";
-    case navdog::NavigationMode::LOCAL_AVOID:
-      return "LOCAL_AVOID";
-    default:
-      return "NONE";
-  }
-}
-}  // namespace
-
 navdog::NavdogConfig NavdogRuntimeNode::loadNavdogConfig(ros::NodeHandle& nh)
 { return Ros1ConfigLoader::load(nh).core; }
 
@@ -196,14 +180,11 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   pending_planner_feedback_ = navdog::PlannerFeedback{};
 
   const navdog::CoreOutput output = coordinator_->update(input, now_sec);
+  logNavigationChanges(output, input);
   if (output.navigation_mode.transitioned)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
-      ROS_INFO("NAV_MODE %s -> %s blocked_forward=%.3f",
-          navigationModeName(output.navigation_mode.previous_mode),
-          navigationModeName(output.navigation_mode.mode),
-          input.route_corridor_observation.first_blocked_distance_ahead_m);
       resetNativeScan("LOCAL_AVOID_ENTER");
       pending_native_scan_path_ = true;
     }
@@ -211,12 +192,6 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
                  navdog::NavigationMode::LOCAL_AVOID)
     {
       resetNativeScan("LOCAL_AVOID_EXIT");
-      ROS_INFO("NAV_MODE %s -> %s front_min=%.3f left_min=%.3f right_min=%.3f",
-          navigationModeName(output.navigation_mode.previous_mode),
-          navigationModeName(output.navigation_mode.mode),
-          input.obstacles.front_min,
-          input.obstacles.left_min,
-          input.obstacles.right_min);
     }
   }
   // Deferred native scan reference path: ensure reset arrives before path
@@ -230,6 +205,31 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     publishMqttStatus(output);
     last_status_publish_ = ros::Time::now();
+  }
+}
+
+void NavdogRuntimeNode::logNavigationChanges(
+    const navdog::CoreOutput& output, const navdog::CoreInput& input)
+{
+  if (!log_state_initialized_ || output.state != last_logged_state_)
+  {
+    ROS_INFO("NAV_STATE prev=%s next=%s seq=%lu",
+        log_state_initialized_ ? navdog::navStateName(last_logged_state_) : "UNKNOWN",
+        navdog::navStateName(output.state),
+        static_cast<unsigned long>(output.task_sequence));
+    last_logged_state_ = output.state;
+    log_state_initialized_ = true;
+  }
+  if (!log_mode_initialized_ || output.navigation_mode.mode != last_logged_mode_)
+  {
+    ROS_INFO("NAV_MODE prev=%s next=%s seq=%lu reason=%s blocked_forward=%.3f",
+        log_mode_initialized_ ? navdog::navigationModeName(last_logged_mode_) : "NONE",
+        navdog::navigationModeName(output.navigation_mode.mode),
+        static_cast<unsigned long>(output.task_sequence),
+        navdog::navigationModeReasonName(output.navigation_mode.reason),
+        input.route_corridor_observation.first_blocked_distance_ahead_m);
+    last_logged_mode_ = output.navigation_mode.mode;
+    log_mode_initialized_ = true;
   }
 }
 

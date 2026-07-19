@@ -1,8 +1,8 @@
 #include "navdog_protocol/mqtt_bridge.hpp"
 #include "navdog_protocol/mqtt_codec.hpp"
+#include "navdog_protocol/mqtt_log.hpp"
 
 #include <unistd.h>
-#include <cstdio>
 #include <utility>
 /**
  * 主要职责：
@@ -28,7 +28,7 @@ bool MqttBridge::start()
 {
   if (!config_.enabled) // 如果MQTT桥接未启用，则直接返回成功
   {
-    std::fprintf(stderr, "[navdog_protocol] MQTT bridge disabled\n");
+    MqttLog::write("INFO", "event=MQTT_DISABLED");
     return true;
   }
   resolved_client_id_ = config_.client_id + "-" +
@@ -36,7 +36,7 @@ bool MqttBridge::start()
   client_ = mosquitto_new(resolved_client_id_.c_str(), true, this);
   if (!client_) // 如果MQTT客户端创建失败，则打印错误信息并返回失败
   {
-    std::fprintf(stderr, "[navdog_protocol] MQTT client creation failed\n");
+    MqttLog::write("ERROR", "event=MQTT_CLIENT_CREATE_FAILED");
     return false;
   }
   mosquitto_connect_callback_set(client_, &MqttBridge::onConnect);
@@ -47,9 +47,9 @@ bool MqttBridge::start()
       config_.port, config_.keepalive_sec);
   if (rc != MOSQ_ERR_SUCCESS)  // 如果MQTT客户端创建失败，则打印错误信息并返回失败
   {
-    std::fprintf(stderr,
-        "[navdog_protocol] MQTT connect start failed host=%s port=%d error=%s\n",
-        config_.host.c_str(), config_.port, mosquitto_strerror(rc));
+    MqttLog::write("ERROR", "event=MQTT_CONNECT_START_FAILED host=" +
+        config_.host + " port=" + std::to_string(config_.port) +
+        " error=" + mosquitto_strerror(rc));
     mosquitto_destroy(client_);
     client_ = nullptr;
     return false;
@@ -57,18 +57,16 @@ bool MqttBridge::start()
   const int loop_rc = mosquitto_loop_start(client_);
   if (loop_rc != MOSQ_ERR_SUCCESS) // 如果MQTT客户端创建失败，则打印错误信息并返回失败
   {
-    std::fprintf(stderr,
-        "[navdog_protocol] MQTT network loop failed error=%s\n",
-        mosquitto_strerror(loop_rc));
+    MqttLog::write("ERROR", "event=MQTT_LOOP_START_FAILED error=" +
+        std::string(mosquitto_strerror(loop_rc)));
     mosquitto_disconnect(client_);
     mosquitto_destroy(client_);
     client_ = nullptr;
     return false;
   }
   started_ = true;
-  std::fprintf(stderr,
-      "[navdog_protocol] MQTT bridge started client_id=%s host=%s port=%d\n",
-      resolved_client_id_.c_str(), config_.host.c_str(), config_.port);
+  MqttLog::write("INFO", "event=MQTT_STARTED client_id=" + resolved_client_id_ +
+      " host=" + config_.host + " port=" + std::to_string(config_.port));
   return true;
 }
 /**
@@ -96,19 +94,17 @@ void MqttBridge::onConnect(struct mosquitto* client, void* data, int rc)
   auto* self = static_cast<MqttBridge*>(data);
   if (rc != 0)
   {
-    std::fprintf(stderr,
-        "[navdog_protocol] MQTT connection rejected code=%d\n", rc);
+    MqttLog::write("WARN", "event=MQTT_DISCONNECTED code=" + std::to_string(rc));
     return;
   }
   const int task_rc = mosquitto_subscribe(
       client, nullptr, self->config_.task_topic.c_str(), self->config_.qos);
   const int pause_rc = mosquitto_subscribe(
       client, nullptr, self->config_.pause_topic.c_str(), self->config_.qos);
-  std::fprintf(stderr,
-      "[navdog_protocol] MQTT connected task_topic=%s task_sub=%s "
-      "pause_topic=%s pause_sub=%s\n",
-      self->config_.task_topic.c_str(), mosquitto_strerror(task_rc),
-      self->config_.pause_topic.c_str(), mosquitto_strerror(pause_rc));
+  MqttLog::write("INFO", "event=MQTT_CONNECTED task_topic=" +
+      self->config_.task_topic + " task_sub=" + mosquitto_strerror(task_rc) +
+      " pause_topic=" + self->config_.pause_topic + " pause_sub=" +
+      mosquitto_strerror(pause_rc));
 }
 /**
  * @brief onDisconnect
@@ -119,8 +115,7 @@ void MqttBridge::onConnect(struct mosquitto* client, void* data, int rc)
  */
 void MqttBridge::onDisconnect(struct mosquitto*, void*, int rc)
 {
-  std::fprintf(stderr,
-      "[navdog_protocol] MQTT disconnected code=%d\n", rc);
+  MqttLog::write("WARN", "event=MQTT_DISCONNECTED code=" + std::to_string(rc));
 }
 /**
  * @brief onMessage
@@ -165,21 +160,18 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
   if (valid)
   {
     self->enqueue(event, cancel_first);
-    std::fprintf(stderr,
-        "[navdog_protocol] MQTT navigation event accepted topic=%s "
-        "type=%u sequence=%llu points=%zu\n",
-        topic.c_str(), static_cast<unsigned>(event.type),
-        static_cast<unsigned long long>(event.task.sequence),
-        event.task.points.size());
+    MqttLog::write("INFO", "event=MQTT_EVENT_ACCEPTED topic=" + topic +
+        " type=" + std::to_string(static_cast<unsigned>(event.type)) +
+        " sequence=" + std::to_string(event.task.sequence) +
+        " points=" + std::to_string(event.task.points.size()));
   }
   else
   {
     std::lock_guard<std::mutex> lock(self->mutex_);
     ++self->protocol_errors_;
-    std::fprintf(stderr,
-        "[navdog_protocol] MQTT navigation message rejected topic=%s "
-        "payload_bytes=%d\n",
-        topic.c_str(), message->payloadlen);
+    MqttLog::write("WARN", "event=MQTT_MESSAGE_REJECTED topic=" + topic +
+        " payload_bytes=" + std::to_string(message->payloadlen) +
+        " error_category=PARSE_OR_TOPIC");
   }
 }
 /**
@@ -193,8 +185,11 @@ void MqttBridge::enqueue(const navdog_task::NavigationEvent& event,
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (cancel_first) events_.clear();
-  while (events_.size() >= config_.max_queue_size) events_.pop_front();
+  bool dropped_oldest = false;
+  while (events_.size() >= config_.max_queue_size) { events_.pop_front(); dropped_oldest = true; }
   events_.push_back(event);
+  if (dropped_oldest)
+    MqttLog::write("WARN", "event=MQTT_QUEUE_OVERFLOW policy=DROP_OLDEST");
 }
 /**
  * @brief popEvent
@@ -218,8 +213,13 @@ bool MqttBridge::popEvent(navdog_task::NavigationEvent& event)
 void MqttBridge::publishStatus(const std::string& payload)
 {
   if (client_ && started_)
-    mosquitto_publish(client_, nullptr, config_.status_topic.c_str(),
+  {
+    const int rc = mosquitto_publish(client_, nullptr, config_.status_topic.c_str(),
         static_cast<int>(payload.size()), payload.data(), config_.qos, false);
+    if (rc != MOSQ_ERR_SUCCESS)
+      MqttLog::write("WARN", "event=MQTT_PUBLISH_FAILED topic=" +
+          config_.status_topic + " error=" + mosquitto_strerror(rc));
+  }
 }
 /**
  * @brief consumeProtocolError

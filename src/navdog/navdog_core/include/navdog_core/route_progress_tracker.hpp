@@ -33,12 +33,18 @@ class RouteProgressTracker
   friend class RouteManager;
 
 private:
+  /**
+   * @brief RouteManager 私有使用的单调投影器。
+   * 首次投影搜索全路线以支持任意起点；后续只向前搜索，以免定位噪声让
+   * 路线进度回退并使控制目标跳回已通过路段。
+   */
   explicit RouteProgressTracker(
       const RouteProgressConfig& config =
           RouteProgressConfig{});
 
   void reset() noexcept;
 
+  /** @brief 更新世界系投影与剩余距离；时间或输入无效时返回不可控制结果。 */
   RouteProgressOutput update(
       const NavigationTask& task,
       const RobotState& robot,

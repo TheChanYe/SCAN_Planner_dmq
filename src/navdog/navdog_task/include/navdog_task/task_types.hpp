@@ -21,7 +21,7 @@ enum class TaskMode : std::uint8_t
 };
 
 /**
- * @brief 路点，包含位置坐标和可选的航向角
+ * @brief 全局 Route 路点；x/y/z 单位为米，yaw 单位为 rad，均在 Runtime 约定的世界坐标系。
  */
 struct RoutePoint
 {
@@ -33,7 +33,7 @@ struct RoutePoint
 };
 
 /**
- * @brief 导航任务，包含任务序列号、任务模式、最大速度和路点列表
+ * @brief 导航任务。sequence 是 TaskManager 分配的单调会话关联号，max_vx 单位 m/s。
  */
 struct NavigationTask
 {
@@ -57,7 +57,7 @@ enum class NavigationEventType : std::uint8_t
   DYNAMIC_OBSTACLE_UPDATE
 };
 /**
- * @brief 导航事件，包含事件类型、导航任务和最大速度
+ * @brief 已由协议层解析的纯 C++ 事件；任务层刻意不知道 ROS、MQTT 或 JSON。
  */
 struct NavigationEvent
 {

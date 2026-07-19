@@ -1,7 +1,6 @@
 #include "navdog_core/navigation_mode_manager.hpp"
 
 #include <cmath>
-#include <cstdio>
 
 namespace navdog
 {
@@ -260,11 +259,6 @@ NavigationModeOutput NavigationModeManager::update(
         blocked_candidate_active_ = false;
         blocked_candidate_start_sec_ = 0.0;
 
-        std::printf("NAV_MODE ROUTE_FOLLOW -> LOCAL_AVOID "
-                    "blocked_forward=%.3f confirm_hold=0.000 immediate=true\n",
-                    blocked_dist);
-        std::fflush(stdout);
-
         transitionTo(NavigationMode::LOCAL_AVOID,
             NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
       }
@@ -282,11 +276,6 @@ NavigationModeOutput NavigationModeManager::update(
         {
           blocked_candidate_active_ = false;
           blocked_candidate_start_sec_ = 0.0;
-
-          std::printf("NAV_MODE ROUTE_FOLLOW -> LOCAL_AVOID "
-                      "blocked_forward=%.3f confirm_hold=%.3f immediate=false\n",
-                      blocked_dist, held);
-          std::fflush(stdout);
 
           transitionTo(NavigationMode::LOCAL_AVOID,
               NavigationModeReason::BLOCK_IMMEDIATE, progress, now_sec);
@@ -348,14 +337,6 @@ NavigationModeOutput NavigationModeManager::update(
       const double clear_held = now_sec - clear_candidate_start_sec_;
       if (clear_held >= config_.exit_clear_confirm_sec)
       {
-        std::printf("NAV_MODE LOCAL_AVOID -> ROUTE_FOLLOW "
-                    "corridor_clear=true "
-                    "front_min=%.3f left_min=%.3f right_min=%.3f "
-                    "clear_hold=%.3f mode_hold=%.3f\n",
-                    front_min, left_min, right_min,
-                    clear_held, mode_hold_sec);
-        std::fflush(stdout);
-
         clear_candidate_active_ = false;
         clear_candidate_start_sec_ = 0.0;
 

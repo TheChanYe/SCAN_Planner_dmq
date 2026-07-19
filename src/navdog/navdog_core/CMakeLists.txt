@@ -42,8 +42,10 @@ target_compile_options(navdog_core
 )
 
 if(CATKIN_ENABLE_TESTING)
-  # test_navigation_coordinator disabled: needs update after LOCAL_AVOID refactor
-  # (removed setOccupancyQuery, setLocalPlannerAdapter, active_local_trajectory_)
+  catkin_add_gtest(test_navigation_coordinator test/test_navigation_coordinator.cpp)
+  if(TARGET test_navigation_coordinator)
+    target_link_libraries(test_navigation_coordinator navdog_core)
+  endif()
 
   catkin_add_gtest(test_start_align_controller
     test/test_start_align_controller.cpp

@@ -40,6 +40,20 @@ enum class NavState : std::uint8_t
   FAILED
 };
 
+/** @brief 将 NavState 转为稳定的日志/诊断名称；不包含 ROS 依赖或业务判断。 */
+inline const char* navStateName(NavState value) noexcept
+{
+  switch (value)
+  {
+    case NavState::IDLE: return "IDLE"; case NavState::PLANNING: return "PLANNING";
+    case NavState::START_ALIGN: return "START_ALIGN"; case NavState::TRACKING: return "TRACKING";
+    case NavState::PAUSED: return "PAUSED"; case NavState::RECOVERY: return "RECOVERY";
+    case NavState::GOAL_ALIGN: return "GOAL_ALIGN"; case NavState::SUCCEEDED: return "SUCCEEDED";
+    case NavState::EMERGENCY_STOP: return "EMERGENCY_STOP"; case NavState::FAILED: return "FAILED";
+  }
+  return "UNKNOWN";
+}
+
 // =============================================================================
 // 4.3 规划器状态
 // =============================================================================
@@ -89,6 +103,19 @@ enum class PlannerActionType : std::uint8_t
   UPDATE_SPEED_LIMIT,
   REQUEST_REPLAN
 };
+
+/** @brief 将 PlannerActionType 转为稳定的日志/诊断名称。 */
+inline const char* plannerActionName(PlannerActionType value) noexcept
+{
+  switch (value)
+  {
+    case PlannerActionType::NONE: return "NONE"; case PlannerActionType::SET_ROUTE: return "SET_ROUTE";
+    case PlannerActionType::CANCEL: return "CANCEL"; case PlannerActionType::PAUSE: return "PAUSE";
+    case PlannerActionType::RESUME: return "RESUME"; case PlannerActionType::UPDATE_SPEED_LIMIT: return "UPDATE_SPEED_LIMIT";
+    case PlannerActionType::REQUEST_REPLAN: return "REQUEST_REPLAN";
+  }
+  return "UNKNOWN";
+}
 
 // =============================================================================
 // 4.6 导航事件类型
@@ -347,6 +374,36 @@ enum class NavigationModeReason : std::uint8_t
 
   TASK_CHANGED
 };
+
+/** @brief 将模式枚举转换为稳定日志名称；纯函数，不引入模式机依赖。 */
+inline const char* navigationModeName(NavigationMode value) noexcept
+{
+  switch (value)
+  {
+    case NavigationMode::NONE: return "NONE";
+    case NavigationMode::ROUTE_FOLLOW: return "ROUTE_FOLLOW";
+    case NavigationMode::LOCAL_AVOID: return "LOCAL_AVOID";
+  }
+  return "UNKNOWN";
+}
+
+/** @brief 将模式切换原因转换为稳定日志名称；纯函数，不执行导航判断。 */
+inline const char* navigationModeReasonName(NavigationModeReason value) noexcept
+{
+  switch (value)
+  {
+    case NavigationModeReason::NONE: return "NONE";
+    case NavigationModeReason::INITIALIZED: return "INITIALIZED";
+    case NavigationModeReason::ROUTE_CLEAR: return "ROUTE_CLEAR";
+    case NavigationModeReason::BLOCK_IMMEDIATE: return "BLOCK_IMMEDIATE";
+    case NavigationModeReason::ROUTE_ONLY_BLOCKED: return "ROUTE_ONLY_BLOCKED";
+    case NavigationModeReason::LOCAL_AVOID_ACTIVE: return "LOCAL_AVOID_ACTIVE";
+    case NavigationModeReason::WAITING_FOR_CORRIDOR: return "WAITING_FOR_CORRIDOR";
+    case NavigationModeReason::WAITING_FOR_ROBOT: return "WAITING_FOR_ROBOT";
+    case NavigationModeReason::TASK_CHANGED: return "TASK_CHANGED";
+  }
+  return "UNKNOWN";
+}
 
 // =============================================================================
 // 4.16d 模式状态

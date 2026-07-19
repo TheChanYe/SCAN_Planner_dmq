@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <limits>
 #include <utility>
 
@@ -45,7 +44,6 @@ NavigationCoordinator::NavigationCoordinator(
 void NavigationCoordinator::reset()
 {
   state_ = NavState::IDLE;
-  last_logged_state_ = NavState::IDLE;
   task_manager_.reset();
   pending_planner_actions_.clear();
   clearPlanningContext();
@@ -631,16 +629,6 @@ CoreOutput NavigationCoordinator::update(
     double now_sec)
 {
   CoreOutput output{};
-
-  if (state_ != last_logged_state_) // 如果状态发生变化，打印状态变化信息
-  {
-    const auto prev = last_logged_state_;
-    last_logged_state_ = state_;
-    std::printf("[NavigationCoordinator] NAV_STATE %u -> %u\n",
-        static_cast<unsigned>(prev),
-        static_cast<unsigned>(state_));
-    std::fflush(stdout);
-  }
 
   // --- Planning feedback and action emission ---
   if (state_ == NavState::PLANNING &&
