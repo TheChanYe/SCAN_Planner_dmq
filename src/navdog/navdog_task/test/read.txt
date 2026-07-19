@@ -1,0 +1,441 @@
+一、工程文件职责树
+
+SCAN_Planner_dmq/
+│
+├── src/navdog/
+│   │
+│   ├── navdog_protocol/                  【MQTT协议层】
+│   │   │
+│   │   ├── mqtt_codec.cpp
+│   │   │   ├── parseTaskMessage()        MQTT任务JSON → NavigationEvent
+│   │   │   ├── parsePauseMessage()       暂停/恢复JSON → NavigationEvent
+│   │   │   └── encodeStatus()            导航状态 → MQTT JSON
+│   │   │
+│   │   └── mqtt_bridge.cpp
+│   │       ├── start()                   连接MQTT服务器
+│   │       ├── onMessage()               接收MQTT消息
+│   │       ├── enqueue()                 事件放入线程安全队列
+│   │       ├── popEvent()                Runtime取出事件
+│   │       └── publishStatus()            发布导航状态
+│   │
+│   ├── navdog_task/                      【任务管理层】
+│   │   │
+│   │   ├── task_types.hpp
+│   │   │   ├── NavigationTask            导航任务
+│   │   │   ├── NavigationEvent           开始/取消/暂停/恢复事件
+│   │   │   ├── TaskSession               当前任务状态
+│   │   │   └── RoutePoint                路点数据
+│   │   │
+│   │   └── task_manager.cpp
+│   │       ├── handleEvent()              处理任务事件
+│   │       ├── isTaskValid()              检查任务是否合法
+│   │       ├── clampMaxVx()               限制任务最大速度
+│   │       └── reset()                    清空当前任务
+│   │
+│   ├── navdog_core/                      【纯导航核心层】
+│   │   │
+│   │   ├── navigation_coordinator.cpp    ★ 总调度中心
+│   │   │   ├── handleEvent()              接收任务事件
+│   │   │   ├── update()                   每周期导航主入口
+│   │   │   ├── updatePlanningState()      PLANNING状态推进
+│   │   │   ├── executeMode()              Route/SCAN流程分发
+│   │   │   ├── executeRouteFollow()       路点模式控制
+│   │   │   ├── executeLocalAvoid()        让出控制权给SCAN
+│   │   │   └── enterFailedState()         进入失败状态
+│   │   │
+│   │   ├── route_manager.cpp             【全局路线管理】
+│   │   │   ├── acceptRoute()              接收新路线
+│   │   │   ├── updateProgress()           更新机器人路线进度
+│   │   │   ├── pointAtArcLength()         按路线距离插值取点
+│   │   │   └── forwardTarget()            取前方路线目标
+│   │   │
+│   │   ├── route_progress_tracker.cpp    【路线投影】
+│   │   │   ├── rebuildRoute()             路点转换成路线段
+│   │   │   ├── projectToSegment()         机器人投影到路线
+│   │   │   ├── findInitialProjection()    初始全路线搜索
+│   │   │   └── findForwardProjection()    只向前搜索进度
+│   │   │
+│   │   ├── navigation_mode_manager.cpp   ★ 两模式切换判定
+│   │   │   ├── update()                   判断Route还是SCAN
+│   │   │   ├── initializeForTask()        新任务初始化Route模式
+│   │   │   └── transitionTo()             执行模式状态切换
+│   │   │
+│   │   ├── start_align_controller.cpp    【起步对方向】
+│   │   │   ├── resolveTargetYaw()         找第一段路线方向
+│   │   │   └── update()                   输出起步旋转速度
+│   │   │
+│   │   ├── route_follower.cpp            【无障碍路点控制】
+│   │   │   ├── interpolateRoutePoint()    计算路线前视点
+│   │   │   ├── updatePointGoal()          单点路线控制
+│   │   │   └── update()                   生成vx/vy/yaw_rate
+│   │   │
+│   │   ├── goal_controller.cpp           【最终到位】
+│   │   │   ├── isNearGoal()               判断是否接近终点
+│   │   │   └── update()                   到位和最终朝向对齐
+│   │   │
+│   │   ├── safety_supervisor.cpp         【核心速度安全门】
+│   │   │   ├── apply()                    统一安全处理
+│   │   │   ├── checkTimeouts()            地图/里程计超时
+│   │   │   ├── computeFrontSpeedLimit()   前障减速
+│   │   │   └── safetyStop()               输出安全零速度
+│   │   │
+│   │   └── route_corridor_observation_gate.cpp
+│   │       └── evaluate()                  检查障碍结果是否有效
+│   │
+│   ├── navdog_scan_adapter/              【SCAN地图适配层】
+│   │   │
+│   │   ├── scan_grid_map_query.cpp
+│   │   │   └── query()                    查询膨胀地图占用
+│   │   │
+│   │   ├── scan_route_corridor_evaluator_3d.cpp
+│   │   │   └── evaluate()                 检查路点前方走廊
+│   │   │
+│   │   └── scan_obstacle_summary_evaluator_3d.cpp
+│   │       ├── evaluateSector()            检查某方向扇区
+│   │       └── evaluate()                  得到前左后右障碍距离
+│   │
+│   └── navdog_runtime/                   【ROS1运行时】
+│       │
+│       ├── navdog_runtime_node.cpp        ★ ROS接线与模式动作
+│       │   ├── initialize()               初始化节点和地图
+│       │   ├── odomCallback()             接收里程计
+│       │   ├── processEvents()            消费MQTT事件
+│       │   ├── controlCallback()           50Hz主循环
+│       │   ├── resetNativeScan()          重置SCAN
+│       │   ├── publishNativeScanReferencePath()
+│       │   │                               发布剩余路点给SCAN
+│       │   └── publishOutput()             发布状态和Route速度
+│       │
+│       ├── ros1_config_loader.cpp
+│       │   └── load()                     YAML/ROS参数 → 配置结构
+│       │
+│       └── cmd_vel_owner_mux.cpp          ★ 唯一/cmd_vel出口
+│           ├── effectiveOwner()            判断Route/SCAN所有者
+│           ├── routeCmdCallback()          接收Route速度
+│           ├── scanCmdCallback()           接收SCAN速度
+│           └── timerCallback()             平滑选择并发布/cmd_vel
+│
+├── src/planner/
+│   │
+│   ├── plan_env/                         【三维栅格地图】
+│   │   ├── grid_map.cpp                  点云融合、占据和膨胀
+│   │   └── raycast.cpp                   射线清空
+│   │
+│   ├── path_searching/                   【A*搜索】
+│   │   └── dyn_a_star.cpp                绕障初始路径搜索
+│   │
+│   ├── bspline_opt/                      【B样条优化】
+│   │   ├── uniform_bspline.cpp           B样条表示和求值
+│   │   ├── bspline_optimizer.cpp         碰撞/平滑优化
+│   │   └── gradient_descent_optimizer.cpp
+│   │
+│   ├── traj_utils/                       【轨迹工具】
+│   │   ├── polynomial_traj.cpp           初始多项式轨迹
+│   │   └── planning_visualization.cpp    RViz显示
+│   │
+│   └── plan_manage_dmq/                  【Native SCAN】
+│       │
+│       ├── scan_replan_fsm.cpp           ★ SCAN规划状态机
+│       │   ├── pathCallback()             接收剩余全局路线
+│       │   ├── execFSMCallback()          SCAN主状态机
+│       │   ├── getLocalTarget()           选择当前局部目标
+│       │   ├── callReboundReplan()        发起局部规划
+│       │   ├── planFromCurrentTraj()      边走边刷新
+│       │   ├── checkCollisionCallback()   轨迹碰撞预测
+│       │   └── resetCallback()            清理旧SCAN会话
+│       │
+│       ├── planner_manager.cpp
+│       │   ├── planGlobalTrajWaypoints()  剩余路点→参考轨迹
+│       │   ├── reboundReplan()            生成局部B样条
+│       │   └── EmergencyStop()            静止停止轨迹
+│       │
+│       └── closed_loop_controller.cpp
+│           ├── bsplineCallback()          接收新B样条
+│           ├── estimateDesiredYaw()        计算轨迹前方朝向
+│           └── cmdCallback()               B样条→SCAN速度
+│
+└── src/simulator/
+    ├── mockamap/                         随机障碍物地图
+    ├── local_sensing/                    模拟局部点云
+    └── go2_kinematic_sim.cpp             /cmd_vel运动学积分
+
+
+二、NavigationCoordinator::update()函数调用树
+
+NavdogRuntimeNode::controlCallback()             50Hz ROS主循环
+│
+└── NavigationCoordinator::update()             导航核心主入口
+    │
+    ├── 打印NavState变化
+    │
+    ├── 处理PLANNING
+    │   │
+    │   ├── takeNextPlannerAction()
+    │   ├── startPlanningContext()
+    │   └── updatePlanningState()
+    │
+    ├── 根据NavState执行
+    │   │
+    │   ├── IDLE
+    │   │   └── makeZeroCommand(IDLE_STOP)
+    │   │
+    │   ├── PLANNING
+    │   │   └── makeZeroCommand(PLANNING_STOP)
+    │   │
+    │   ├── PAUSED
+    │   │   └── makeZeroCommand(PAUSE_STOP)
+    │   │
+    │   ├── START_ALIGN
+    │   │   │
+    │   │   ├── 检查任务和路线
+    │   │   └── StartAlignController::update()
+    │   │       │
+    │   │       ├── WAITING_FOR_ROBOT → 等待
+    │   │       ├── ALIGNING         → 输出旋转速度
+    │   │       ├── ALIGNED          → state=TRACKING
+    │   │       └── 错误/超时         → state=FAILED
+    │   │
+    │   ├── TRACKING
+    │   │   │
+    │   │   ├── 检查任务和路线
+    │   │   │
+    │   │   ├── RouteManager::updateProgress()
+    │   │   │   │
+    │   │   │   └── RouteProgressTracker::update()
+    │   │   │       ├── projectToSegment()
+    │   │   │       └── findForwardProjection()
+    │   │   │
+    │   │   ├── RouteCorridorObservationGate::evaluate()
+    │   │   │   └── 检查地图时间、任务号、路线进度
+    │   │   │
+    │   │   ├── NavigationModeManager::update()
+    │   │   │   │
+    │   │   │   ├── ROUTE_FOLLOW
+    │   │   │   │   └── 检查是否进入LOCAL_AVOID
+    │   │   │   │
+    │   │   │   └── LOCAL_AVOID
+    │   │   │       └── 检查是否退出回ROUTE_FOLLOW
+    │   │   │
+    │   │   └── executeMode()
+    │   │       │
+    │   │       ├── ROUTE_FOLLOW
+    │   │       │   └── executeRouteFollow()
+    │   │       │       ├── RouteFollower::update()
+    │   │       │       └── GoalController::update()
+    │   │       │
+    │   │       └── LOCAL_AVOID
+    │   │           └── executeLocalAvoid()
+    │   │               └── Route命令输出0
+    │   │                   实际速度交给SCAN
+    │   │
+    │   ├── FAILED
+    │   │   └── makeZeroCommand(FAILED_STOP)
+    │   │
+    │   └── SUCCEEDED
+    │       └── makeZeroCommand(TRACKING_STOP)
+    │
+    ├── SafetySupervisor::apply()
+    │   ├── 检查命令有效性
+    │   ├── 检查里程计/地图超时
+    │   ├── 前方障碍减速
+    │   ├── 最大速度限制
+    │   └── 加速度限制
+    │
+    └── CoreOutput
+        ├── state
+        ├── task_sequence
+        ├── route_progress
+        ├── navigation_mode
+        ├── planner_action
+        └── final_cmd
+
+三、Route和SCAN模式切换工作流树
+TRACKING
+│
+├── RouteManager::updateProgress()
+│   └── 确定机器人当前走到路线哪里
+│
+├── ScanRouteCorridorEvaluator3D::evaluate()
+│   └── 检查原始路点前方是否有障碍
+│
+├── RouteCorridorObservationGate::evaluate()
+│   └── 检查这份地图结果是否还能使用
+│
+└── NavigationModeManager::update()
+    │
+    ├── 当前是ROUTE_FOLLOW
+    │   │
+    │   ├── 路线前方没有障碍
+    │   │   └── 保持ROUTE_FOLLOW
+    │   │
+    │   └── 路线前方2.0m内有障碍
+    │       │
+    │       ├── 障碍距离 <= 0.45m
+    │       │   └── 立即进入LOCAL_AVOID
+    │       │
+    │       └── 障碍距离 > 0.45m
+    │           └── 连续阻塞0.04s
+    │               └── 进入LOCAL_AVOID
+    │
+    └── 当前是LOCAL_AVOID
+        │
+        ├── 保持时间不足1.0s
+        │   └── 继续LOCAL_AVOID
+        │
+        ├── 原始路线仍BLOCKED
+        │   └── 继续LOCAL_AVOID
+        │
+        ├── 前/左/右障碍数据无效
+        │   └── 继续LOCAL_AVOID
+        │
+        ├── 前方或左右距离不足
+        │   └── 继续LOCAL_AVOID
+        │
+        └── 全部清空条件连续保持0.5s
+            └── 返回ROUTE_FOLLOW
+四、进入SCAN后的完整调用树
+NavigationModeManager
+检测到ROUTE_FOLLOW → LOCAL_AVOID
+│
+└── NavigationCoordinator::update()
+    └── output.navigation_mode.transitioned = true
+        │
+        └── NavdogRuntimeNode::controlCallback()
+            │
+            ├── resetNativeScan("LOCAL_AVOID_ENTER")
+            │   └── 发布 /native_scan/reset
+            │
+            ├── 等待约20ms
+            │
+            └── publishNativeScanReferencePath()
+                └── 发布 /native_scan/initial_path
+                    │
+                    └── SCANReplanFSM::pathCallback()
+                        │
+                        ├── 清理重复/无效路点
+                        ├── planGlobalTrajByWaypoints()
+                        └── state=GEN_NEW_TRAJ
+                            │
+                            └── SCANReplanFSM::execFSMCallback()
+                                │
+                                ├── getLocalTarget()
+                                ├── callReboundReplan()
+                                │   └── SCANPlannerManager::reboundReplan()
+                                │       ├── 多项式初始化
+                                │       ├── A*辅助
+                                │       ├── B样条优化
+                                │       └── 动力学检查
+                                │
+                                └── 发布 /native_scan/planning/bspline
+                                    │
+                                    └── closed_loop_controller::bsplineCallback()
+                                        │
+                                        └── closed_loop_controller::cmdCallback()
+                                            └── 发布 /navdog/scan_cmd
+                                                │
+                                                └── cmd_vel_owner_mux
+                                                    ├── owner=SCAN
+                                                    ├── 速度平滑
+                                                    └── 发布 /cmd_vel
+五、退出SCAN后的调用树
+NavigationModeManager
+检测到LOCAL_AVOID → ROUTE_FOLLOW
+│
+└── NavigationCoordinator::update()
+    └── output.navigation_mode.transitioned = true
+        │
+        └── NavdogRuntimeNode::controlCallback()
+            ├── resetNativeScan("LOCAL_AVOID_EXIT")
+            └── 发布 navigation_mode=ROUTE_FOLLOW
+                │
+                └── cmd_vel_owner_mux
+                    ├── owner=SCAN → ROUTE
+                    ├── 从最后SCAN速度开始平滑
+                    └── 使用 /navdog/route_cmd
+                        └── 发布 /cmd_vel
+六、一次完整任务的Workflow Tree
+MQTT开始任务
+│
+├── MqttCodec::parseTaskMessage()
+├── MqttBridge::enqueue()
+└── Runtime::processEvents()
+    │
+    └── NavigationCoordinator::handleEvent()
+        │
+        ├── TaskManager::handleEvent()
+        ├── RouteManager::acceptRoute()
+        └── state=PLANNING
+            │
+            └── NavigationCoordinator::update()
+                │
+                ├── PLANNING
+                │   └── 等待路线READY
+                │
+                ├── START_ALIGN
+                │   └── StartAlignController::update()
+                │
+                └── TRACKING
+                    │
+                    ├── ROUTE_FOLLOW
+                    │   └── RouteFollower::update()
+                    │
+                    ├── 遇障
+                    │   └── LOCAL_AVOID
+                    │       └── SCAN局部规划与跟踪
+                    │
+                    ├── 障碍绕过
+                    │   └── 回到ROUTE_FOLLOW
+                    │
+                    └── 接近最终点
+                        └── GoalController::update()
+                            └── state=SUCCEEDED
+                                └── Mux立即输出0
+七、你排查问题时应该看哪棵树
+任务没有开始
+└── mqtt_codec.cpp
+    mqtt_bridge.cpp
+    task_manager.cpp
+
+状态不对、突然FAILED
+└── navigation_coordinator.cpp
+    NavigationCoordinator::update()
+
+路线进度跳了、回头找旧路点
+└── route_manager.cpp
+    route_progress_tracker.cpp
+
+SCAN触发早、触发晚、不退出
+└── navigation_mode_manager.cpp
+
+明明切到SCAN但没有新路径
+└── navdog_runtime_node.cpp
+    publishNativeScanReferencePath()
+
+SCAN有路径但规划失败
+└── scan_replan_fsm.cpp
+    planner_manager.cpp
+    bspline_optimizer.cpp
+
+SCAN有B样条但机器人不走
+└── closed_loop_controller.cpp
+
+Route和SCAN抢控制、切换顿挫
+└── cmd_vel_owner_mux.cpp
+
+无障碍Route模式走得不好
+└── route_follower.cpp
+
+近终点停住或朝向不对
+└── goal_controller.cpp
+    navigation_coordinator.cpp
+
+前方障碍导致速度被压成0
+└── safety_supervisor.cpp
+八、最适合放进工程的文档结构
+
+建议工程根目录新增：
+
+docs/
+├── CODE_MAP.md
+├── NAVIGATION_WORKFLOW.md
+└── DEBUG_GUIDE.md

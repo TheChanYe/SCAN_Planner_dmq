@@ -498,32 +498,32 @@ VelocityCommand NavigationCoordinator::executeMode(
 
 // =============================================================================
 // handleEvent
+// 负责处理任务类事件。
 // =============================================================================
-
 TaskHandleResult NavigationCoordinator::handleEvent(
     NavigationEvent event)
 {
   const std::uint64_t prior_sequence = task_manager_.session().sequence;
   navdog_task::TaskTransition task_output =
       task_manager_.handleEvent(std::move(event));
-
+  /* 任务处理结果，输入任务 */
   switch (task_output.result)
   {
-    case TaskHandleResult::STARTED:
+    case TaskHandleResult::STARTED: // 任务开始
       if (!route_manager_.acceptRoute(
               task_output.session.sequence,
-              std::move(task_output.accepted_route)))
+              std::move(task_output.accepted_route))) // 如果路线不合法，进入失败状态
       {
         state_ = NavState::FAILED;
-        return TaskHandleResult::REJECTED_INVALID_TASK;
+        return TaskHandleResult::REJECTED_INVALID_TASK; // 任务拒绝
       }
-      clearPlanningContext();
-      resetNearGoalBlockedTimer();
+      clearPlanningContext(); // 清除规划上下文
+      resetNearGoalBlockedTimer(); // 重置接近目标阻塞计时器
       start_align_controller_.reset();
       navigation_mode_manager_.reset();
       goal_controller_.reset();
       safety_supervisor_.reset();
-      state_ = NavState::PLANNING;
+      state_ = NavState::PLANNING; // 进入规划状态
       {
         PlannerAction action{};
         action.type = PlannerActionType::SET_ROUTE;
@@ -535,7 +535,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       break;
 
-    case TaskHandleResult::CANCELLED:
+    case TaskHandleResult::CANCELLED: // 任务取消
       clearPlanningContext();
       resetNearGoalBlockedTimer();
       start_align_controller_.reset();
@@ -549,7 +549,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
         enqueuePlannerAction(action); }
       break;
 
-    case TaskHandleResult::MAX_VX_UPDATED:
+    case TaskHandleResult::MAX_VX_UPDATED: // 速度更新
       if (state_ == NavState::PLANNING ||
           state_ == NavState::START_ALIGN ||
           state_ == NavState::TRACKING)
@@ -562,7 +562,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       break;
 
-    case TaskHandleResult::PAUSED:
+    case TaskHandleResult::PAUSED: // 任务暂停
       if (state_ != NavState::PAUSED)
       {
         state_before_pause_ = state_;
@@ -572,7 +572,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       break;
 
-    case TaskHandleResult::RESUMED:
+    case TaskHandleResult::RESUMED: // 任务恢复
       if (state_ == NavState::PAUSED)
       {
         state_ = state_before_pause_ == NavState::IDLE
@@ -582,15 +582,15 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       break;
 
-    case TaskHandleResult::NONE:
-    case TaskHandleResult::REJECTED_BUSY:
-    case TaskHandleResult::REJECTED_INVALID_TASK:
-    case TaskHandleResult::CANCEL_IGNORED:
-    case TaskHandleResult::PAUSE_RESUME_IGNORED:
-    case TaskHandleResult::MAX_VX_UNCHANGED:
-    case TaskHandleResult::MAX_VX_UPDATE_IGNORED:
-    case TaskHandleResult::REJECTED_INVALID_MAX_VX:
-    case TaskHandleResult::UNSUPPORTED_EVENT:
+    case TaskHandleResult::NONE: // 忽略
+    case TaskHandleResult::REJECTED_BUSY: // 忙碌拒绝
+    case TaskHandleResult::REJECTED_INVALID_TASK: // 无效任务拒绝
+    case TaskHandleResult::CANCEL_IGNORED: // 忽略取消
+    case TaskHandleResult::PAUSE_RESUME_IGNORED: // 忽略暂停恢复
+    case TaskHandleResult::MAX_VX_UNCHANGED: // 忽略速度更新
+    case TaskHandleResult::MAX_VX_UPDATE_IGNORED: // 忽略速度更新
+    case TaskHandleResult::REJECTED_INVALID_MAX_VX: // 忽略速度更新
+    case TaskHandleResult::UNSUPPORTED_EVENT: // 忽略
       break;
   }
 
@@ -619,14 +619,20 @@ const navdog_task::TaskSession& NavigationCoordinator::taskSession() const noexc
 // =============================================================================
 // update
 // =============================================================================
-
+/**
+ * @brief update
+ * 更新导航协调器状态。
+ * @param input 核心输入数据
+ * @param now_sec 当前时间（秒）
+ * @return 核心输出数据
+ */
 CoreOutput NavigationCoordinator::update(
     const CoreInput& input,
     double now_sec)
 {
   CoreOutput output{};
 
-  if (state_ != last_logged_state_)
+  if (state_ != last_logged_state_) // 如果状态发生变化，打印状态变化信息
   {
     const auto prev = last_logged_state_;
     last_logged_state_ = state_;
@@ -638,7 +644,7 @@ CoreOutput NavigationCoordinator::update(
 
   // --- Planning feedback and action emission ---
   if (state_ == NavState::PLANNING &&
-      !planning_request_sent_)
+      !planning_request_sent_) // 如果当前状态为规划状态且没有发送规划请求，则发送规划请求
   {
     output.planner_action =
         takeNextPlannerAction();
@@ -655,7 +661,7 @@ CoreOutput NavigationCoordinator::update(
       }
     }
   }
-  else
+  else // 否则，更新规划状态
   {
     if (state_ == NavState::PLANNING)
     {
@@ -668,15 +674,16 @@ CoreOutput NavigationCoordinator::update(
         takeNextPlannerAction();
   }
 
-  // --- Build final_cmd ---
+  // 设置默认速度命令为零
   VelocityCommand final_cmd =
       makeZeroCommand(
           CommandSource::IDLE_STOP,
           now_sec);
 
-  // --- START_ALIGN processing ---
+  // 开始处理状态机逻辑，如果当前状态为 START_ALIGN，则进行对齐控制器更新
   if (state_ == NavState::START_ALIGN)
   {
+    /* 任务没有激活或没有路线，则进入失败状态*/
     if (!task_manager_.hasActiveTask() || !route_manager_.hasRoute())
     {
       enterFailedState();
@@ -686,22 +693,22 @@ CoreOutput NavigationCoordinator::update(
               CommandSource::FAILED_STOP,
               now_sec);
     }
-    else
+    else /* 任务激活且路线存在，则进行对齐控制器更新*/
     {
       const StartAlignOutput align_output =
           start_align_controller_.update(
               route_manager_.taskView(),
               input.robot,
-              now_sec);
+              now_sec); // 更新对齐控制器，获取对齐输出
 
-      switch (align_output.result)
+      switch (align_output.result) // 根据对齐结果进行处理
       {
-        case StartAlignResult::WAITING_FOR_ROBOT:
-        case StartAlignResult::ALIGNING:
+        case StartAlignResult::WAITING_FOR_ROBOT: // 等待机器人对齐
+        case StartAlignResult::ALIGNING: // 正在对齐
           final_cmd = align_output.command;
           break;
 
-        case StartAlignResult::ALIGNED:
+        case StartAlignResult::ALIGNED: // 对齐完成
           state_ = NavState::TRACKING;
           start_align_controller_.reset();
           goal_controller_.reset();
@@ -712,10 +719,10 @@ CoreOutput NavigationCoordinator::update(
                   now_sec);
           break;
 
-        case StartAlignResult::TIMED_OUT:
-        case StartAlignResult::INVALID_TASK:
-        case StartAlignResult::INVALID_TIME:
-        case StartAlignResult::INVALID_CONFIG:
+        case StartAlignResult::TIMED_OUT: // 对齐超时
+        case StartAlignResult::INVALID_TASK: // 无效任务
+        case StartAlignResult::INVALID_TIME: // 无效时间
+        case StartAlignResult::INVALID_CONFIG: // 无效配置
           enterFailedState();
 
           final_cmd =
@@ -724,7 +731,7 @@ CoreOutput NavigationCoordinator::update(
                   now_sec);
           break;
 
-        case StartAlignResult::IDLE:
+        case StartAlignResult::IDLE: // 空闲状态
           final_cmd =
               makeZeroCommand(
                   CommandSource::START_ALIGN,
@@ -734,38 +741,39 @@ CoreOutput NavigationCoordinator::update(
     }
   }
   else if (output.planner_action.type ==
-           PlannerActionType::CANCEL)
+           PlannerActionType::CANCEL) // 如果规划动作为取消，则发送零速度命令
   {
     final_cmd =
         makeZeroCommand(
             CommandSource::CANCEL_STOP,
             now_sec);
   }
-  else
+  else // 否则，根据当前状态进行处理
   {
-    switch (state_)
+    switch (state_) // 根据状态进行处理
     {
-      case NavState::IDLE:
+      case NavState::IDLE: // 空闲状态，发送零速度命令
         final_cmd =
             makeZeroCommand(
                 CommandSource::IDLE_STOP,
                 now_sec);
         break;
 
-      case NavState::PLANNING:
+      case NavState::PLANNING: // 规划状态，发送零速度命令
         final_cmd =
             makeZeroCommand(
                 CommandSource::PLANNING_STOP,
                 now_sec);
         break;
 
-      case NavState::PAUSED:
+      case NavState::PAUSED: // 暂停状态，发送零速度命令
         final_cmd =
             makeZeroCommand(CommandSource::PAUSE_STOP, now_sec);
         break;
 
-      case NavState::TRACKING:
+      case NavState::TRACKING: // 跟踪状态，处理跟踪逻辑
       {
+        /* 任务没有激活或没有路线，则进入失败状态*/
         if (!task_manager_.hasActiveTask() || !route_manager_.hasRoute())
         {
           enterFailedState();
@@ -775,14 +783,14 @@ CoreOutput NavigationCoordinator::update(
                   CommandSource::FAILED_STOP,
                   now_sec);
         }
-        else
+        else /* 任务激活且路线存在，则处理跟踪逻辑*/
         {
           const RouteProgressOutput progress_output =
               route_manager_.updateProgress(input.robot, now_sec);
 
-          switch (progress_output.result)
+          switch (progress_output.result) // 根据路线进度结果进行处理
           {
-            case RouteProgressResult::VALID:
+            case RouteProgressResult::VALID: // 路线进度有效
             {
               output.route_progress =
                   progress_output.progress;
