@@ -7,7 +7,7 @@ void trajectoryCallback(const scan_planner::BsplineConstPtr& message)
 {
   ROS_INFO("[open_loop_controller_dmq] diagnostic trajectory id=%d "
            "control_points=%lu knots=%lu",
-           message->traj_id,
+           static_cast<long>(message->traj_id),
            static_cast<unsigned long>(message->pos_pts.size()),
            static_cast<unsigned long>(message->knots.size()));
 }

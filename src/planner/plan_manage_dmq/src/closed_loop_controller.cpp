@@ -40,7 +40,16 @@ double exec_time = 0.0;
 ros::Time last_update_time;
 
 double time_forward;
+// 开始降低线速度的航向误差。
 double heading_error_threshold;
+
+// 航向误差小于该值后恢复全速。
+// 同时用于形成航向控制的平滑区间。
+double heading_resume_threshold;
+
+// 大航向误差时保留的最小线速度比例。
+double min_heading_speed_scale;
+
 double kp_pos;
 double kp_yaw;
 double max_vx;
@@ -61,22 +70,186 @@ bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, doubl
 bool loadParams(const ros::NodeHandle &nh)
 {
   bool ok = true;
-  ros::param::param<std::string>("/body_pose_topic", body_pose_topic, std::string("/quad_0/body_pose"));
-  ok &= loadRequiredParam(nh, "time_forward", time_forward);
-  ok &= loadRequiredParam(nh, "heading_error_threshold", heading_error_threshold);
-  ok &= loadRequiredParam(nh, "kp_pos", kp_pos);
-  ok &= loadRequiredParam(nh, "kp_yaw", kp_yaw);
-  ok &= loadRequiredParam(nh, "max_vx", max_vx);
-  ok &= loadRequiredParam(nh, "max_vy", max_vy);
-  ok &= loadRequiredParam(nh, "max_vyaw", max_vyaw);
-  ok &= loadRequiredParam(nh, "finish_dist", finish_dist);
-  if (ok && max_vyaw > kMaxVYawLimit)
+
+  ros::param::param<std::string>(
+      "/body_pose_topic",
+      body_pose_topic,
+      std::string("/quad_0/body_pose"));
+
+  ok &= loadRequiredParam(
+      nh,
+      "time_forward",
+      time_forward);
+
+  ok &= loadRequiredParam(
+      nh,
+      "heading_error_threshold",
+      heading_error_threshold);
+
+  ok &= loadRequiredParam(
+      nh,
+      "heading_resume_threshold",
+      heading_resume_threshold);
+
+  ok &= loadRequiredParam(
+      nh,
+      "min_heading_speed_scale",
+      min_heading_speed_scale);
+
+  ok &= loadRequiredParam(
+      nh,
+      "kp_pos",
+      kp_pos);
+
+  ok &= loadRequiredParam(
+      nh,
+      "kp_yaw",
+      kp_yaw);
+
+  ok &= loadRequiredParam(
+      nh,
+      "max_vx",
+      max_vx);
+
+  ok &= loadRequiredParam(
+      nh,
+      "max_vy",
+      max_vy);
+
+  ok &= loadRequiredParam(
+      nh,
+      "max_vyaw",
+      max_vyaw);
+
+  ok &= loadRequiredParam(
+      nh,
+      "finish_dist",
+      finish_dist);
+
+  if (!ok)
+    return false;
+
+  if (!std::isfinite(time_forward) ||
+      time_forward < 0.0)
   {
-    ROS_WARN("[closed_loop_controller_dmq] cap max_vyaw %.3f to %.3f rad/s.", max_vyaw, kMaxVYawLimit);
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "time_forward must be finite and >= 0");
+    ok = false;
+  }
+
+  if (!std::isfinite(heading_resume_threshold) ||
+      heading_resume_threshold < 0.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "heading_resume_threshold must be "
+        "finite and >= 0");
+    ok = false;
+  }
+
+  if (!std::isfinite(heading_error_threshold) ||
+      heading_error_threshold <=
+          heading_resume_threshold)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "heading_error_threshold must be "
+        "finite and greater than "
+        "heading_resume_threshold");
+    ok = false;
+  }
+
+  if (!std::isfinite(min_heading_speed_scale) ||
+      min_heading_speed_scale < 0.0 ||
+      min_heading_speed_scale > 1.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "min_heading_speed_scale must be in [0, 1]");
+    ok = false;
+  }
+
+  if (!std::isfinite(kp_pos) ||
+      kp_pos < 0.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "kp_pos must be finite and >= 0");
+    ok = false;
+  }
+
+  if (!std::isfinite(kp_yaw) ||
+      kp_yaw < 0.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "kp_yaw must be finite and >= 0");
+    ok = false;
+  }
+
+  if (!std::isfinite(max_vx) ||
+      max_vx <= 0.0 ||
+      !std::isfinite(max_vy) ||
+      max_vy <= 0.0 ||
+      !std::isfinite(max_vyaw) ||
+      max_vyaw <= 0.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "max_vx/max_vy/max_vyaw "
+        "must be finite and > 0");
+    ok = false;
+  }
+
+  if (!std::isfinite(finish_dist) ||
+      finish_dist < 0.0)
+  {
+    ROS_ERROR(
+        "[closed_loop_controller_dmq] "
+        "finish_dist must be finite and >= 0");
+    ok = false;
+  }
+
+  if (!ok)
+    return false;
+
+  if (max_vyaw > kMaxVYawLimit)
+  {
+    ROS_WARN(
+        "[closed_loop_controller_dmq] "
+        "cap max_vyaw %.3f to %.3f rad/s.",
+        max_vyaw,
+        kMaxVYawLimit);
+
     max_vyaw = kMaxVYawLimit;
   }
-  return ok;
+
+  ROS_INFO(
+      "[closed_loop_controller_dmq] "
+      "TRACK_CONFIG "
+      "time_forward=%.3f "
+      "heading_resume=%.3f "
+      "heading_error=%.3f "
+      "min_heading_scale=%.3f "
+      "kp_pos=%.3f "
+      "kp_yaw=%.3f "
+      "max_vx=%.3f "
+      "max_vy=%.3f "
+      "max_vyaw=%.3f",
+      time_forward,
+      heading_resume_threshold,
+      heading_error_threshold,
+      min_heading_speed_scale,
+      kp_pos,
+      kp_yaw,
+      max_vx,
+      max_vy,
+      max_vyaw);
+
+  return true;
 }
+
 
 double normalizeAngle(double angle)
 {
@@ -92,12 +265,70 @@ double clamp(double value, double min_value, double max_value)
   return std::max(min_value, std::min(max_value, value));
 }
 
-Eigen::Vector2d clampNorm(const Eigen::Vector2d &value, double max_norm)
+Eigen::Vector2d clampNorm(
+    const Eigen::Vector2d &value,
+    double max_norm)
 {
   const double norm = value.norm();
-  if (norm <= max_norm || norm < 1e-6)
+
+  if (norm <= max_norm ||
+      norm < 1e-6)
+  {
     return value;
+  }
+
   return value / norm * max_norm;
+}
+
+/**
+ * @brief 根据避障轨迹航向误差计算线速度缩放比例。
+ *
+ * 误差较小时保持完整线速度；
+ * 误差位于两个阈值之间时线性降低；
+ * 误差很大时保留min_heading_speed_scale，
+ * 不再完全停止并原地旋转。
+ */
+double computeHeadingSpeedScale(
+    double abs_yaw_error)
+{
+  if (!std::isfinite(abs_yaw_error))
+    return 0.0;
+
+  // 误差很小，完整跟踪轨迹。
+  if (abs_yaw_error <=
+      heading_resume_threshold)
+  {
+    return 1.0;
+  }
+
+  // 误差已经达到或超过大误差阈值，
+  // 仍保留最小线速度，允许边转边走。
+  if (abs_yaw_error >=
+      heading_error_threshold)
+  {
+    return min_heading_speed_scale;
+  }
+
+  // 在resume阈值和error阈值之间线性插值。
+  const double threshold_range =
+      heading_error_threshold -
+      heading_resume_threshold;
+
+  if (threshold_range <= 1e-6)
+    return min_heading_speed_scale;
+
+  const double interpolation =
+      clamp(
+          (abs_yaw_error -
+           heading_resume_threshold) /
+              threshold_range,
+          0.0,
+          1.0);
+
+  return 1.0 -
+      interpolation *
+          (1.0 -
+           min_heading_speed_scale);
 }
 
 double estimateDesiredYaw(double t_cur, const Eigen::Vector3d &pos_des)
@@ -209,28 +440,75 @@ void cmdCallback(const ros::TimerEvent &)
   Eigen::Vector3d pos_des = traj[0].evaluateDeBoorT(t_eval);
   Eigen::Vector3d vel_des = traj[1].evaluateDeBoorT(t_eval);
 
-  const double yaw_des = estimateDesiredYaw(t_eval, pos_des);
-  const double yaw_err = normalizeAngle(yaw_des - odom_yaw);
-  const double vyaw_cmd = clamp(kp_yaw * yaw_err, -max_vyaw, max_vyaw);
+  const double yaw_des =
+      estimateDesiredYaw(
+          t_eval,
+          pos_des);
 
-  if (std::abs(yaw_err) > heading_error_threshold)
-  {
-    publishExecutionFrozen(true);
-    publishStop(vyaw_cmd);
-    last_update_time = now; // freeze exec_time while rotating in place
-    return;
-  }
+  const double yaw_err =
+      normalizeAngle(
+          yaw_des -
+          odom_yaw);
 
+  const double abs_yaw_err =
+      std::abs(
+          yaw_err);
+
+  const double vyaw_cmd =
+      clamp(
+          kp_yaw * yaw_err,
+          -max_vyaw,
+          max_vyaw);
+
+  // 根据航向误差平滑降低线速度。
+  // 不再因为误差超过heading_error_threshold
+  // 就冻结SCAN轨迹并原地旋转。
+  const double heading_speed_scale =
+      computeHeadingSpeedScale(
+          abs_yaw_err);
+
+  // SCAN轨迹始终保持执行状态。
+  // 机器人可以边沿轨迹移动，边调整自身航向。
   publishExecutionFrozen(false);
-  exec_time = std::min(traj_duration, exec_time + dt);
+
+  // 航向误差较大时，参考轨迹时间也减速推进。
+  // 防止机器人还没有调整好方向，轨迹参考点就快速跑远。
+  exec_time =
+      std::min(
+          traj_duration,
+          exec_time +
+              dt *
+              heading_speed_scale);
+
   last_update_time = now;
 
   pos_des = traj[0].evaluateDeBoorT(exec_time);
   vel_des = traj[1].evaluateDeBoorT(exec_time);
 
-  Eigen::Vector2d pos_err(pos_des(0) - odom_pos(0), pos_des(1) - odom_pos(1));
-  Eigen::Vector2d vel_ff(vel_des(0), vel_des(1));
-  Eigen::Vector2d vel_world = clampNorm(vel_ff + kp_pos * pos_err, std::max(max_vx, max_vy));
+  Eigen::Vector2d pos_err(
+      pos_des(0) -
+          odom_pos(0),
+      pos_des(1) -
+          odom_pos(1));
+
+  Eigen::Vector2d vel_ff(
+      vel_des(0),
+      vel_des(1));
+
+  Eigen::Vector2d vel_world =
+      clampNorm(
+          vel_ff +
+              kp_pos *
+              pos_err,
+          std::max(
+              max_vx,
+              max_vy));
+
+  // 航向误差越大，世界坐标系中的线速度越低。
+  // 最低仍保留min_heading_speed_scale比例，
+  // 因此不会再次出现完整原地旋转。
+  vel_world *=
+      heading_speed_scale;
 
   const double c = std::cos(odom_yaw);
   const double s = std::sin(odom_yaw);
@@ -241,6 +519,24 @@ void cmdCallback(const ros::TimerEvent &)
 
   if (exec_time >= traj_duration && pos_err.norm() < finish_dist)
     cmd = geometry_msgs::Twist();
+
+  ROS_INFO_THROTTLE(
+    0.5,
+    "SCAN_TRACK_CONTROL "
+    "traj_id=%d "
+    "yaw_des=%.3f "
+    "odom_yaw=%.3f "
+    "yaw_error=%.3f "
+    "heading_scale=%.3f "
+    "exec_time=%.3f "
+    "duration=%.3f",
+    traj_id,
+    yaw_des,
+    odom_yaw,
+    yaw_err,
+    heading_speed_scale,
+    exec_time,
+    traj_duration);
 
   cmd_vel_pub.publish(cmd);
 }
