@@ -119,6 +119,7 @@ void NavdogRuntimeNode::processEvents()
     const auto result = coordinator_->handleEvent(std::move(event));
     if (result == navdog_task::TaskHandleResult::STARTED)
     {
+      terminal_cleanup_sequence_ = 0;
       resetNativeScan("TASK_STARTED");
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
@@ -209,6 +210,9 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
   publishOutput(output, now_sec);
+  // Publish the terminal state first so the mux hard-stops before native
+  // SCAN is reset.  The edge detector prevents a 50 Hz reset loop.
+  handleTerminalTransition(output);
   if (last_status_publish_.isZero() ||
       (ros::Time::now() - last_status_publish_).toSec() >=
           1.0 / application_config_.runtime_io.status_rate_hz)
@@ -326,6 +330,37 @@ void NavdogRuntimeNode::publishRoute()
     path.poses.push_back(pose);
   }
   route_publisher_.publish(path);
+}
+
+void NavdogRuntimeNode::handleTerminalTransition(
+    const navdog::CoreOutput& output)
+{
+  const bool entered_succeeded =
+      output.state == navdog::NavState::SUCCEEDED &&
+      (!output_state_initialized_ || last_output_state_ != navdog::NavState::SUCCEEDED);
+  const bool entered_failed =
+      output.state == navdog::NavState::FAILED &&
+      (!output_state_initialized_ || last_output_state_ != navdog::NavState::FAILED);
+
+  if ((entered_succeeded || entered_failed) && output.task_sequence != 0 &&
+      terminal_cleanup_sequence_ != output.task_sequence)
+  {
+    terminal_cleanup_sequence_ = output.task_sequence;
+    resetNativeScan(entered_succeeded ? "TASK_SUCCEEDED" : "TASK_FAILED");
+    pending_native_scan_path_ = false;
+    pending_planner_feedback_ = navdog::PlannerFeedback{};
+
+    nav_msgs::Path empty_path;
+    empty_path.header.stamp = ros::Time::now();
+    empty_path.header.frame_id = "world";
+    route_publisher_.publish(empty_path);
+    ROS_INFO("NAV_TASK_TERMINAL sequence=%lu state=%s scan_reset=1",
+        static_cast<unsigned long>(output.task_sequence),
+        navdog::navStateName(output.state));
+  }
+
+  last_output_state_ = output.state;
+  output_state_initialized_ = true;
 }
 
 void NavdogRuntimeNode::resetNativeScan(const char* reason)

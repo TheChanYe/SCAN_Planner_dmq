@@ -150,7 +150,7 @@ namespace scan_planner
     else if (navi_mode_ == NAVI_MODE::REFERENCE_PATH)
       path_sub_ = nh.subscribe("/initial_path", 1, &SCANReplanFSM::pathCallback, this);
     else
-      cout << "Wrong navi_mode_ value! navi_mode_=" << navi_mode_ << endl;
+      ROS_ERROR("Wrong navi_mode_ value! navi_mode_=%d", navi_mode_);
   }
 
   void SCANReplanFSM::planGlobalTrajbyGivenWps()
@@ -206,7 +206,7 @@ namespace scan_planner
     if (msg->poses[0].pose.position.z < -0.1)
       return;
 
-    cout << "Triggered!" << endl;
+    ROS_DEBUG("SCAN_RVIZ_TARGET_TRIGGERED");
     trigger_ = true;
     init_pt_ = odom_pos_;
 
@@ -450,6 +450,7 @@ namespace scan_planner
       // Old FSM state, failure counters, and emergency flags must not
       // carry over from a previous task or a previous LOCAL_AVOID exit.
       replan_fail_count_ = 0;
+      continuation_failure_count_ = 0;
       first_replan_failure_time_ = ros::Time(0);
       last_replan_attempt_time_ = ros::Time(0);
       last_successful_replan_time_ = ros::Time(0);
@@ -486,6 +487,7 @@ namespace scan_planner
     current_wp_ = 0;
 
     replan_fail_count_ = 0;
+    continuation_failure_count_ = 0;
     first_replan_failure_time_ = ros::Time(0);
     continuously_called_times_ = 0;
     initial_plan_attempt_count_ = 0;
@@ -587,6 +589,24 @@ namespace scan_planner
     return std::atan2(diff(1), diff(0));
   }
 
+  double SCANReplanFSM::estimateTrajectoryYaw(
+      UniformBspline &trajectory, double time_sec) const
+  {
+    UniformBspline velocity_trajectory = trajectory.getDerivative();
+    const Eigen::Vector3d velocity =
+        velocity_trajectory.evaluateDeBoorT(time_sec);
+    return velocity.head<2>().squaredNorm() < 1e-8
+        ? getOdomYaw()
+        : std::atan2(velocity(1), velocity(0));
+  }
+
+  double SCANReplanFSM::normalizeAngle(double angle)
+  {
+    while (angle > M_PI) angle -= 2.0 * M_PI;
+    while (angle < -M_PI) angle += 2.0 * M_PI;
+    return angle;
+  }
+
   void SCANReplanFSM::publishSelfInflationMarker()
   {
     const double radius = std::max(0.0, self_double_cylinder_radius_);
@@ -675,7 +695,7 @@ namespace scan_planner
   {
     static string state_str[7] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
 
-    cout << "[FSM]: state: " + state_str[int(exec_state_)] << endl;
+    ROS_DEBUG("[FSM]: state: %s", state_str[int(exec_state_)].c_str());
   }
 
   void SCANReplanFSM::execFSMCallback(const ros::TimerEvent &e)
@@ -755,6 +775,7 @@ namespace scan_planner
       if (result == ReplanResult::SUCCESS)
       {
         initial_plan_attempt_count_ = 0;
+        continuation_failure_count_ = 0;
         replan_fail_count_ = 0;
         first_replan_failure_time_ = ros::Time(0);
         emergency_stop_active_ = false;
@@ -878,20 +899,28 @@ namespace scan_planner
         {
           last_successful_replan_time_ = ros::Time::now();
           last_replan_robot_position_ = odom_pos_;
-          ROS_INFO("SCAN_NOMINAL_REPLAN old_traj_id=%d new_traj_id=%d elapsed=%.3f robot_progress=%.3f remaining_time=%.3f result=SUCCESS",
+          ROS_DEBUG("SCAN_NOMINAL_REPLAN old_traj_id=%d new_traj_id=%d elapsed=%.3f robot_progress=%.3f remaining_time=%.3f result=SUCCESS",
               old_traj_id, planner_manager_->local_data_.traj_id_, elapsed_since_replan,
               moved_since_replan, remaining_time);
           break;
         }
         double collision_time = std::numeric_limits<double>::infinity();
         const bool old_safe = localTrajectoryIsSafe(collision_time);
-        ROS_WARN("SCAN_REPLAN_KEEP_OLD traj_id=%d failure_reason=%s remaining_time=%.3f collision_time_ahead=%.3f",
+        ROS_WARN_THROTTLE(1.0, "SCAN_REPLAN_KEEP_OLD traj_id=%d failure_reason=%s remaining_time=%.3f collision_time_ahead=%.3f",
             old_traj_id,
             result == ReplanResult::TARGET_UNAVAILABLE ? "TARGET_UNAVAILABLE" : "OPTIMIZATION_FAILED",
             remaining_time, collision_time);
         if (!old_safe && collision_time <= safety_immediate_replan_sec_)
           changeFSMExecState(EMERGENCY_STOP, "NOMINAL_OLD_TRAJ_UNSAFE");
         break;
+      }
+
+      const double dist_to_goal = (end_pt_ - odom_pos_).norm();
+      if (dist_to_goal <= no_replan_thresh_)
+      {
+        have_target_ = false;
+        changeFSMExecState(WAIT_TARGET, "GLOBAL_GOAL_REACHED");
+        return;
       }
 
       if (t_cur > info->duration_ - 1e-2)
@@ -914,20 +943,6 @@ namespace scan_planner
         // far away (e.g. after a lateral escape manoeuvre), do NOT clear
         // have_target_ and go straight to GEN_NEW_TRAJ so getLocalTarget()
         // can pick the next forward target or another escape point.
-        const double dist_to_goal = (end_pt_ - odom_pos_).norm();
-        if (dist_to_goal < no_replan_thresh_)
-        {
-          if (isWaypointSequenceMode())
-          {
-            active_waypoints_.clear();
-            current_wp_ = 0;
-          }
-
-          have_target_ = false;
-          changeFSMExecState(WAIT_TARGET, "FSM");
-          return;
-        }
-
         // We should normally have replanned before this point. Keep the
         // previous trajectory data and retry from EXEC_TRAJ rather than
         // clearing it or entering a blocking state.
@@ -1073,12 +1088,35 @@ namespace scan_planner
     const LocalTrajData previous_local =
         planner_manager_->local_data_;
 
-    // A rolling replan has exactly one optimizer attempt.  Repeated fallback
-    // initializers belong to neither the normal 5 Hz loop nor safety checks;
-    // keeping the old verified trajectory gives the map time to update.
-    ReplanResult result = callReboundReplan(true, false, planning_horizon_);
+    const double remaining_time = std::max(0.0, info->duration_ - t_cur);
+    // Normal rolling replans extend the current B-spline first. This retains
+    // its selected obstacle side instead of reconstructing a straight-line
+    // polynomial seed at every 5 Hz refresh.
+    ReplanResult result = callReboundReplan(false, false, planning_horizon_);
     if (result == ReplanResult::SUCCESS)
-      return ReplanResult::SUCCESS;
+    {
+      continuation_failure_count_ = 0;
+      return result;
+    }
+
+    planner_manager_->local_data_ = previous_local;
+    ++continuation_failure_count_;
+    double old_collision_time = std::numeric_limits<double>::infinity();
+    const bool old_trajectory_safe = localTrajectoryIsSafe(old_collision_time);
+    if (old_trajectory_safe && remaining_time > replan_lead_time_sec_ &&
+        continuation_failure_count_ < 3)
+      return result;
+
+    // A new deterministic seed is justified only once continuity is no
+    // longer safe/useful: the old path is near its end, unsafe, or has failed
+    // continuation repeatedly. Random initialization remains out of the
+    // nominal rolling path.
+    result = callReboundReplan(true, false, planning_horizon_);
+    if (result == ReplanResult::SUCCESS)
+    {
+      continuation_failure_count_ = 0;
+      return result;
+    }
 
     planner_manager_->local_data_ = previous_local;
     return result;
@@ -1355,7 +1393,7 @@ namespace scan_planner
 
       auto info = &planner_manager_->local_data_;
 
-      ROS_WARN("SCAN_LOCAL_PLAN_SUCCESS target=(%.2f,%.2f) "
+      ROS_DEBUG("SCAN_LOCAL_PLAN_SUCCESS target=(%.2f,%.2f) "
                "trajectory_id=%d duration=%.3f",
                local_target_pt_(0), local_target_pt_(1),
                info->traj_id_, info->duration_);
@@ -1387,6 +1425,25 @@ namespace scan_planner
       bspline_pub_.publish(bspline);
 
       visualization_->displayOptimalTraj(info->position_traj_, 0);
+
+      const double compare_time = std::min(0.5,
+          std::min(previous_local_trajectory.duration_, info->duration_));
+      const double old_elapsed = previous_local_trajectory.start_time_.isZero()
+          ? 0.0
+          : std::max(0.0, (ros::Time::now() - previous_local_trajectory.start_time_).toSec());
+      const double old_remaining_time = std::max(
+          0.0, previous_local_trajectory.duration_ - old_elapsed);
+      UniformBspline previous_position = previous_local_trajectory.position_traj_;
+      const double old_yaw = previous_local_trajectory.duration_ > 1e-5
+          ? estimateTrajectoryYaw(previous_position, std::max(0.0, compare_time))
+          : getOdomYaw();
+      const double new_yaw = estimateTrajectoryYaw(
+          info->position_traj_, std::max(0.0, compare_time));
+      ROS_INFO("SCAN_TRAJ_CONTINUITY old_traj_id=%d new_traj_id=%d init_type=%s yaw_delta=%.3f old_remaining_time=%.3f old_collision_time=%.3f",
+          previous_local_trajectory.traj_id_, info->traj_id_,
+          flag_use_poly_init ? (flag_randomPolyTraj ? "RANDOM" : "POLYNOMIAL") : "CONTINUATION",
+          normalizeAngle(new_yaw - old_yaw), old_remaining_time,
+          std::numeric_limits<double>::infinity());
 
       last_successful_replan_time_ = ros::Time::now();
       last_replan_robot_position_ = odom_pos_;
@@ -1584,7 +1641,7 @@ namespace scan_planner
 
     if (found_route_target)
     {
-      ROS_INFO("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f target_cap=%.2f",
+      ROS_DEBUG("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f target_cap=%.2f",
           local_target_pt_(0), local_target_pt_(1), local_target_pt_(2),
           (local_target_pt_ - start_pt_).norm(), max_target_dist);
       return true;
@@ -1609,7 +1666,7 @@ namespace scan_planner
       local_target_pt_ = final_target;
       local_target_vel_.setZero();
 
-      ROS_INFO(
+      ROS_DEBUG(
           "SCAN_LOCAL_TARGET_SELECTED "
           "reason=NEAR_GLOBAL_GOAL "
           "target=(%.2f,%.2f,%.2f) dist=%.3f",

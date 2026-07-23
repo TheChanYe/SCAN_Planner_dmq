@@ -31,7 +31,7 @@
     <!-- planning fsm -->
     <param name="fsm/navi_mode" value="$(arg navi_mode)" type="int"/>
     <param name="fsm/thresh_replan" value="0.20" type="double"/>
-    <param name="fsm/thresh_no_replan" value="0.1" type="double"/>
+    <param name="fsm/thresh_no_replan" value="0.20" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
     <param name="fsm/fail_safe" value="true" type="bool"/>

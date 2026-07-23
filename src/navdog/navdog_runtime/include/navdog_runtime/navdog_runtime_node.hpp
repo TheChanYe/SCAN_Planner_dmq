@@ -62,6 +62,8 @@ private:
   void publishNativeScanReferencePath(const navdog::RouteProgress& progress);
   void publishOutput(const navdog::CoreOutput& output, double now_sec);
   void publishMqttStatus(const navdog::CoreOutput& output);
+  /** @brief Reset native SCAN exactly once when the coordinator enters a terminal task state. */
+  void handleTerminalTransition(const navdog::CoreOutput& output);
   void logNavigationChanges(const navdog::CoreOutput& output,
       const navdog::CoreInput& input);
 
@@ -97,6 +99,9 @@ private:
   navdog::NavigationMode last_logged_mode_{navdog::NavigationMode::NONE};
   bool log_state_initialized_{false};
   bool log_mode_initialized_{false};
+  navdog::NavState last_output_state_{navdog::NavState::IDLE};
+  bool output_state_initialized_{false};
+  std::uint64_t terminal_cleanup_sequence_{0};
 };
 
 }  // namespace navdog_runtime

@@ -73,6 +73,7 @@ namespace scan_planner
     FSM_EXEC_STATE exec_state_;
     int continuously_called_times_{0};
     int replan_fail_count_{0};
+    int continuation_failure_count_{0};
     int max_replan_fail_count_{12};
     ros::Time first_replan_failure_time_;
     ros::Time last_freeze_update_time_;
@@ -147,6 +148,8 @@ namespace scan_planner
     void publishSelfInflationMarker();
     double getOdomYaw() const;
     double estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;
+    double estimateTrajectoryYaw(UniformBspline &trajectory, double time_sec) const;
+    static double normalizeAngle(double angle);
     void updateLocalTrajTimeFreeze();
 
     /* ROS functions */

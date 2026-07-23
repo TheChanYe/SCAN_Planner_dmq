@@ -325,7 +325,7 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
   last_update_time = ros::Time::now();
   receive_traj = true;
 
-  ROS_WARN("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
+  ROS_DEBUG("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
 }
 
 void odomCallback(const nav_msgs::OdometryConstPtr &msg)
@@ -415,8 +415,8 @@ void cmdCallback(const ros::TimerEvent &)
   if (exec_time >= traj_duration && pos_err.norm() < finish_dist)
     cmd = geometry_msgs::Twist();
 
-  ROS_INFO_THROTTLE(
-    0.5,
+  ROS_DEBUG_THROTTLE(
+    1.0,
     "SCAN_TRACK_CONTROL "
     "traj_id=%d "
     "yaw_des=%.3f "

@@ -43,7 +43,7 @@ namespace scan_planner
 
   SCANPlannerManager::SCANPlannerManager() {}
 
-  SCANPlannerManager::~SCANPlannerManager() { std::cout << "des manager" << std::endl; }
+  SCANPlannerManager::~SCANPlannerManager() {}
 
   void SCANPlannerManager::initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis)
   {
@@ -80,16 +80,13 @@ namespace scan_planner
                                         Eigen::Vector3d local_target_vel, bool flag_polyInit, bool flag_randomPolyTraj)
   {
 
-    static int count = 0;
-    std::cout << endl
-              << "[rebo replan]: -------------------------------------" << count++ << std::endl;
-    cout.precision(3);
-    cout << "start: " << start_pt.transpose() << ", " << start_vel.transpose() << "\ngoal:" << local_target_pt.transpose() << ", " << local_target_vel.transpose()
-         << endl;
+    ROS_DEBUG("SCAN_REBOUND_REPLAN poly_init=%d random_init=%d start=(%.3f,%.3f) goal=(%.3f,%.3f)",
+        flag_polyInit ? 1 : 0, flag_randomPolyTraj ? 1 : 0,
+        start_pt(0), start_pt(1), local_target_pt(0), local_target_pt(1));
 
     if ((start_pt - local_target_pt).norm() < 0.2)
     {
-      cout << "Close to goal" << endl;
+      ROS_DEBUG("SCAN_REBOUND_CLOSE_TO_GOAL");
       continuous_failures_count_++;
       return false;
     }
@@ -262,7 +259,7 @@ namespace scan_planner
 
     /*** STEP 2: OPTIMIZE ***/
     bool flag_step_1_success = bspline_optimizer_rebound_->BsplineOptimizeTrajRebound(ctrl_pts, ts);
-    cout << "first_optimize_step_success=" << flag_step_1_success << endl;
+    ROS_DEBUG("SCAN_REBOUND_FIRST_OPTIMIZE_SUCCESS=%d", flag_step_1_success ? 1 : 0);
     if (!flag_step_1_success)
     {
       // visualization_->displayOptimalList( ctrl_pts, vis_id );
@@ -282,7 +279,7 @@ namespace scan_planner
     bool flag_step_2_success = true;
     if (!pos.checkFeasibility(ratio, false))
     {
-      cout << "Need to reallocate time." << endl;
+      ROS_DEBUG("SCAN_REBOUND_REALLOCATE_TIME");
 
       Eigen::MatrixXd optimal_control_points;
       flag_step_2_success = refineTrajAlgo(pos, start_end_derivatives, ratio, ts, optimal_control_points);
@@ -292,7 +289,7 @@ namespace scan_planner
 
     if (!flag_step_2_success || !checkDynamicFeasibility(pos))
     {
-      printf("\033[34mThis refined trajectory is unsafe or dynamically infeasible. Skip publishing it.\n\033[0m");
+      ROS_WARN("SCAN_REBOUND_REFINED_TRAJECTORY_REJECTED");
       continuous_failures_count_++;
       return false;
     }
@@ -302,7 +299,9 @@ namespace scan_planner
     // save planned results
     updateTrajInfo(pos, ros::Time::now());
 
-    cout << "total time:\033[42m" << (t_init + t_opt + t_refine).toSec() << "\033[0m,optimize:" << (t_init + t_opt).toSec() << ",refine:" << t_refine.toSec() << endl;
+    ROS_DEBUG("SCAN_REBOUND_TIMING total=%.4f optimize=%.4f refine=%.4f",
+        (t_init + t_opt + t_refine).toSec(), (t_init + t_opt).toSec(),
+        t_refine.toSec());
 
     // success. YoY
     continuous_failures_count_ = 0;
