@@ -19,6 +19,10 @@ double scan_cmd_timeout_sec = 0.30;
 double publish_rate_hz = 50.0;
 double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
+// ROUTE -> SCAN only: briefly prevent a fresh SCAN command from reversing
+// the robot while the forward route command is being handed off.
+double scan_handoff_no_reverse_sec = 0.80;
+double scan_handoff_min_forward_vx = 0.02;
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -40,6 +44,9 @@ enum class CommandOwner
 CommandOwner previous_owner_{CommandOwner::NONE};
 double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
+bool scan_handoff_forward_guard_active{false};
+bool scan_handoff_forward_guard_logged{false};
+double scan_handoff_route_vx{0.0};
 
 // Velocity slew limiter — single instance for smooth handoff.
 navdog_runtime::VelocitySlewLimiter slew_limiter_;
@@ -171,18 +178,34 @@ void timerCallback(const ros::TimerEvent&)
   // --- Detect owner change ---
   if (owner != previous_owner_)
   {
-    const auto old_owner = previous_owner_;
+    const CommandOwner old_owner = previous_owner_;
     owner_change_stamp_sec_ = now_sec;
 
-    // Initialize the slew limiter from the last output so it starts
-    // from the actual velocity, not from zero.
-    if (!limiter_initialized_)
+    // Every ownership change starts from the last velocity actually sent to
+    // the robot, rather than a possibly stale limiter-internal value.
+    slew_limiter_.setCurrent(
+        last_output_cmd_.linear.x,
+        last_output_cmd_.linear.y,
+        last_output_cmd_.angular.z);
+    limiter_initialized_ = true;
+
+    const bool route_to_scan =
+        old_owner == CommandOwner::ROUTE && owner == CommandOwner::SCAN;
+    const bool route_was_moving_forward =
+        last_output_cmd_.linear.x > scan_handoff_min_forward_vx;
+    if (route_to_scan && route_was_moving_forward)
     {
-      slew_limiter_.setCurrent(
-          last_output_cmd_.linear.x,
-          last_output_cmd_.linear.y,
-          last_output_cmd_.angular.z);
-      limiter_initialized_ = true;
+      scan_handoff_forward_guard_active = true;
+      scan_handoff_forward_guard_logged = false;
+      scan_handoff_route_vx = last_output_cmd_.linear.x;
+      ROS_INFO("SCAN_HANDOFF_FORWARD_GUARD_START route_vx=%.3f duration=%.3f",
+          scan_handoff_route_vx, scan_handoff_no_reverse_sec);
+    }
+    else
+    {
+      scan_handoff_forward_guard_active = false;
+      scan_handoff_forward_guard_logged = false;
+      scan_handoff_route_vx = 0.0;
     }
 
     ROS_INFO("CMD_OWNER prev=%s next=%s state=%s mode=%s",
@@ -211,6 +234,9 @@ void timerCallback(const ros::TimerEvent&)
   {
     // Immediate zero — reset the limiter so it doesn't try to
     // slew from a stale velocity on the next handoff.
+    scan_handoff_forward_guard_active = false;
+    scan_handoff_forward_guard_logged = false;
+    scan_handoff_route_vx = 0.0;
     slew_limiter_.reset();
     last_output_cmd_ = zeroCommand();
     cmd_vel_pub_.publish(zeroCommand());
@@ -230,14 +256,51 @@ void timerCallback(const ros::TimerEvent&)
       break;
 
     case CommandOwner::SCAN:
-      // Only accept scan commands stamped after the ownership change.
-      if (scan_cmd_stamp_sec_ > owner_change_stamp_sec_ + kEpsilon &&
-          isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec))
+    {
+      const bool scan_cmd_after_handoff =
+          scan_cmd_stamp_sec_ > owner_change_stamp_sec_ + kEpsilon;
+      const bool scan_cmd_fresh =
+          isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec);
+      if (scan_cmd_after_handoff && scan_cmd_fresh)
       {
         target_cmd = latest_scan_cmd_;
         target_valid = true;
+        const double handoff_age = now_sec - owner_change_stamp_sec_;
+        if (scan_handoff_forward_guard_active)
+        {
+          const bool guard_expired =
+              handoff_age > scan_handoff_no_reverse_sec;
+          if (target_cmd.linear.x >= 0.0)
+          {
+            scan_handoff_forward_guard_active = false;
+            scan_handoff_forward_guard_logged = false;
+            ROS_INFO("SCAN_HANDOFF_FORWARD_GUARD_RELEASE reason=SCAN_FORWARD_READY scan_vx=%.3f age=%.3f",
+                target_cmd.linear.x, handoff_age);
+          }
+          else if (!guard_expired)
+          {
+            const double raw_scan_vx = target_cmd.linear.x;
+            // Preserve lateral velocity and yaw: this guard only blocks the
+            // handoff's brief forward-to-reverse longitudinal command.
+            target_cmd.linear.x = 0.0;
+            if (!scan_handoff_forward_guard_logged)
+            {
+              ROS_WARN("SCAN_HANDOFF_REVERSE_BLOCKED route_vx=%.3f raw_scan_vx=%.3f scan_vy=%.3f scan_wz=%.3f age=%.3f",
+                  scan_handoff_route_vx, raw_scan_vx, target_cmd.linear.y,
+                  target_cmd.angular.z, handoff_age);
+              scan_handoff_forward_guard_logged = true;
+            }
+          }
+          else
+          {
+            scan_handoff_forward_guard_active = false;
+            scan_handoff_forward_guard_logged = false;
+            ROS_WARN("SCAN_HANDOFF_FORWARD_GUARD_RELEASE reason=TIMEOUT scan_vx=%.3f age=%.3f",
+                target_cmd.linear.x, handoff_age);
+          }
+        }
       }
-      else if (scan_cmd_stamp_sec_ <= owner_change_stamp_sec_ + kEpsilon)
+      else if (!scan_cmd_after_handoff)
       {
         const double handoff_age = now_sec - owner_change_stamp_sec_;
         if (handoff_age < scan_handoff_hold_sec)
@@ -255,6 +318,7 @@ void timerCallback(const ros::TimerEvent&)
       // If SCAN command not ready yet: target remains zero, and we slew
       // down from the current velocity to zero.
       break;
+    }
 
     case CommandOwner::NONE:
     default:
@@ -297,6 +361,8 @@ int main(int argc, char** argv)
   private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
   private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
   private_nh.param("scan_handoff_hold_sec", scan_handoff_hold_sec, 0.10);
+  private_nh.param("scan_handoff_no_reverse_sec", scan_handoff_no_reverse_sec, 0.80);
+  private_nh.param("scan_handoff_min_forward_vx", scan_handoff_min_forward_vx, 0.02);
 
   // Slew limiter params
   navdog_runtime::VelocitySlewLimiter::Config slew_config;
@@ -311,7 +377,9 @@ int main(int argc, char** argv)
   if (!std::isfinite(route_cmd_timeout_sec) || route_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(scan_cmd_timeout_sec) || scan_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(publish_rate_hz) || publish_rate_hz <= 0.0 ||
-      !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0)
+      !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0 ||
+      !std::isfinite(scan_handoff_no_reverse_sec) || scan_handoff_no_reverse_sec < 0.0 ||
+      !std::isfinite(scan_handoff_min_forward_vx) || scan_handoff_min_forward_vx < 0.0)
   {
     ROS_FATAL("cmd_vel_owner_mux: invalid configuration");
     return 1;
@@ -335,10 +403,11 @@ int main(int argc, char** argv)
       ros::Duration(1.0 / publish_rate_hz), timerCallback);
 
   ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f "
-           "rate=%.1f grace=%.2f "
+           "rate=%.1f grace=%.2f scan_hold=%.2f scan_no_reverse=%.2f scan_min_forward_vx=%.2f "
            "handoff accel_x=%.2f decel_x=%.2f accel_yaw=%.2f decel_yaw=%.2f",
       route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz,
-      mode_sync_grace_sec,
+      mode_sync_grace_sec, scan_handoff_hold_sec, scan_handoff_no_reverse_sec,
+      scan_handoff_min_forward_vx,
       slew_config.accel_x, slew_config.decel_x,
       slew_config.accel_yaw, slew_config.decel_yaw);
 

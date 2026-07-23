@@ -143,7 +143,8 @@ namespace scan_planner
       }
       else
       {
-        ROS_ERROR("a star error, force return!");
+        ROS_WARN_THROTTLE(1.0,
+            "SCAN_ASTAR_CANDIDATE_FAILED action=TRY_FALLBACK");
         return a_star_paths;
       }
     }
@@ -811,7 +812,8 @@ namespace scan_planner
         }
         else
         {
-          ROS_ERROR("a star error");
+          ROS_WARN_THROTTLE(1.0,
+              "SCAN_ASTAR_CANDIDATE_FAILED action=TRY_FALLBACK");
           segment_ids.erase(segment_ids.begin() + i);
           i--;
         }

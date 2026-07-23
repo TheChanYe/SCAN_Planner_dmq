@@ -1439,11 +1439,25 @@ namespace scan_planner
           : getOdomYaw();
       const double new_yaw = estimateTrajectoryYaw(
           info->position_traj_, std::max(0.0, compare_time));
+      const char* init_type = flag_use_poly_init
+          ? (flag_randomPolyTraj ? "RANDOM" : "POLYNOMIAL")
+          : "CONTINUATION";
+      const double yaw_delta = normalizeAngle(new_yaw - old_yaw);
+      const bool important_continuity_event =
+          std::string(init_type) != "CONTINUATION" || std::abs(yaw_delta) >= 0.10;
+      if (important_continuity_event)
+      {
       ROS_INFO("SCAN_TRAJ_CONTINUITY old_traj_id=%d new_traj_id=%d init_type=%s yaw_delta=%.3f old_remaining_time=%.3f old_collision_time=%.3f",
           previous_local_trajectory.traj_id_, info->traj_id_,
-          flag_use_poly_init ? (flag_randomPolyTraj ? "RANDOM" : "POLYNOMIAL") : "CONTINUATION",
-          normalizeAngle(new_yaw - old_yaw), old_remaining_time,
+          init_type, yaw_delta, old_remaining_time,
           std::numeric_limits<double>::infinity());
+      }
+      else
+      {
+      ROS_DEBUG_THROTTLE(2.0, "SCAN_TRAJ_CONTINUITY old_traj_id=%d new_traj_id=%d init_type=%s yaw_delta=%.3f old_remaining_time=%.3f old_collision_time=%.3f",
+          previous_local_trajectory.traj_id_, info->traj_id_, init_type,
+          yaw_delta, old_remaining_time, std::numeric_limits<double>::infinity());
+      }
 
       last_successful_replan_time_ = ros::Time::now();
       last_replan_robot_position_ = odom_pos_;
