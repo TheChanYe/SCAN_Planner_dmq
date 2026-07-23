@@ -82,6 +82,8 @@ namespace scan_planner
     ros::Time last_nominal_replan_attempt_time_;
     Eigen::Vector3d last_replan_robot_position_{Eigen::Vector3d::Zero()};
     bool planning_in_progress_{false};
+    bool takeover_sync_pending_{false};
+    bool force_takeover_poly_init_{false};
     double nominal_replan_period_sec_{0.20};
     double min_replan_progress_m_{0.05};
     double replan_retry_interval_sec_{0.10};
@@ -114,7 +116,7 @@ namespace scan_planner
     /* ROS utils */
     ros::NodeHandle node_;
     ros::Timer exec_timer_, safety_timer_;
-    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_;
+    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_;
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
 
     enum class ReplanResult
@@ -161,6 +163,7 @@ namespace scan_planner
     void odometryCallback(const nav_msgs::OdometryConstPtr &msg);
     void go2ExecutionFrozenCallback(const std_msgs::BoolConstPtr &msg);
     void resetCallback(const std_msgs::EmptyConstPtr &msg);
+    void takeoverSyncCallback(const std_msgs::EmptyConstPtr &msg);
 
     bool checkCollision();
 

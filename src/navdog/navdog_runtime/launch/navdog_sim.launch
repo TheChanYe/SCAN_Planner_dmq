@@ -34,8 +34,6 @@
     <param name="scan_cmd_timeout" value="0.30"/>
     <param name="mode_sync_grace_sec" value="0.10"/>
     <param name="scan_handoff_hold_sec" value="0.10"/>
-    <param name="scan_handoff_no_reverse_sec" value="0.80"/>
-    <param name="scan_handoff_min_forward_vx" value="0.02"/>
     <param name="handoff_accel_x" value="0.50"/>
     <param name="handoff_decel_x" value="0.80"/>
     <param name="handoff_accel_y" value="0.25"/>

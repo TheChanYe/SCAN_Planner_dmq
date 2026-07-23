@@ -49,6 +49,7 @@
       <param name="kp_pos" value="0.70"/>
       <param name="kp_yaw" value="1.5"/>
       <param name="finish_dist" value="0.15"/>
+      <param name="takeover_anchor_tolerance" value="0.25"/>
     </node>
   </group>
 </launch>

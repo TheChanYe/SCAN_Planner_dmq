@@ -62,6 +62,8 @@ private:
   void publishNativeScanReferencePath(const navdog::RouteProgress& progress);
   void publishOutput(const navdog::CoreOutput& output, double now_sec);
   void publishMqttStatus(const navdog::CoreOutput& output);
+  void publishTakeoverSync(const navdog::CoreInput& input,
+      const navdog::CoreOutput& output);
   /** @brief Reset native SCAN exactly once when the coordinator enters a terminal task state. */
   void handleTerminalTransition(const navdog::CoreOutput& output);
   void logNavigationChanges(const navdog::CoreOutput& output,
@@ -80,6 +82,7 @@ private:
   ros::Publisher route_publisher_;
   ros::Publisher native_scan_path_publisher_;
   ros::Publisher native_scan_reset_publisher_;
+  ros::Publisher native_scan_takeover_sync_publisher_;
   ros::Publisher state_publisher_;
   ros::Publisher mode_publisher_;
   ros::Publisher final_cmd_publisher_;

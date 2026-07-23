@@ -65,6 +65,8 @@ bool NavdogRuntimeNode::initialize()
   native_scan_reset_publisher_ =
       nh_.advertise<std_msgs::Empty>(
           "/native_scan/reset", 1, false);
+  native_scan_takeover_sync_publisher_ = nh_.advertise<std_msgs::Empty>(
+      "/native_scan/takeover_sync", 1, false);
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
@@ -193,6 +195,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
+      publishTakeoverSync(input, output);
       ROS_INFO("SCAN_HANDOFF_ENTER prewarmed=1 scan_ready=%d",
           pending_native_scan_path_ ? 0 : 1);
     }
@@ -220,6 +223,15 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
     publishMqttStatus(output);
     last_status_publish_ = ros::Time::now();
   }
+}
+
+void NavdogRuntimeNode::publishTakeoverSync(
+    const navdog::CoreInput& input, const navdog::CoreOutput& output)
+{
+  native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
+  ROS_INFO("SCAN_TAKEOVER_SYNC_REQUEST sequence=%lu robot_x=%.3f robot_y=%.3f robot_vx=%.3f robot_vy=%.3f",
+      static_cast<unsigned long>(output.task_sequence), input.robot.x,
+      input.robot.y, input.robot.vx, input.robot.vy);
 }
 
 void NavdogRuntimeNode::logNavigationChanges(

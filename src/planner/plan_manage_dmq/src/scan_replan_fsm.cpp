@@ -133,6 +133,8 @@ namespace scan_planner
     odom_sub_ = nh.subscribe(body_pose_topic, 1, &SCANReplanFSM::odometryCallback, this);
     go2_execution_frozen_sub_ = nh.subscribe("/planning/go2_execution_frozen", 10, &SCANReplanFSM::go2ExecutionFrozenCallback, this);
     reset_sub_ = nh.subscribe("/native_scan/reset", 1, &SCANReplanFSM::resetCallback, this);
+    takeover_sync_sub_ = nh.subscribe("/native_scan/takeover_sync", 1,
+        &SCANReplanFSM::takeoverSyncCallback, this);
 
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
     data_disp_pub_ = nh.advertise<scan_planner::DataDisp>("/planning/data_display", 100);
@@ -503,6 +505,8 @@ namespace scan_planner
     last_nominal_replan_attempt_time_ = ros::Time(0);
     last_replan_robot_position_ = odom_pos_;
     planning_in_progress_ = false;
+    takeover_sync_pending_ = false;
+    force_takeover_poly_init_ = false;
     last_freeze_update_time_ = ros::Time::now();
     next_emergency_retry_time_ = ros::Time(0);
     next_target_retry_time_ = ros::Time(0);
@@ -557,6 +561,43 @@ namespace scan_planner
   void SCANReplanFSM::go2ExecutionFrozenCallback(const std_msgs::BoolConstPtr &msg)
   {
     go2_execution_frozen_ = msg->data;
+  }
+
+  void SCANReplanFSM::takeoverSyncCallback(const std_msgs::EmptyConstPtr &)
+  {
+    if (navi_mode_ != NAVI_MODE::REFERENCE_PATH)
+      return;
+    if (!have_odom_ || !have_target_ || !planner_manager_)
+    {
+      takeover_sync_pending_ = true;
+      ROS_WARN("SCAN_TAKEOVER_SYNC_DEFERRED have_odom=%d have_target=%d",
+          have_odom_ ? 1 : 0, have_target_ ? 1 : 0);
+      return;
+    }
+
+    // Preserve global_data_, end_pt_ and the MQTT reference route.  Only the
+    // locally prewarmed, never-executed B-spline is invalid at handoff.
+    planner_manager_->local_data_.reset();
+    start_pt_ = odom_pos_;
+    start_vel_ = odom_vel_;
+    start_acc_.setZero();
+    continuation_failure_count_ = 0;
+    initial_plan_attempt_count_ = 0;
+    replan_fail_count_ = 0;
+    first_replan_failure_time_ = ros::Time(0);
+    last_replan_attempt_time_ = ros::Time(0);
+    last_successful_replan_time_ = ros::Time(0);
+    last_nominal_replan_attempt_time_ = ros::Time(0);
+    last_replan_robot_position_ = odom_pos_;
+    next_target_retry_time_ = ros::Time(0);
+    planning_in_progress_ = false;
+    emergency_stop_active_ = false;
+    takeover_sync_pending_ = false;
+    force_takeover_poly_init_ = true;
+    changeFSMExecState(GEN_NEW_TRAJ, "TAKEOVER_SYNC");
+    ROS_INFO("SCAN_TAKEOVER_LOCAL_RESET start=(%.3f,%.3f) velocity=(%.3f,%.3f) global_target=(%.3f,%.3f)",
+        start_pt_(0), start_pt_(1), start_vel_(0), start_vel_(1),
+        end_pt_(0), end_pt_(1));
   }
 
   void SCANReplanFSM::updateLocalTrajTimeFreeze()
@@ -702,6 +743,14 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
+    if (takeover_sync_pending_ && have_odom_ && have_target_ &&
+        planner_manager_ && navi_mode_ == NAVI_MODE::REFERENCE_PATH)
+    {
+      // Deferred synchronization is completed as soon as both odometry and
+      // the retained reference-path target are available.
+      takeoverSyncCallback(std_msgs::EmptyConstPtr());
+    }
+
     static const char* state_names[] = {
         "INIT", "WAIT_TARGET", "GEN_NEW_TRAJ",
         "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
@@ -758,7 +807,8 @@ namespace scan_planner
       const int attempt = initial_plan_attempt_count_;
 
       // Alternate between deterministic and random/A* initialization.
-      const bool random_init = (attempt % 2) == 1;
+      const bool takeover_first_plan = force_takeover_poly_init_;
+      const bool random_init = takeover_first_plan ? false : (attempt % 2) == 1;
 
       // Progressive target distance backoff.
       const int backoff_level = std::min(attempt / 2, 4);
@@ -774,6 +824,7 @@ namespace scan_planner
 
       if (result == ReplanResult::SUCCESS)
       {
+        force_takeover_poly_init_ = false;
         initial_plan_attempt_count_ = 0;
         continuation_failure_count_ = 0;
         replan_fail_count_ = 0;

@@ -23,13 +23,17 @@ constexpr double kMaxVYawLimit = 1.0;
 
 ros::Publisher cmd_vel_pub;
 ros::Publisher execution_frozen_pub;
+ros::Publisher takeover_ready_pub;
 ros::Subscriber bspline_sub;
 ros::Subscriber odom_sub;
 ros::Subscriber reset_sub;
+ros::Subscriber takeover_sync_sub;
 ros::Timer cmd_timer;
 
 bool receive_traj = false;
 bool have_odom = false;
+bool waiting_takeover_trajectory = false;
+double takeover_anchor_tolerance = 0.25;
 std::vector<UniformBspline> traj;
 double traj_duration = 0.0;
 int traj_id = 0;
@@ -102,6 +106,7 @@ bool loadParams(const ros::NodeHandle &nh)
       nh,
       "finish_dist",
       finish_dist);
+  nh.param("takeover_anchor_tolerance", takeover_anchor_tolerance, 0.25);
 
   if (!ok)
     return false;
@@ -153,6 +158,12 @@ bool loadParams(const ros::NodeHandle &nh)
     ROS_ERROR(
         "[closed_loop_controller_dmq] "
         "finish_dist must be finite and >= 0");
+    ok = false;
+  }
+  if (!std::isfinite(takeover_anchor_tolerance) ||
+      takeover_anchor_tolerance < 0.0)
+  {
+    ROS_ERROR("[closed_loop_controller_dmq] takeover_anchor_tolerance must be finite and >= 0");
     ok = false;
   }
 
@@ -250,6 +261,13 @@ void publishExecutionFrozen(bool frozen)
   execution_frozen_pub.publish(msg);
 }
 
+void publishTakeoverReady(bool ready)
+{
+  std_msgs::Bool msg;
+  msg.data = ready;
+  takeover_ready_pub.publish(msg);
+}
+
 void resetCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
@@ -262,11 +280,27 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   last_update_time = ros::Time::now();
 
   publishExecutionFrozen(false);
+  waiting_takeover_trajectory = false;
+  publishTakeoverReady(false);
   publishStop();
 
   ROS_WARN(
       "[closed_loop_controller_dmq] "
       "NATIVE_SCAN_CONTROLLER_RESET");
+}
+
+void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
+{
+  receive_traj = false;
+  waiting_takeover_trajectory = true;
+  traj.clear();
+  traj_duration = 0.0;
+  traj_id = 0;
+  exec_time = 0.0;
+  last_update_time = ros::Time::now();
+  publishTakeoverReady(false);
+  publishStop();
+  ROS_INFO("SCAN_TAKEOVER_CONTROLLER_FLUSH");
 }
 
 void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
@@ -317,13 +351,34 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
     return;
   }
 
+  const double start_age = std::max(0.0, std::min(candidate_duration,
+      (ros::Time::now() - msg->start_time).toSec()));
+  double anchor_error = 0.0;
+  if (waiting_takeover_trajectory)
+  {
+    const Eigen::Vector3d anchor = candidate[0].evaluateDeBoorT(start_age);
+    anchor_error = (anchor.head<2>() - odom_pos.head<2>()).norm();
+    if (anchor_error > takeover_anchor_tolerance)
+    {
+      ROS_ERROR("SCAN_TAKEOVER_TRAJ_REJECTED traj_id=%d anchor_error=%.3f tolerance=%.3f",
+          msg->traj_id, anchor_error, takeover_anchor_tolerance);
+      return;
+    }
+  }
+
   traj = std::move(candidate);
   traj_duration = candidate_duration;
   traj_id = msg->traj_id;
-  exec_time = std::max(0.0, std::min(traj_duration,
-      (ros::Time::now() - msg->start_time).toSec()));
+  exec_time = start_age;
   last_update_time = ros::Time::now();
   receive_traj = true;
+  if (waiting_takeover_trajectory)
+  {
+    waiting_takeover_trajectory = false;
+    publishTakeoverReady(true);
+    ROS_INFO("SCAN_TAKEOVER_TRAJ_READY traj_id=%d anchor_error=%.3f exec_time=%.3f",
+        traj_id, anchor_error, exec_time);
+  }
 
   ROS_DEBUG("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
 }
@@ -447,8 +502,12 @@ int main(int argc, char **argv)
   bspline_sub = node.subscribe("/native_scan/planning/bspline", 10, bsplineCallback);
   odom_sub = node.subscribe(body_pose_topic, 20, odomCallback, ros::TransportHints().tcpNoDelay());
   reset_sub = node.subscribe("/native_scan/reset", 10, resetCallback);
+  takeover_sync_sub = node.subscribe("/native_scan/takeover_sync", 10,
+      takeoverSyncCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("/navdog/scan_cmd", 20);
   execution_frozen_pub = node.advertise<std_msgs::Bool>("/native_scan/planning/go2_execution_frozen", 10);
+  takeover_ready_pub = node.advertise<std_msgs::Bool>("/native_scan/takeover_ready", 1, true);
+  publishTakeoverReady(false);
   cmd_timer = node.createTimer(ros::Duration(0.01), cmdCallback);
 
   last_update_time = ros::Time::now();
