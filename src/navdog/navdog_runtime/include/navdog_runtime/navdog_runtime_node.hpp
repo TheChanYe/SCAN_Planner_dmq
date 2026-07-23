@@ -18,6 +18,7 @@
 
 #include <memory>
 #include <mutex>
+#include <cstdint>
 
 namespace navdog_runtime
 {
@@ -53,7 +54,7 @@ private:
   void controlCallback(const ros::TimerEvent&);
   void processEvents();
   void processPlannerAction(const navdog::PlannerAction& action, double now_sec);
-  /** @brief 切入/退出 LOCAL_AVOID 时先 reset，随后延迟发布剩余路径以保证接收顺序。 */
+  /** @brief Reset is reserved for task lifecycle boundaries; path publication is deferred for ROS ordering. */
   void resetNativeScan(const char* reason);
   void scheduleNativeScanReferencePath();
   void publishRoute();
@@ -89,6 +90,7 @@ private:
   ros::Time last_status_publish_{};
 
   bool pending_native_scan_path_{false};
+  std::uint32_t native_scan_reset_count_{0};
   ros::Time native_scan_reset_time_{};
   double body_height_{0.3};
   navdog::NavState last_logged_state_{navdog::NavState::IDLE};

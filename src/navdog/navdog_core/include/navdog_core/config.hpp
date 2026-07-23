@@ -59,6 +59,8 @@ struct RouteCorridorConfig
 {
   // 从当前路线进度向前检查的最大路线距离。
   double lookahead_distance_m{3.0};
+  // Half width on each side of the route centre line.
+  double half_width_m{0.60};
 };
 
 // =============================================================================

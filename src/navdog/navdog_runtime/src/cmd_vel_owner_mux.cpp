@@ -18,6 +18,7 @@ double route_cmd_timeout_sec = 0.30;
 double scan_cmd_timeout_sec = 0.30;
 double publish_rate_hz = 50.0;
 double mode_sync_grace_sec = 0.10;
+double scan_handoff_hold_sec = 0.10;
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -237,7 +238,18 @@ void timerCallback(const ros::TimerEvent&)
         target_valid = true;
       }
       else if (scan_cmd_stamp_sec_ <= owner_change_stamp_sec_ + kEpsilon)
-        ROS_WARN_THROTTLE(1.0, "SCAN_CMD_WAITING");
+      {
+        const double handoff_age = now_sec - owner_change_stamp_sec_;
+        if (handoff_age < scan_handoff_hold_sec)
+        {
+          // Preserve the actual last output briefly while prewarmed SCAN
+          // publishes its first post-handoff command.  Do not reuse route
+          // commands beyond this bounded window.
+          target_cmd = last_output_cmd_;
+          target_valid = true;
+        }
+        ROS_WARN_THROTTLE(1.0, "SCAN_CMD_WAITING handoff_age=%.3f", handoff_age);
+      }
       else
         ROS_WARN_THROTTLE(1.0, "SCAN_CMD_STALE");
       // If SCAN command not ready yet: target remains zero, and we slew
@@ -284,6 +296,7 @@ int main(int argc, char** argv)
   private_nh.param("scan_cmd_timeout", scan_cmd_timeout_sec, 0.30);
   private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
   private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
+  private_nh.param("scan_handoff_hold_sec", scan_handoff_hold_sec, 0.10);
 
   // Slew limiter params
   navdog_runtime::VelocitySlewLimiter::Config slew_config;
@@ -297,7 +310,8 @@ int main(int argc, char** argv)
 
   if (!std::isfinite(route_cmd_timeout_sec) || route_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(scan_cmd_timeout_sec) || scan_cmd_timeout_sec <= 0.0 ||
-      !std::isfinite(publish_rate_hz) || publish_rate_hz <= 0.0)
+      !std::isfinite(publish_rate_hz) || publish_rate_hz <= 0.0 ||
+      !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0)
   {
     ROS_FATAL("cmd_vel_owner_mux: invalid configuration");
     return 1;

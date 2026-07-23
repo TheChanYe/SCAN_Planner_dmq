@@ -46,9 +46,6 @@
       <param name="max_vy" value="0.18"/>
       <param name="max_vyaw" value="0.65"/>
       <param name="time_forward" value="0.8"/>
-      <param name="heading_error_threshold" value="0.65"/>
-      <param name="heading_resume_threshold" value="0.35"/>
-      <param name="min_heading_speed_scale" value="0.35"/>
       <param name="kp_pos" value="0.70"/>
       <param name="kp_yaw" value="1.5"/>
       <param name="finish_dist" value="0.15"/>

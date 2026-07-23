@@ -11,7 +11,6 @@ namespace
 {
 
 constexpr double kEpsilon = 1e-9; 
-constexpr double kCorridorHalfWidthM = 0.60;
 
 }  // namespace
 
@@ -84,7 +83,8 @@ ScanRouteCorridorEvaluator3D::evaluate(
   // 前视距由RouteCorridorConfig统一控制
   // 配置无效时返回默认无效assessment，禁止使用错误距离继续判断。
   if (!std::isfinite(config_.lookahead_distance_m) ||
-      config_.lookahead_distance_m <= 0.0)
+      config_.lookahead_distance_m <= 0.0 ||
+      !std::isfinite(config_.half_width_m) || config_.half_width_m <= 0.0)
   {
     return assessment;
   }
@@ -129,8 +129,8 @@ ScanRouteCorridorEvaluator3D::evaluate(
   {
     const double normal_x = -std::sin(seg_yaw);
     const double normal_y = std::cos(seg_yaw);
-    for (double lateral = -kCorridorHalfWidthM;
-         lateral <= kCorridorHalfWidthM + kEpsilon;
+    for (double lateral = -config_.half_width_m;
+         lateral <= config_.half_width_m + kEpsilon;
          lateral += sample_step)
     {
       ++assessment.samples_checked;

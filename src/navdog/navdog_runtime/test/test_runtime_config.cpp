@@ -170,12 +170,14 @@ TEST(NavdogConfigLoadingTest, LoadsRouteCorridorFromParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("route_corridor/lookahead_distance_m", 4.0);
+  nh.setParam("route_corridor/half_width_m", 0.75);
   nh.setParam("route_corridor_observation/map_timeout_sec", 0.25);
   nh.setParam("route_corridor_observation/max_progress_lag_m", 0.6);
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
 
   EXPECT_DOUBLE_EQ(config.route_corridor.lookahead_distance_m, 4.0);
+  EXPECT_DOUBLE_EQ(config.route_corridor.half_width_m, 0.75);
   EXPECT_DOUBLE_EQ(config.route_corridor_observation.map_timeout_sec, 0.25);
   EXPECT_DOUBLE_EQ(config.route_corridor_observation.max_progress_lag_m, 0.6);
 }

@@ -77,6 +77,14 @@ namespace scan_planner
     ros::Time first_replan_failure_time_;
     ros::Time last_freeze_update_time_;
     ros::Time last_replan_attempt_time_;
+    ros::Time last_successful_replan_time_;
+    ros::Time last_nominal_replan_attempt_time_;
+    Eigen::Vector3d last_replan_robot_position_{Eigen::Vector3d::Zero()};
+    bool planning_in_progress_{false};
+    double nominal_replan_period_sec_{0.20};
+    double min_replan_progress_m_{0.05};
+    double replan_retry_interval_sec_{0.10};
+    double replan_lead_time_sec_{0.40};
     ros::Time next_emergency_retry_time_;
     ros::Time next_target_retry_time_{0};
 

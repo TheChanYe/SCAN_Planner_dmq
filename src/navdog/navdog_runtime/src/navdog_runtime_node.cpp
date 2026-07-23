@@ -122,6 +122,13 @@ void NavdogRuntimeNode::processEvents()
       resetNativeScan("TASK_STARTED");
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
+      // SCAN builds its global/local reference while RouteFollower owns the
+      // robot.  This makes LOCAL_AVOID a command handoff, not a cold start.
+      pending_native_scan_path_ = true;
+      ROS_INFO("SCAN_PREWARM task_sequence=%lu route_points=%lu reset_count=%u",
+          static_cast<unsigned long>(coordinator_->taskSession().sequence),
+          static_cast<unsigned long>(coordinator_->routeManager().route().size()),
+          native_scan_reset_count_);
       ROS_INFO("navigation task started: sequence=%lu",
           static_cast<unsigned long>(coordinator_->taskSession().sequence));
     }
@@ -185,13 +192,16 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
-      resetNativeScan("LOCAL_AVOID_ENTER");
-      pending_native_scan_path_ = true;
+      ROS_INFO("SCAN_HANDOFF_ENTER prewarmed=1 scan_ready=%d",
+          pending_native_scan_path_ ? 0 : 1);
     }
     else if (output.navigation_mode.previous_mode ==
                  navdog::NavigationMode::LOCAL_AVOID)
     {
-      resetNativeScan("LOCAL_AVOID_EXIT");
+      ROS_INFO("SCAN_HANDOFF_EXIT route_segment_index=%lu route_arc_length=%.3f remaining_distance=%.3f",
+          static_cast<unsigned long>(output.route_progress.segment_index),
+          output.route_progress.arc_length_m,
+          output.route_progress.remaining_distance_m);
     }
   }
   // Deferred native scan reference path: ensure reset arrives before path
@@ -324,6 +334,7 @@ void NavdogRuntimeNode::resetNativeScan(const char* reason)
 
   pending_native_scan_path_ = false;
   native_scan_reset_time_ = ros::Time::now();
+  ++native_scan_reset_count_;
 
   ROS_WARN("NATIVE_SCAN_RESET reason=%s",
       reason ? reason : "UNKNOWN");

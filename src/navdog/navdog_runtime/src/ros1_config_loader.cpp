@@ -23,6 +23,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("route_progress/max_forward_search_m", c.route_progress.max_forward_search_m);
   LOAD("route_progress/on_route_lateral_tolerance_m", c.route_progress.on_route_lateral_tolerance_m);
   LOAD("route_corridor/lookahead_distance_m", c.route_corridor.lookahead_distance_m);
+  LOAD("route_corridor/half_width_m", c.route_corridor.half_width_m);
   LOAD("route_corridor_observation/map_timeout_sec", c.route_corridor_observation.map_timeout_sec);
   LOAD("route_corridor_observation/max_progress_lag_m", c.route_corridor_observation.max_progress_lag_m);
   LOAD("planner/planning_timeout_sec", c.planner.planning_timeout_sec);

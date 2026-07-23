@@ -30,7 +30,7 @@
 
     <!-- planning fsm -->
     <param name="fsm/navi_mode" value="$(arg navi_mode)" type="int"/>
-    <param name="fsm/thresh_replan" value="1.0" type="double"/>
+    <param name="fsm/thresh_replan" value="0.20" type="double"/>
     <param name="fsm/thresh_no_replan" value="0.1" type="double"/>
     <param name="fsm/planning_horizon" value="$(arg planning_horizon)" type="double"/>
     <param name="fsm/emergency_time_" value="1.0" type="double"/>
@@ -52,8 +52,13 @@
 
     <!-- 非紧急安全重规划的最短间隔，避免20Hz安全检查引发规划风暴。 -->
     <param name="fsm/safety_replan_cooldown_sec"
-          value="0.50"
+          value="0.15"
           type="double"/>
+
+    <param name="fsm/nominal_replan_period_sec" value="0.20" type="double"/>
+    <param name="fsm/min_replan_progress_m" value="0.05" type="double"/>
+    <param name="fsm/replan_retry_interval_sec" value="0.10" type="double"/>
+    <param name="fsm/replan_lead_time_sec" value="0.40" type="double"/>
 
     <param name="fsm/emergency_retry_interval_sec"
           value="0.50"
@@ -122,7 +127,6 @@
 
   <!-- trajectory tracking -->
   <param name="closed_loop_controller/time_forward" value="0.8" type="double"/>
-  <param name="closed_loop_controller/heading_error_threshold" value="0.8" type="double"/>
   <param name="closed_loop_controller/kp_pos" value="0.8" type="double"/>
   <param name="closed_loop_controller/kp_yaw" value="1.5" type="double"/>
   <param name="closed_loop_controller/max_vx" value="$(arg scan_max_vel)" type="double"/>

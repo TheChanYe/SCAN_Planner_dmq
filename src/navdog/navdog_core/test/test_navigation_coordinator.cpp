@@ -45,7 +45,7 @@ CoreInput robotInput(double stamp)
 }
 }  // namespace
 
-TEST(NavigationCoordinator, NewTaskPlanningReadyAndAlignmentPreservesZeroCycle)
+TEST(NavigationCoordinator, NewTaskWaitsForCorridorBeforeInitialAlignment)
 {
   NavigationCoordinator coordinator;
   EXPECT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
@@ -56,7 +56,9 @@ TEST(NavigationCoordinator, NewTaskPlanningReadyAndAlignmentPreservesZeroCycle)
   coordinator.update(readyInput(coordinator.taskSession().sequence, 1.1), 1.1);
   EXPECT_EQ(NavState::START_ALIGN, coordinator.state());
   const CoreOutput aligned = coordinator.update(robotInput(1.2), 1.2);
-  EXPECT_EQ(NavState::TRACKING, aligned.state);
+  // The first progress sample has no map-backed corridor assessment, so
+  // START_ALIGN deliberately waits rather than rotating blindly.
+  EXPECT_EQ(NavState::START_ALIGN, aligned.state);
   EXPECT_DOUBLE_EQ(0.0, aligned.final_cmd.vx);
 }
 

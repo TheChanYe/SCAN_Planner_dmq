@@ -683,6 +683,54 @@ CoreOutput NavigationCoordinator::update(
     }
     else /* 任务激活且路线存在，则进行对齐控制器更新*/
     {
+      // Progress and corridor observation must be available before deciding
+      // whether initial yaw alignment is appropriate.  Otherwise a blocked
+      // route can spend seconds rotating toward an obstacle.
+      const RouteProgressOutput progress_output =
+          route_manager_.updateProgress(input.robot, now_sec);
+      bool corridor_clear_for_align = false;
+      if (progress_output.result == RouteProgressResult::VALID)
+      {
+        output.route_progress = progress_output.progress;
+        const RouteCorridorObservationOutput obs_output =
+            route_corridor_observation_gate_.evaluate(
+                progress_output.progress, input.route_corridor_observation,
+                now_sec);
+        if (obs_output.result == RouteCorridorObservationResult::CLEAR ||
+            obs_output.result == RouteCorridorObservationResult::BLOCKED)
+          output.route_corridor = obs_output.assessment;
+
+        // A confirmed blocked inflated corridor skips the alignment phase.
+        // NavigationModeManager remains the sole owner of the mode decision;
+        // it will enter LOCAL_AVOID on the following TRACKING update.
+        if (obs_output.result == RouteCorridorObservationResult::BLOCKED)
+        {
+          state_ = NavState::TRACKING;
+          start_align_controller_.reset();
+          final_cmd = makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
+        }
+
+        // On the first progress sample, wait exactly one control cycle for a
+        // map-backed corridor assessment rather than rotating blindly.
+        if (obs_output.result != RouteCorridorObservationResult::CLEAR)
+        {
+          final_cmd = makeZeroCommand(CommandSource::START_ALIGN, now_sec);
+        }
+        else
+          corridor_clear_for_align = true;
+      }
+      else
+      {
+        final_cmd = makeZeroCommand(CommandSource::START_ALIGN, now_sec);
+      }
+
+      if (state_ != NavState::START_ALIGN || !corridor_clear_for_align)
+      {
+        // Either the route is blocked (TRACKING will evaluate the mode next
+        // cycle) or no map-backed corridor observation is ready yet.
+      }
+      else
+      {
       const StartAlignOutput align_output =
           start_align_controller_.update(
               route_manager_.taskView(),
@@ -725,6 +773,7 @@ CoreOutput NavigationCoordinator::update(
                   CommandSource::START_ALIGN,
                   now_sec);
           break;
+      }
       }
     }
   }
