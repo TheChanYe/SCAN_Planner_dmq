@@ -143,8 +143,7 @@ namespace scan_planner
       }
       else
       {
-        ROS_WARN_THROTTLE(1.0,
-            "SCAN_ASTAR_CANDIDATE_FAILED action=TRY_FALLBACK");
+        ROS_DEBUG_THROTTLE(1.0, "SCAN_ASTAR_CANDIDATE_FAILED");
         return a_star_paths;
       }
     }
@@ -812,8 +811,7 @@ namespace scan_planner
         }
         else
         {
-          ROS_WARN_THROTTLE(1.0,
-              "SCAN_ASTAR_CANDIDATE_FAILED action=TRY_FALLBACK");
+          ROS_DEBUG_THROTTLE(1.0, "SCAN_ASTAR_CANDIDATE_FAILED");
           segment_ids.erase(segment_ids.begin() + i);
           i--;
         }
@@ -1033,7 +1031,6 @@ namespace scan_planner
 
         if (!flag_occ)
         {
-          printf("\033[32miter(+1)=%d,time(ms)=%5.3f,total_t(ms)=%5.3f,cost=%5.3f\n\033[0m", iter_num_, time_ms, total_time_ms, final_cost);
           success = true;
         }
         else // restart
@@ -1042,14 +1039,12 @@ namespace scan_planner
           initControlPoints(cps_.points, false);
           new_lambda2_ *= 2;
 
-          printf("\033[32miter(+1)=%d,time(ms)=%5.3f,keep optimizing\n\033[0m", iter_num_, time_ms);
         }
       }
       else if (result == lbfgs::LBFGSERR_CANCELED)
       {
         flag_force_return = true;
         rebound_times++;
-        cout << "iter=" << iter_num_ << ",time(ms)=" << time_ms << ",rebound." << endl;
       }
       else
       {

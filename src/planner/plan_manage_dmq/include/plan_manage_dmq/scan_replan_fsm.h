@@ -36,7 +36,6 @@ namespace scan_planner
       INIT,
       WAIT_TARGET,
       GEN_NEW_TRAJ,
-      REPLAN_TRAJ,
       EXEC_TRAJ,
       EMERGENCY_STOP
     };

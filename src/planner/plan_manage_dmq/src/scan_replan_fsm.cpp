@@ -241,7 +241,7 @@ namespace scan_planner
       if (exec_state_ == WAIT_TARGET)
         changeFSMExecState(GEN_NEW_TRAJ, "TRIG");
       else if (exec_state_ == EXEC_TRAJ)
-        changeFSMExecState(REPLAN_TRAJ, "TRIG");
+        changeFSMExecState(GEN_NEW_TRAJ, "NEW_TARGET");
 
       // visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(1, 0, 0, 1), 0.3, 0);
       visualization_->displayGlobalPathList(gloabl_traj, 0.1, 0);
@@ -704,7 +704,6 @@ namespace scan_planner
         "INIT",
         "WAIT_TARGET",
         "GEN_NEW_TRAJ",
-        "REPLAN_TRAJ",
         "EXEC_TRAJ",
         "EMERGENCY_STOP"};
 
@@ -734,7 +733,7 @@ namespace scan_planner
 
   void SCANReplanFSM::printFSMExecState()
   {
-    static string state_str[7] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
+    static string state_str[6] = {"INIT", "WAIT_TARGET", "GEN_NEW_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
 
     ROS_DEBUG("[FSM]: state: %s", state_str[int(exec_state_)].c_str());
   }
@@ -753,7 +752,7 @@ namespace scan_planner
 
     static const char* state_names[] = {
         "INIT", "WAIT_TARGET", "GEN_NEW_TRAJ",
-        "REPLAN_TRAJ", "EXEC_TRAJ", "EMERGENCY_STOP"};
+        "EXEC_TRAJ", "EMERGENCY_STOP"};
     ROS_DEBUG_THROTTLE(5.0,
         "SCAN_FSM state=%s trigger=%d target=%d",
         state_names[int(exec_state_)],
@@ -801,7 +800,11 @@ namespace scan_planner
       if (!replanRetryReady(0.10))
         break;
 
-      setStartStateFromOdomOrCurrentTraj();
+      // GEN_NEW_TRAJ explicitly abandons the old local trajectory and starts
+      // from real odometry. Continuation is exclusively an EXEC_TRAJ concern.
+      start_pt_ = odom_pos_;
+      start_vel_ = odom_vel_;
+      start_acc_.setZero();
 
       // Use independent attempt counter — NOT timesOfConsecutiveStateCalls().
       const int attempt = initial_plan_attempt_count_;
@@ -855,46 +858,6 @@ namespace scan_planner
             1.0,
             "SCAN_REPLAN_FAILED count=%d attempt=%d",
             replan_fail_count_, attempt);
-      }
-      break;
-    }
-
-    case REPLAN_TRAJ:
-    {
-      if (!replanRetryReady(0.10))
-      {
-        break;  // wait for map update, do not count as failure
-      }
-
-      {
-        const ReplanResult result = planFromCurrentTraj();
-        if (result == ReplanResult::SUCCESS)
-        {
-          initial_plan_attempt_count_ = 0;
-          replan_fail_count_ = 0;
-          first_replan_failure_time_ = ros::Time(0);
-          emergency_stop_active_ = false;
-          next_target_retry_time_ = ros::Time(0);
-          changeFSMExecState(EXEC_TRAJ, "FSM");
-        }
-        else if (result == ReplanResult::TARGET_UNAVAILABLE)
-        {
-          // No target — don't count as optimization failure.
-          next_target_retry_time_ =
-              ros::Time::now() + ros::Duration(replan_retry_interval_sec_);
-        }
-        else  // OPTIMIZATION_FAILED
-        {
-          if (first_replan_failure_time_.isZero())
-            first_replan_failure_time_ = ros::Time::now();
-
-          ++replan_fail_count_;
-
-          ROS_WARN_THROTTLE(
-              1.0,
-              "SCAN_REPLAN_FAILED count=%d",
-              replan_fail_count_);
-        }
       }
       break;
     }
@@ -957,12 +920,24 @@ namespace scan_planner
         }
         double collision_time = std::numeric_limits<double>::infinity();
         const bool old_safe = localTrajectoryIsSafe(collision_time);
-        ROS_WARN_THROTTLE(1.0, "SCAN_REPLAN_KEEP_OLD traj_id=%d failure_reason=%s remaining_time=%.3f collision_time_ahead=%.3f",
-            old_traj_id,
-            result == ReplanResult::TARGET_UNAVAILABLE ? "TARGET_UNAVAILABLE" : "OPTIMIZATION_FAILED",
-            remaining_time, collision_time);
-        if (!old_safe && collision_time <= safety_immediate_replan_sec_)
-          changeFSMExecState(EMERGENCY_STOP, "NOMINAL_OLD_TRAJ_UNSAFE");
+        const bool old_trajectory_usable = old_safe &&
+            remaining_time > replan_lead_time_sec_;
+        if (old_trajectory_usable)
+        {
+          ROS_WARN_THROTTLE(1.0,
+              "SCAN_REPLAN_KEEP_OLD traj_id=%d remaining_time=%.3f collision_time=%.3f",
+              old_traj_id, remaining_time, collision_time);
+          break;
+        }
+
+        initial_plan_attempt_count_ = 0;
+        replan_fail_count_ = 0;
+        first_replan_failure_time_ = ros::Time(0);
+        last_replan_attempt_time_ = ros::Time(0);
+        next_target_retry_time_ = ros::Time(0);
+        changeFSMExecState(GEN_NEW_TRAJ, "OLD_TRAJ_UNUSABLE");
+        ROS_WARN("SCAN_FRESH_PLAN_REQUIRED old_traj_id=%d remaining_time=%.3f old_safe=%d collision_time=%.3f",
+            old_traj_id, remaining_time, old_safe ? 1 : 0, collision_time);
         break;
       }
 
@@ -989,19 +964,16 @@ namespace scan_planner
           return;
         }
 
-        // Check if the robot has actually reached the global goal.
-        // When the local trajectory expires but the global target is still
-        // far away (e.g. after a lateral escape manoeuvre), do NOT clear
-        // have_target_ and go straight to GEN_NEW_TRAJ so getLocalTarget()
-        // can pick the next forward target or another escape point.
-        // We should normally have replanned before this point. Keep the
-        // previous trajectory data and retry from EXEC_TRAJ rather than
-        // clearing it or entering a blocking state.
+        initial_plan_attempt_count_ = 0;
+        replan_fail_count_ = 0;
+        first_replan_failure_time_ = ros::Time(0);
+        last_replan_attempt_time_ = ros::Time(0);
+        next_target_retry_time_ = ros::Time(0);
+        changeFSMExecState(GEN_NEW_TRAJ, "TRAJECTORY_EXPIRED");
+        ROS_WARN("SCAN_TRAJECTORY_EXPIRED traj_id=%d dist_to_goal=%.3f action=FRESH_PLAN_FROM_ODOM",
+            info->traj_id_, dist_to_goal);
         return;
       }
-      // All non-emergency replans above stay in EXEC_TRAJ.  Do not retain a
-      // second distance-only REPLAN_TRAJ path, which would turn a normal
-      // rolling failure into a blocking state transition.
       break;
     }
 
@@ -1309,10 +1281,8 @@ namespace scan_planner
         }
 
         // ============================================================
-        // B类和C类：非紧急碰撞
-        //
-        // 冷却尚未结束时保持当前可执行轨迹，不再次切入REPLAN_TRAJ。
-        // 原代码虽然打印cooldown，但仍切到REPLAN_TRAJ，实际上没有限频。
+        // B类和C类：非紧急碰撞。冷却期间继续当前轨迹，安全检查
+        // 不再排队第二套 FSM 重规划循环。
         // ============================================================
         if (cooldown_active)
         {
@@ -1327,15 +1297,14 @@ namespace scan_planner
 
           return;
         }
-        // 从这里开始代表本次确实消费了一次安全重规划机会。
-        // 在排队或直接调用规划前记录，避免规划失败后立即被安全定时器重复触发。
+        // This attempt consumes the current safety-replan opportunity.
         last_safety_replan_time_ = now;
 
         // ============================================================
         // B类：近距离碰撞
         //
         // 冷却结束后直接尝试从当前轨迹重规划。
-        // 失败时保留旧轨迹数据，并交给REPLAN_TRAJ继续尝试。
+        // A near collision cannot continue on an unsafe old trajectory.
         // ============================================================
         if (collision_time_ahead <= safety_direct_replan_sec_)
         {
@@ -1356,7 +1325,7 @@ namespace scan_planner
           else
           {
             changeFSMExecState(
-                REPLAN_TRAJ,
+                EMERGENCY_STOP,
                 "SAFETY_NEAR_FAILED");
           }
 
@@ -1364,21 +1333,22 @@ namespace scan_planner
         }
 
         // ============================================================
-        // C类：较远的未来碰撞
-        //
-        // 不在安全定时器中连续直接规划，只向FSM排队一次。
-        // 后续至少等待cooldown结束，才允许新一轮安全触发。
+        // C类：较远的未来碰撞。 Attempt once and let the normal EXEC_TRAJ
+        // rolling update retry later; do not enqueue another FSM state.
         // ============================================================
         ROS_WARN(
             "SCAN_SAFETY_REPLAN "
             "urgency=FAR "
             "collision_time_ahead=%.2f "
-            "action=QUEUE_REPLAN",
+            "action=DIRECT_ONCE",
             collision_time_ahead);
 
-        changeFSMExecState(
-            REPLAN_TRAJ,
-            "SAFETY_FAR");
+        if (planFromCurrentTraj() == ReplanResult::SUCCESS)
+          last_safety_replan_time_ = now;
+        else
+          ROS_WARN_THROTTLE(1.0,
+              "SCAN_SAFETY_KEEP_OLD collision_time_ahead=%.2f",
+              collision_time_ahead);
 
         return;
       }
