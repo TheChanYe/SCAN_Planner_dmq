@@ -40,3 +40,11 @@ add_library( path_searching
 target_link_libraries( path_searching
     ${catkin_LIBRARIES} 
     )  
+
+install(TARGETS path_searching
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+)
+install(DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)

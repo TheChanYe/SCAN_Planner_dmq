@@ -33,3 +33,7 @@ add_executable(waypoint_generator src/waypoint_generator.cpp)
 target_link_libraries(waypoint_generator
    ${catkin_LIBRARIES}
 )
+
+install(TARGETS waypoint_generator
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

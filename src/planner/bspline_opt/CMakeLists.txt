@@ -42,3 +42,11 @@ add_library( bspline_opt
 target_link_libraries( bspline_opt
     ${catkin_LIBRARIES} 
     )  
+
+install(TARGETS bspline_opt
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+)
+install(DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)

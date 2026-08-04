@@ -30,3 +30,7 @@ add_executable (map_pub src/map_publisher.cpp )
 target_link_libraries(map_pub
   ${catkin_LIBRARIES}
   ${PCL_LIBRARIES})
+
+install(TARGETS map_pub
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

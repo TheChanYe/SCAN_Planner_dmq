@@ -83,3 +83,11 @@ target_link_libraries(go2_kinematic_sim ${catkin_LIBRARIES})
 
 add_executable(go2_gait_publisher src/go2_gait_publisher.cpp)
 target_link_libraries(go2_gait_publisher ${catkin_LIBRARIES})
+
+install(TARGETS scan_planner_node open_loop_controller closed_loop_controller go2_kinematic_sim go2_gait_publisher
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+)

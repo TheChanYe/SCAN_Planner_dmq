@@ -6,4 +6,8 @@ devel/
 src/CMakeLists.txt
 src/simulator/map_generator/resource/
 build_manual/
+build_runtime/
+devel_runtime/
+install_runtime/
+dist/
 *.o

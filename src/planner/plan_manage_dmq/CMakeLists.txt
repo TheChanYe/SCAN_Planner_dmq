@@ -90,7 +90,7 @@ target_link_libraries(go2_gait_publisher_dmq ${catkin_LIBRARIES})
 add_dependencies(go2_gait_publisher_dmq ${catkin_EXPORTED_TARGETS})
 
 install(
-  TARGETS scan_planner_manager_dmq
+  TARGETS scan_planner_manager_dmq scan_planner_dmq_node open_loop_controller_dmq closed_loop_controller_dmq go2_kinematic_sim_dmq go2_gait_publisher_dmq
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

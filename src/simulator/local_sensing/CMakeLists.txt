@@ -96,6 +96,10 @@ option(USE_GPU "Build GPU OpenGL renderer" OFF)
     ${OpenCV_LIBS}
   )
 
+  install(TARGETS pcl_render_node
+    RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+  )
+
   if(USE_GPU)
     include_directories(
       SYSTEM

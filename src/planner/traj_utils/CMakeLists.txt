@@ -40,3 +40,11 @@ add_library( traj_utils
 target_link_libraries( traj_utils
     ${catkin_LIBRARIES} 
     )  
+
+install(TARGETS traj_utils
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+)
+install(DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)

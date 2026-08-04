@@ -24,3 +24,11 @@ include_directories(
 add_library(pose_utils 
    ${ARMADILLO_LIBRARIES}
    src/pose_utils.cpp)
+
+install(TARGETS pose_utils
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+)
+install(DIRECTORY include/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+)
