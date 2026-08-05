@@ -7,6 +7,7 @@
   <arg name="cloud_topic"/>
   <arg name="cloud_is_world"/>
   <arg name="need_extrinsic" default="$(arg is_real_world)"/>
+  <arg name="config_file" default=""/>
   <arg name="depth_topic"/>
   <arg name="cx"/>
   <arg name="cy"/>
@@ -123,6 +124,11 @@
     <param name="optimization/vel_tolerance" value="1.0" type="double"/>
     <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="optimization/acc_tolerance" value="1.0" type="double"/>
+
+    <!-- Real-dog dimensions and map settings live in one YAML. Loading it
+         last intentionally replaces the generic standalone defaults above. -->
+    <rosparam command="load" file="$(arg config_file)"
+              if="$(eval arg('config_file') != '')"/>
 
   </node>
 

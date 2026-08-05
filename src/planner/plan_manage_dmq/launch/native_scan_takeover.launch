@@ -5,6 +5,7 @@
   <arg name="is_real_world" default="false"/>
   <arg name="cloud_is_world" default="true"/>
   <arg name="need_extrinsic" default="false"/>
+  <arg name="config_file" default=""/>
 
   <!-- The upstream FSM/controller still read this legacy global parameter. -->
   <param name="/body_pose_topic" value="$(arg body_pose_topic)" type="str"/>
@@ -34,6 +35,7 @@
       <arg name="cloud_topic" value="$(arg cloud_topic)"/>
       <arg name="cloud_is_world" value="$(arg cloud_is_world)"/>
       <arg name="need_extrinsic" value="$(arg need_extrinsic)"/>
+      <arg name="config_file" value="$(arg config_file)"/>
       <arg name="depth_topic" value="/pcl_render_node/depth"/>
       <arg name="cx" value="321.04638671875"/>
       <arg name="cy" value="243.44969177246094"/>

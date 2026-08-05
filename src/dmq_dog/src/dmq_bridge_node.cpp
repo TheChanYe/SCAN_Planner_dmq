@@ -192,10 +192,21 @@ private:
     pnh_.param("driver_motion/max_yaw_decel",
                max_yaw_decel_, max_yaw_decel_);
     lateral_filter_alpha_ = std::max(0.0, std::min(1.0, lateral_filter_alpha_));
-    double turn_only_angle_deg = turn_only_angle_rad_ * 180.0 / kPi;
+    double turn_only_angle_deg = turn_only_enter_angle_rad_ * 180.0 / kPi;
     pnh_.param("driver_motion/turn_only_angle_deg",
                turn_only_angle_deg, turn_only_angle_deg);
-    turn_only_angle_rad_ = std::max(0.0, turn_only_angle_deg) * kPi / 180.0;
+    double turn_only_enter_angle_deg = turn_only_angle_deg;
+    double turn_only_exit_angle_deg =
+        turn_only_exit_angle_rad_ * 180.0 / kPi;
+    pnh_.param("driver_motion/turn_only_enter_angle_deg",
+               turn_only_enter_angle_deg, turn_only_enter_angle_deg);
+    pnh_.param("driver_motion/turn_only_exit_angle_deg",
+               turn_only_exit_angle_deg, turn_only_exit_angle_deg);
+    turn_only_enter_angle_rad_ =
+        std::max(0.0, turn_only_enter_angle_deg) * kPi / 180.0;
+    turn_only_exit_angle_rad_ =
+        std::max(0.0, std::min(turn_only_exit_angle_deg,
+                              turn_only_enter_angle_deg)) * kPi / 180.0;
 
     pnh_.param("frames/odom", odom_frame_id_, odom_frame_id_);
     pnh_.param("frames/base", base_frame_id_, base_frame_id_);
@@ -298,6 +309,7 @@ private:
   {
     lateral_heading_error_ = 0.0;
     lateral_filter_initialized_ = false;
+    turn_only_active_ = false;
     published_yaw_rate_ = 0.0;
     last_publish_time_ = ros::Time();
   }
@@ -309,27 +321,47 @@ private:
       lateral_heading_error_ *= (1.0 - lateral_filter_alpha_);
       if (std::fabs(lateral_heading_error_) < 1e-4)
         lateral_heading_error_ = 0.0;
-      return;
-    }
-
-    const double heading_error = std::atan2(vy, std::fabs(vx));
-    if (!lateral_filter_initialized_)
-    {
-      lateral_heading_error_ = heading_error;
-      lateral_filter_initialized_ = true;
     }
     else
     {
-      lateral_heading_error_ += lateral_filter_alpha_ *
-          (heading_error - lateral_heading_error_);
+      const double heading_error = std::atan2(vy, std::fabs(vx));
+      if (!lateral_filter_initialized_)
+      {
+        lateral_heading_error_ = heading_error;
+        lateral_filter_initialized_ = true;
+      }
+      else
+      {
+        lateral_heading_error_ += lateral_filter_alpha_ *
+            (heading_error - lateral_heading_error_);
+      }
     }
 
     // The planner is holonomic. Preserve its path intent while making the
     // physical dog rotate toward that direction instead of walking sideways.
     yaw_rate += lateral_to_yaw_gain_ * lateral_heading_error_;
     vy = 0.0;
-    if (std::fabs(lateral_heading_error_) >= turn_only_angle_rad_)
+    const bool previous_turn_only = turn_only_active_;
+    const double abs_heading_error = std::fabs(lateral_heading_error_);
+    if (!turn_only_active_ &&
+        abs_heading_error >= turn_only_enter_angle_rad_)
+      turn_only_active_ = true;
+    else if (turn_only_active_ &&
+             abs_heading_error <= turn_only_exit_angle_rad_)
+      turn_only_active_ = false;
+
+    if (turn_only_active_)
       vx = 0.0;
+
+    if (turn_only_active_ != previous_turn_only)
+    {
+      ROS_INFO("DRIVER_TURN_HYSTERESIS active=%d heading_error_deg=%.1f "
+               "enter_deg=%.1f exit_deg=%.1f",
+               turn_only_active_ ? 1 : 0,
+               lateral_heading_error_ * 180.0 / kPi,
+               turn_only_enter_angle_rad_ * 180.0 / kPi,
+               turn_only_exit_angle_rad_ * 180.0 / kPi);
+    }
   }
 
   double limitPublishedYawRate(const double target, const ros::Time& now)
@@ -588,7 +620,8 @@ private:
   double lateral_filter_alpha_{0.20};
   double max_yaw_accel_{0.80};
   double max_yaw_decel_{1.20};
-  double turn_only_angle_rad_{25.0 * kPi / 180.0};
+  double turn_only_enter_angle_rad_{35.0 * kPi / 180.0};
+  double turn_only_exit_angle_rad_{20.0 * kPi / 180.0};
   double lateral_heading_error_{0.0};
   double published_yaw_rate_{0.0};
   ros::Time last_publish_time_;
@@ -605,6 +638,7 @@ private:
   bool deadband_enabled_{true};
   bool prefer_forward_motion_{true};
   bool lateral_filter_initialized_{false};
+  bool turn_only_active_{false};
   bool watchdog_log_initialized_{false};
   bool last_logged_cmd_stale_{true};
   bool mqtt_motion_log_initialized_{false};

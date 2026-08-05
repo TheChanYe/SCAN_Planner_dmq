@@ -53,6 +53,22 @@ void GridMap::initMap(ros::NodeHandle &nh)
   node_.param("grid_map/sensor_type", mp_.sensor_type_, string("lidar"));
   node_.param("grid_map/cloud_is_world", mp_.cloud_is_world_, true);
   node_.param("grid_map/need_extrinsic", mp_.need_extrinsic_, true);
+  node_.param("grid_map/self_filter_enabled", mp_.self_filter_enabled_, false);
+  node_.param("dog/length", mp_.body_length_, 0.60);
+  node_.param("dog/width", mp_.body_width_, 0.30);
+  node_.param("dog/height", mp_.body_height_, 0.30);
+  node_.param("grid_map/self_filter_margin_xy",
+              mp_.self_filter_margin_xy_, 0.02);
+  node_.param("grid_map/self_filter_margin_z",
+              mp_.self_filter_margin_z_, 0.02);
+
+  mp_.body_length_ = std::max(0.0, mp_.body_length_);
+  mp_.body_width_ = std::max(0.0, mp_.body_width_);
+  mp_.body_height_ = std::max(0.0, mp_.body_height_);
+  mp_.self_filter_margin_xy_ =
+      std::max(0.0, mp_.self_filter_margin_xy_);
+  mp_.self_filter_margin_z_ =
+      std::max(0.0, mp_.self_filter_margin_z_);
 
   mp_.lidar_extrinsic_ <<
       1.0, 0.0, 0.0, -0.01100,
@@ -159,11 +175,13 @@ void GridMap::initMap(ros::NodeHandle &nh)
   md_.use_cloud_update_ = false;
   md_.has_first_depth_ = false;
   md_.has_ray_pose_ = false;
+  md_.has_body_pose_ = false;
   md_.has_cloud_ = false;
   md_.image_cnt_ = 0;
   md_.ray_pos_.setZero();
   md_.sliding_map_frame_pos_.setZero();
   md_.ray_q_ = Eigen::Quaterniond::Identity();
+  md_.body_q_ = Eigen::Quaterniond::Identity();
 
   md_.fuse_time_ = 0.0;
   md_.update_num_ = 0;
@@ -861,6 +879,34 @@ void GridMap::slidingMapFrameCallback(const nav_msgs::OdometryConstPtr &pose)
 {
   const geometry_msgs::Point &pos = pose->pose.pose.position;
   md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
+
+  const geometry_msgs::Quaternion &q = pose->pose.pose.orientation;
+  Eigen::Quaterniond body_q(q.w, q.x, q.y, q.z);
+  if (std::isfinite(body_q.w()) && std::isfinite(body_q.x()) &&
+      std::isfinite(body_q.y()) && std::isfinite(body_q.z()) &&
+      body_q.norm() > 1e-6)
+  {
+    md_.body_q_ = body_q.normalized();
+    md_.has_body_pose_ = true;
+  }
+}
+
+bool GridMap::isInsideSelfFilter(
+    const Eigen::Vector3d& point_world) const noexcept
+{
+  if (!mp_.self_filter_enabled_ || !md_.has_body_pose_)
+    return false;
+
+  const Eigen::Vector3d point_body = md_.body_q_.conjugate() *
+      (point_world - md_.sliding_map_frame_pos_);
+  const double half_length =
+      0.5 * mp_.body_length_ + mp_.self_filter_margin_xy_;
+  const double half_width =
+      0.5 * mp_.body_width_ + mp_.self_filter_margin_xy_;
+  return std::fabs(point_body.x()) <= half_length &&
+         std::fabs(point_body.y()) <= half_width &&
+         point_body.z() >= -mp_.self_filter_margin_z_ &&
+         point_body.z() <= mp_.body_height_ + mp_.self_filter_margin_z_;
 }
 
 void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
@@ -890,6 +936,13 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
   updateSlidingMap(ray_pos);
 
   md_.proj_points_cnt = 0;
+  std::size_t self_filtered_count = 0;
+
+  if (mp_.self_filter_enabled_ && !md_.has_body_pose_)
+  {
+    ROS_WARN_THROTTLE(1.0,
+        "[GridMap] self filter enabled but no /grid_map/body_pose received.");
+  }
 
   for (size_t i = 0; i < latest_cloud.points.size(); ++i)
   {
@@ -907,6 +960,11 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
       const Eigen::Vector3d pt_sensor(pt.x, pt.y, pt.z);
       pt_world = sensor_r * pt_sensor + ray_pos;
     }
+    if (isInsideSelfFilter(pt_world))
+    {
+      ++self_filtered_count;
+      continue;
+    }
     const Eigen::Vector3d devi = pt_world - ray_pos;
     const double ray_length = devi.norm();
     const bool in_local_range =
@@ -921,6 +979,13 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
       md_.proj_points_[md_.proj_points_cnt] = pt_world;
 
     md_.proj_points_cnt++;
+  }
+
+  if (self_filtered_count > 0)
+  {
+    ROS_DEBUG_THROTTLE(2.0,
+        "[GridMap] filtered %zu lidar points inside robot body.",
+        self_filtered_count);
   }
 
   if (md_.proj_points_cnt == 0)

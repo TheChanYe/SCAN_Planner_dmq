@@ -95,15 +95,21 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("route_follower/lookahead_distance_m", 1.2);
+  nh.setParam("route_follower/max_lookahead_distance_m", 1.8);
+  nh.setParam("route_follower/lookahead_time_sec", 1.5);
   nh.setParam("route_follower/kp_x", 0.9);
   nh.setParam("route_follower/kp_yaw", 1.3);
+  nh.setParam("route_follower/heading_slowdown_start_rad", 0.25);
   nh.setParam("route_follower/max_vx", 0.85);
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
 
   EXPECT_DOUBLE_EQ(config.route_follower.lookahead_distance_m, 1.2);
+  EXPECT_DOUBLE_EQ(config.route_follower.max_lookahead_distance_m, 1.8);
+  EXPECT_DOUBLE_EQ(config.route_follower.lookahead_time_sec, 1.5);
   EXPECT_DOUBLE_EQ(config.route_follower.kp_x, 0.9);
   EXPECT_DOUBLE_EQ(config.route_follower.kp_yaw, 1.3);
+  EXPECT_DOUBLE_EQ(config.route_follower.heading_slowdown_start_rad, 0.25);
   EXPECT_DOUBLE_EQ(config.route_follower.max_vx, 0.85);
 }
 

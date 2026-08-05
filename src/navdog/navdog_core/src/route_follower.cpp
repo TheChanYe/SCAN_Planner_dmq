@@ -206,8 +206,20 @@ VelocityCommand RouteFollower::update(
   const double effective_max_vx =
       std::max(0.0, std::min(max_vx, config_.max_vx));
 
+  const double base_lookahead =
+      std::max(0.0, config_.lookahead_distance_m);
+  const double max_lookahead =
+      std::max(base_lookahead, config_.max_lookahead_distance_m);
+  const double measured_speed =
+      std::isfinite(robot.vx) && std::isfinite(robot.vy)
+          ? std::hypot(robot.vx, robot.vy)
+          : 0.0;
+  const double dynamic_lookahead = std::min(
+      max_lookahead,
+      base_lookahead + measured_speed *
+          std::max(0.0, config_.lookahead_time_sec));
   const double target_arc =
-      progress.arc_length_m + config_.lookahead_distance_m;
+      progress.arc_length_m + dynamic_lookahead;
 
   double look_x = 0.0;
   double look_y = 0.0;
@@ -255,8 +267,28 @@ VelocityCommand RouteFollower::update(
   }
   else
   {
-    const double route_vx = effective_max_vx;
-    cmd.vx = route_vx + config_.kp_x * ex_robot;
+    const double abs_heading_error = std::abs(heading_error);
+    const double slowdown_start = std::max(
+        0.0, std::min(config_.heading_slowdown_start_rad,
+                      config_.heading_turn_only_threshold_rad));
+    double heading_speed_scale = 1.0;
+    if (abs_heading_error > slowdown_start)
+    {
+      const double slowdown_range =
+          config_.heading_turn_only_threshold_rad - slowdown_start;
+      heading_speed_scale = slowdown_range > kEpsilon
+          ? (config_.heading_turn_only_threshold_rad - abs_heading_error) /
+                slowdown_range
+          : 0.0;
+      heading_speed_scale = std::max(0.0,
+          std::min(1.0, heading_speed_scale));
+    }
+
+    const double heading_limited_vx =
+        effective_max_vx * heading_speed_scale;
+    cmd.vx = std::min(
+        heading_limited_vx,
+        config_.kp_x * std::max(0.0, ex_robot));
     cmd.vy = config_.kp_y * ey_robot;
     cmd.yaw_rate = config_.kp_yaw * heading_error;
   }

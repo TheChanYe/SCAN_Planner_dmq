@@ -30,6 +30,7 @@
     <arg name="is_real_world" value="true"/>
     <arg name="cloud_is_world" value="$(arg cloud_is_world)"/>
     <arg name="need_extrinsic" value="false"/>
+    <arg name="config_file" value="$(arg navigation_config)"/>
   </include>
 
   <!-- Chooses route-follow or SCAN velocity and is the sole /cmd_vel source. -->

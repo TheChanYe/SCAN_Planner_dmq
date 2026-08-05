@@ -60,7 +60,8 @@ driver_motion:
   lateral_filter_alpha: 0.20
   max_yaw_accel: 0.80
   max_yaw_decel: 1.20
-  turn_only_angle_deg: 25.0
+  turn_only_enter_angle_deg: 35.0
+  turn_only_exit_angle_deg: 20.0
 
 frames:
   odom: "odom"

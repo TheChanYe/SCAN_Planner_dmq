@@ -165,9 +165,13 @@ struct NavigationModeConfig
 struct RouteFollowerConfig
 {
   double lookahead_distance_m{1.0};
+  double max_lookahead_distance_m{1.2};
+  double lookahead_time_sec{1.0};
   double kp_x{0.8};
   double kp_y{1.0};
   double kp_yaw{1.2};
+
+  double heading_slowdown_start_rad{0.20};
 
   double heading_turn_only_threshold_rad{
       0.8};

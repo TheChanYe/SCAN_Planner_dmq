@@ -262,6 +262,62 @@ TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
   EXPECT_GT(cmd.yaw_rate, 0.0);
 }
 
+TEST(RouteFollowerTest, SlowsContinuouslyBeforeTurnOnlyThreshold)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 1.0;
+  config.max_lookahead_distance_m = 1.0;
+  config.heading_slowdown_start_rad = 0.2;
+  config.heading_turn_only_threshold_rad = 0.8;
+  config.max_vx = 0.5;
+
+  RouteFollower follower(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RouteProgress progress = makeProgress(1, 0.0, 10.0, 0.0);
+
+  const VelocityCommand aligned = follower.update(
+      task, makeRobot(0.0, 0.0, 0.0), progress, 0.5, 1.0);
+  const VelocityCommand turning = follower.update(
+      task, makeRobot(0.0, 0.0, -0.5), progress, 0.5, 1.0);
+
+  EXPECT_GT(aligned.vx, turning.vx);
+  EXPECT_GT(turning.vx, 0.0);
+}
+
+TEST(RouteFollowerTest, SpeedExtendsLookaheadAcrossCorner)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.4;
+  config.max_lookahead_distance_m = 1.0;
+  config.lookahead_time_sec = 1.0;
+  config.heading_turn_only_threshold_rad = 0.8;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.5;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 1.0;
+  p2.y = 2.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 0.2, 2.8, 0.0);
+  RobotState stopped = makeRobot(0.2, 0.0, 0.0);
+  RobotState moving = stopped;
+  moving.vx = 0.5;
+
+  RouteFollower follower(config);
+  const VelocityCommand stopped_cmd = follower.update(
+      task, stopped, progress, 0.5, 1.0);
+  const VelocityCommand moving_cmd = follower.update(
+      task, moving, progress, 0.5, 1.0);
+
+  EXPECT_NEAR(stopped_cmd.yaw_rate, 0.0, 1e-12);
+  EXPECT_GT(moving_cmd.yaw_rate, 0.0);
+}
+
 TEST(RouteFollowerTest, RejectsProgressRegression)
 {
   RouteFollowerConfig config{};

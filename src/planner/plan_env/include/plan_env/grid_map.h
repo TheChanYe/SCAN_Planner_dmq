@@ -91,6 +91,11 @@ struct MappingParameters {
   Eigen::Matrix4d lidar_extrinsic_;
   Eigen::Matrix4d depth_extrinsic_;
 
+  /* lidar returns from the physical robot body */
+  bool self_filter_enabled_;
+  double body_length_, body_width_, body_height_;
+  double self_filter_margin_xy_, self_filter_margin_z_;
+
   /* active mapping */
   double unknown_flag_;
 };
@@ -110,6 +115,7 @@ struct MappingData {
   Eigen::Vector3d ray_pos_;
   Eigen::Quaterniond ray_q_;
   Eigen::Vector3d sliding_map_frame_pos_;
+  Eigen::Quaterniond body_q_;
 
   // depth image data
 
@@ -120,7 +126,7 @@ struct MappingData {
   bool occ_need_update_;
   bool use_cloud_update_;
   bool has_first_depth_;
-  bool has_ray_pose_, has_cloud_;
+  bool has_ray_pose_, has_body_pose_, has_cloud_;
 
   // depth image projected point cloud
 
@@ -250,6 +256,7 @@ private:
                             std::vector<int>& cnt_buffer,
                             std::vector<char>& flag_buffer,
                             const std::vector<char>* ignore_mask);
+  bool isInsideSelfFilter(const Eigen::Vector3d& point_world) const noexcept;
 
   // typedef message_filters::sync_policies::ExactTime<sensor_msgs::Image,
   // nav_msgs::Odometry> SyncPolicyImageOdom; typedef
