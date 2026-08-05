@@ -19,4 +19,5 @@
   <depend>jsoncpp</depend>
   <exec_depend>navdog_runtime</exec_depend>
   <exec_depend>scan_planner_dmq</exec_depend>
+  <exec_depend>rviz</exec_depend>
 </package>

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Run this on a machine with a desktop after bringup_real.launch starts. -->
+  <arg name="config" default="$(find dmq_dog)/rviz/dmq_dog_real.rviz"/>
+
+  <node pkg="rviz" type="rviz" name="dmq_dog_rviz"
+        args="-d $(arg config)" output="screen"/>
+</launch>

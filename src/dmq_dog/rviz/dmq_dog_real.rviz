@@ -1,0 +1,384 @@
+Panels:
+  - Class: rviz/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Navigation1
+        - /Odometry Diagnostics1
+        - /SCAN Planning1
+        - /Point Clouds1
+      Splitter Ratio: 0.55
+    Tree Height: 620
+  - Class: rviz/Selection
+    Name: Selection
+  - Class: rviz/Tool Properties
+    Expanded:
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.5
+  - Class: rviz/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz/Time
+    Name: Time
+    SyncMode: 0
+    SyncSource: ""
+Preferences:
+  PromptSaveOnExit: true
+Toolbars:
+  toolButtonStyle: 2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.55
+      Cell Size: 1
+      Class: rviz/Grid
+      Color: 120; 120; 120
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Ground Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz/Path
+          Color: 40; 220; 80
+          Enabled: true
+          Head Diameter: 0.18
+          Head Length: 0.12
+          Length: 0.20
+          Line Style: Lines
+          Line Width: 0.06
+          Name: MQTT Global Route
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 40; 220; 80
+          Pose Style: None
+          Queue Size: 2
+          Radius: 0.03
+          Shaft Diameter: 0.08
+          Shaft Length: 0.10
+          Topic: /navdog/global_route
+          Unreliable: false
+          Value: true
+        - Alpha: 0.9
+          Buffer Length: 1
+          Class: rviz/Path
+          Color: 255; 210; 40
+          Enabled: true
+          Head Diameter: 0.18
+          Head Length: 0.12
+          Length: 0.20
+          Line Style: Lines
+          Line Width: 0.035
+          Name: SCAN Remaining Route
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 210; 40
+          Pose Style: None
+          Queue Size: 2
+          Radius: 0.03
+          Shaft Diameter: 0.08
+          Shaft Length: 0.10
+          Topic: /native_scan/initial_path
+          Unreliable: false
+          Value: true
+      Enabled: true
+      Name: Navigation
+    - Class: rviz/Group
+      Displays:
+        - Angle Tolerance: 0.1
+          Class: rviz/Odometry
+          Color: 0; 220; 255
+          Enabled: true
+          Keep: 200
+          Length: 0.55
+          Name: Raw Odometry
+          Position Tolerance: 0.01
+          Shaft Length: 0.35
+          Shaft Radius: 0.025
+          Head Length: 0.20
+          Head Radius: 0.06
+          Topic: /Odometry
+          Unreliable: false
+          Value: true
+        - Angle Tolerance: 0.1
+          Class: rviz/Odometry
+          Color: 255; 190; 0
+          Enabled: true
+          Keep: 200
+          Length: 0.42
+          Name: Navigation Odometry
+          Position Tolerance: 0.01
+          Shaft Length: 0.27
+          Shaft Radius: 0.02
+          Head Length: 0.15
+          Head Radius: 0.05
+          Topic: /dmq_dog/navigation_odom
+          Unreliable: false
+          Value: true
+        - Angle Tolerance: 0.1
+          Class: rviz/Odometry
+          Color: 255; 80; 210
+          Enabled: true
+          Keep: 1
+          Length: 0.35
+          Name: Lidar Pose
+          Position Tolerance: 0.01
+          Shaft Length: 0.22
+          Shaft Radius: 0.02
+          Head Length: 0.13
+          Head Radius: 0.05
+          Topic: /dmq_dog/lidar_pose
+          Unreliable: false
+          Value: true
+        - Class: rviz/TF
+          Enabled: false
+          Frame Timeout: 15
+          Frames:
+            All Enabled: true
+          Marker Scale: 0.6
+          Name: TF Frames
+          Show Arrows: true
+          Show Axes: true
+          Show Names: true
+          Tree: {}
+          Update Interval: 0
+          Value: false
+      Enabled: true
+      Name: Odometry Diagnostics
+    - Class: rviz/Group
+      Displays:
+        - Class: rviz/Marker
+          Enabled: true
+          Marker Topic: /native_scan/scan_planner_dmq_node/optimal_list
+          Name: Optimized Trajectory
+          Namespaces: {}
+          Queue Size: 100
+          Value: true
+        - Class: rviz/Marker
+          Enabled: true
+          Marker Topic: /native_scan/scan_planner_dmq_node/a_star_list
+          Name: A Star Path
+          Namespaces: {}
+          Queue Size: 100
+          Value: true
+        - Class: rviz/Marker
+          Enabled: true
+          Marker Topic: /native_scan/scan_planner_dmq_node/goal_point
+          Name: Local Goal
+          Namespaces: {}
+          Queue Size: 20
+          Value: true
+        - Class: rviz/Marker
+          Enabled: true
+          Marker Topic: /native_scan/scan_planner_dmq_node/self_inflation
+          Name: Dog Collision Shape
+          Namespaces: {}
+          Queue Size: 20
+          Value: true
+        - Class: rviz/Marker
+          Enabled: true
+          Marker Topic: /native_scan/grid_map/sliding_map_bbox
+          Name: Sliding Map Bounds
+          Namespaces: {}
+          Queue Size: 20
+          Value: true
+      Enabled: true
+      Name: SCAN Planning
+    - Class: rviz/Group
+      Displays:
+        - Alpha: 0.75
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 2
+            Min Value: -1
+            Value: true
+          Axis: Z
+          Channel Name: z
+          Class: rviz/PointCloud2
+          Color: 80; 190; 255
+          Color Transformer: AxisColor
+          Decay Time: 0.25
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Min Color: 30; 80; 255
+          Name: Navigation Cloud
+          Position Transformer: XYZ
+          Queue Size: 3
+          Selectable: true
+          Size (Pixels): 2
+          Size (m): 0.035
+          Style: Flat Squares
+          Topic: /dmq_dog/navigation_cloud
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+        - Alpha: 0.65
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 2
+            Min Value: -1
+            Value: true
+          Axis: Z
+          Channel Name: z
+          Class: rviz/PointCloud2
+          Color: 80; 190; 255
+          Color Transformer: AxisColor
+          Decay Time: 0.15
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Min Color: 30; 80; 255
+          Name: Raw Rslidar Cloud
+          Position Transformer: XYZ
+          Queue Size: 2
+          Selectable: true
+          Size (Pixels): 2
+          Size (m): 0.03
+          Style: Flat Squares
+          Topic: /rslidar_points
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+        - Alpha: 0.55
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 2
+            Min Value: -1
+            Value: true
+          Axis: Z
+          Channel Name: z
+          Class: rviz/PointCloud2
+          Color: 255; 155; 40
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 155; 40
+          Min Color: 255; 155; 40
+          Name: Occupied Voxels
+          Position Transformer: XYZ
+          Queue Size: 3
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.05
+          Style: Boxes
+          Topic: /native_scan/grid_map/occupancy
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: false
+          Value: true
+        - Alpha: 0.35
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 2
+            Min Value: -1
+            Value: true
+          Axis: Z
+          Channel Name: z
+          Class: rviz/PointCloud2
+          Color: 255; 45; 45
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 45; 45
+          Min Color: 255; 45; 45
+          Name: Inflated Obstacles
+          Position Transformer: XYZ
+          Queue Size: 3
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.05
+          Style: Boxes
+          Topic: /native_scan/grid_map/occupancy_inflate
+          Unreliable: false
+          Use Fixed Frame: true
+          Use rainbow: false
+          Value: true
+        - Alpha: 1
+          Class: rviz/LaserScan
+          Color: 255; 255; 255
+          Decay Time: 0
+          Enabled: false
+          Position Transformer: XYZ
+          Queue Size: 10
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.02
+          Style: Points
+          Topic: /scan
+          Unreliable: false
+          Use Fixed Frame: true
+          Value: false
+      Enabled: true
+      Name: Point Clouds
+  Enabled: true
+  Global Options:
+    Background Color: 25; 27; 30
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+    - Class: rviz/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz/PublishPoint
+      Single click: true
+      Topic: /clicked_point
+  Transformation:
+    Current:
+      Class: rviz/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Angle: 0
+      Scale: 45
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 00000000
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1500
+  X: 80
+  Y: 50
