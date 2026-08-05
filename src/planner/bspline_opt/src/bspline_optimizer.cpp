@@ -754,7 +754,8 @@ namespace scan_planner
         }
         if (j < 0) // fail to get the obs free point
         {
-          ROS_ERROR("ERROR! the drone is in obstacle. This should not happen.");
+          ROS_ERROR_THROTTLE(1.0,
+              "ERROR! the robot is in an inflated obstacle.");
           in_id = 0;
         }
 
@@ -1012,7 +1013,7 @@ namespace scan_planner
           {
             //cout << "hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
 
-            if (t <= bspline_interval_) // First 3 control points in obstacles!
+            if (t <= bspline_interval_) // Collision begins near the trajectory start.
             {
               // Rather than failing immediately (which triggers an endless
               // GEN_NEW_TRAJ retry loop in the FSM), treat this like a
@@ -1021,7 +1022,10 @@ namespace scan_planner
               // increased penalty weight (lambda2) give the solver a chance
               // to converge to a trajectory whose start leaves enough
               // clearance.
-              ROS_WARN("First 3 control points in obstacles! restarting optimisation, t=%f", t);
+              ROS_WARN_THROTTLE(1.0,
+                  "First 3 control points are in obstacles; "
+                  "restarting optimization, t=%f",
+                  t);
               // flag_occ remains true — fall through to the restart branch below.
             }
 

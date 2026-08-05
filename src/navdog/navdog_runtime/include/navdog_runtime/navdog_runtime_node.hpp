@@ -97,7 +97,6 @@ private:
   bool pending_native_scan_path_{false};
   std::uint32_t native_scan_reset_count_{0};
   ros::Time native_scan_reset_time_{};
-  double body_height_{0.3};
   navdog::NavState last_logged_state_{navdog::NavState::IDLE};
   navdog::NavigationMode last_logged_mode_{navdog::NavigationMode::NONE};
   bool log_state_initialized_{false};

@@ -20,6 +20,7 @@ namespace
 using scan_planner::UniformBspline;
 
 constexpr double kMaxVYawLimit = 1.0;
+constexpr double kTakeoverTimestampToleranceSec = 0.10;
 
 ros::Publisher cmd_vel_pub;
 ros::Publisher execution_frozen_pub;
@@ -33,7 +34,9 @@ ros::Timer cmd_timer;
 bool receive_traj = false;
 bool have_odom = false;
 bool waiting_takeover_trajectory = false;
+bool stationary_trajectory = false;
 double takeover_anchor_tolerance = 0.25;
+ros::Time takeover_sync_time;
 std::vector<UniformBspline> traj;
 double traj_duration = 0.0;
 int traj_id = 0;
@@ -271,6 +274,7 @@ void publishTakeoverReady(bool ready)
 void resetCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
+  stationary_trajectory = false;
 
   traj.clear();
   traj_duration = 0.0;
@@ -281,6 +285,7 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
 
   publishExecutionFrozen(false);
   waiting_takeover_trajectory = false;
+  takeover_sync_time = ros::Time();
   publishTakeoverReady(false);
   publishStop();
 
@@ -292,7 +297,9 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
 void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
+  stationary_trajectory = false;
   waiting_takeover_trajectory = true;
+  takeover_sync_time = ros::Time::now();
   traj.clear();
   traj_duration = 0.0;
   traj_id = 0;
@@ -311,6 +318,17 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
     ROS_WARN("[closed_loop_controller_dmq] reject invalid bspline");
     return;
   }
+
+  // A queued prewarm trajectory may arrive after the takeover flush. Only a
+  // trajectory planned in response to this synchronization may take control.
+  if (waiting_takeover_trajectory && !takeover_sync_time.isZero() &&
+      msg->start_time + ros::Duration(kTakeoverTimestampToleranceSec) <
+          takeover_sync_time)
+  {
+    ROS_DEBUG("SCAN_TAKEOVER_STALE_TRAJ_SKIPPED traj_id=%d", msg->traj_id);
+    return;
+  }
+
   Eigen::MatrixXd pos_pts(3, msg->pos_pts.size());
   Eigen::VectorXd knots(msg->knots.size());
 
@@ -369,12 +387,22 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
   traj = std::move(candidate);
   traj_duration = candidate_duration;
   traj_id = msg->traj_id;
+  stationary_trajectory = true;
+  for (int i = 1; i < pos_pts.cols(); ++i)
+  {
+    if ((pos_pts.col(i) - pos_pts.col(0)).norm() > 1e-6)
+    {
+      stationary_trajectory = false;
+      break;
+    }
+  }
   exec_time = start_age;
   last_update_time = ros::Time::now();
   receive_traj = true;
   if (waiting_takeover_trajectory)
   {
     waiting_takeover_trajectory = false;
+    takeover_sync_time = ros::Time();
     publishTakeoverReady(true);
     ROS_INFO("SCAN_TAKEOVER_TRAJ_READY traj_id=%d anchor_error=%.3f exec_time=%.3f",
         traj_id, anchor_error, exec_time);
@@ -398,6 +426,17 @@ void cmdCallback(const ros::TimerEvent &)
   {
     publishExecutionFrozen(false);
     publishStop();
+    return;
+  }
+
+  // EmergencyStop is encoded as a B-spline whose control points are all the
+  // same. Position feedback on that spline would otherwise command the robot
+  // back toward a stale stop point as odometry drifts.
+  if (stationary_trajectory)
+  {
+    publishExecutionFrozen(false);
+    publishStop();
+    last_update_time = ros::Time::now();
     return;
   }
 

@@ -80,8 +80,6 @@ bool NavdogRuntimeNode::initialize()
           navdog_scan_adapter::ScanObstacleSummaryEvaluator3D::Config{},
           grid_query_));
 
-  private_nh_.param("grid_map/body_height", body_height_, 0.3);
-
   mqtt_.reset(new navdog_protocol::MqttBridge(application_config_.mqtt));
   if (!mqtt_->start())
     ROS_WARN("MQTT unavailable at startup; local navigation remains active");
@@ -170,11 +168,17 @@ void NavdogRuntimeNode::processEvents()
     else if (result == navdog_task::TaskHandleResult::CANCELLED)
     {
       log_progress_initialized_ = false;
-      resetNativeScan("TASK_CANCELLED");
+      const bool scan_already_cleaned =
+          terminal_cleanup_sequence_ != 0 && output_state_initialized_ &&
+          (last_output_state_ == navdog::NavState::SUCCEEDED ||
+           last_output_state_ == navdog::NavState::FAILED);
+      if (!scan_already_cleaned)
+        resetNativeScan("TASK_CANCELLED");
       last_route_progress_ = navdog::RouteProgress{};
       pending_planner_feedback_ = navdog::PlannerFeedback{};
       route_publisher_.publish(nav_msgs::Path{});
-      ROS_INFO("navigation task cancelled");
+      ROS_INFO("navigation task cancelled: scan_reset=%d",
+          scan_already_cleaned ? 0 : 1);
     }
     else if (result == navdog_task::TaskHandleResult::REJECTED_BUSY)
     {
@@ -537,20 +541,19 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "world";
 
-  // First point: current robot position (lowered to ground reference)
+  // First point: current robot position.
   {
     std::lock_guard<std::mutex> lock(odom_mutex_);
     geometry_msgs::PoseStamped pose;
     pose.header = path.header;
     pose.pose.position.x = robot_.x;
     pose.pose.position.y = robot_.y;
-    pose.pose.position.z = robot_.z - body_height_;
+    pose.pose.position.z = robot_.z;
     pose.pose.orientation = tf::createQuaternionMsgFromYaw(robot_.yaw);
     path.poses.push_back(pose);
   }
 
   // Remaining points: only waypoints after the current progress segment.
-  // Z coordinate: route_point.z - body_height_ (convert body height to ground reference)
   for (std::size_t i = first_remaining_index; i < route.size(); ++i)
   {
     const auto& point = route[i];
@@ -558,7 +561,7 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
     pose.header = path.header;
     pose.pose.position.x = point.x;
     pose.pose.position.y = point.y;
-    pose.pose.position.z = point.z - body_height_;
+    pose.pose.position.z = point.z;
     pose.pose.orientation = tf::createQuaternionMsgFromYaw(
         point.has_yaw ? point.yaw : 0.0);
     path.poses.push_back(pose);
