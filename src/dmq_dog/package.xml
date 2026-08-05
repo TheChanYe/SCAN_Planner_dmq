@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>dmq_dog</name>
+  <version>0.1.0</version>
+  <description>MQTT control driver for the real DMQ guide dog platform.</description>
+  <maintainer email="dev@example.com">dmq_dog</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf</depend>
+  <depend>tf2_ros</depend>
+  <depend>libmosquitto-dev</depend>
+  <depend>jsoncpp</depend>
+  <exec_depend>navdog_runtime</exec_depend>
+  <exec_depend>scan_planner_dmq</exec_depend>
+</package>

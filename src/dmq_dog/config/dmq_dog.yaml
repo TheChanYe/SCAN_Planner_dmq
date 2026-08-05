@@ -1,0 +1,82 @@
+# dmq_dog real guide-dog MQTT control driver.
+
+mqtt:
+  enabled: true
+  host: "127.0.0.1"
+  port: 1883
+  keepalive_sec: 30
+  client_id: "dmq_dog"
+  # Keep the physical-controller output identical to the proven Agibot driver.
+  qos: 0
+
+  # Screenshot protocol: JSON is published to this topic periodically.
+  control_topic: "robot/local_planning/ctrl"
+
+  # Optional telemetry coming back from the dog controller.
+  odom_topic: "robot/dog/odom"
+  dog_status_topic: "robot/dog/status"
+
+topics:
+  cmd_vel: "/cmd_vel"
+  ros_odom: "/Odometry"
+  lidar_scan: "/scan"
+  lidar_cloud: "/rslidar_points"
+  mqtt_odom_ros: "/dmq_dog/odom"
+  navigation_odom: "/dmq_dog/navigation_odom"
+  navigation_cloud: "/dmq_dog/navigation_cloud"
+  lidar_pose: "/dmq_dog/lidar_pose"
+  nav_state: "/navdog/state"
+  nav_mode: "/navdog/navigation_mode"
+
+publish_rate_hz: 10.0
+cmd_vel_timeout_sec: 0.30
+odom_timeout_sec: 0.50
+lidar_timeout_sec: 0.50
+use_watchdog_error: true
+
+limits:
+  max_vx: 3.0
+  max_vy: 1.0
+  max_yaw_rate: 3.0
+
+driver_limits:
+  max_vx: 3.0
+  max_vy: 1.0
+  max_yaw_rate: 3.0
+
+driver_deadband:
+  enabled: true
+  zero_threshold_vx: 0.03
+  zero_threshold_vy: 0.05
+  zero_threshold_yaw_rate: 0.015
+  min_effective_vx: 0.06
+  min_effective_vy: 0.12
+  min_effective_yaw_rate: 0.03
+
+driver_motion:
+  prefer_forward_motion: true
+  lateral_to_yaw_gain: 1.2
+  max_yaw_rate: 0.65
+  turn_only_angle_deg: 25.0
+
+frames:
+  odom: "odom"
+  base: "base_link"
+  lidar: "lidar"
+
+dog:
+  length: 0.60
+  width: 0.30
+  height: 0.30
+
+lidar:
+  # Body frame: x forward, y left, z up.
+  # Default: dog front is length/2 = 0.30 m, lidar is 10 cm behind it.
+  xyz:
+    x: 0.20
+    y: 0.0
+    z: 0.30
+  rpy:
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0

@@ -2,6 +2,9 @@
   <arg name="body_pose_topic" default="/quad_0/body_pose"/>
   <arg name="sensor_pose_topic" default="/quad_0/lidar_pose"/>
   <arg name="cloud_topic" default="/pcl_render_node/cloud"/>
+  <arg name="is_real_world" default="false"/>
+  <arg name="cloud_is_world" default="true"/>
+  <arg name="need_extrinsic" default="false"/>
 
   <!-- The upstream FSM/controller still read this legacy global parameter. -->
   <param name="/body_pose_topic" value="$(arg body_pose_topic)" type="str"/>
@@ -23,13 +26,14 @@
            to="/native_scan/grid_map/sensor_pose_extrinsic"/>
 
     <include file="$(find scan_planner_dmq)/launch/advanced_param.xml">
-      <arg name="is_real_world" value="false"/>
+      <arg name="is_real_world" value="$(arg is_real_world)"/>
       <arg name="navi_mode" value="3"/>
       <arg name="sensor_type" value="lidar"/>
       <arg name="body_pose_topic" value="$(arg body_pose_topic)"/>
       <arg name="sensor_pose_topic" value="$(arg sensor_pose_topic)"/>
       <arg name="cloud_topic" value="$(arg cloud_topic)"/>
-      <arg name="cloud_is_world" value="true"/>
+      <arg name="cloud_is_world" value="$(arg cloud_is_world)"/>
+      <arg name="need_extrinsic" value="$(arg need_extrinsic)"/>
       <arg name="depth_topic" value="/pcl_render_node/depth"/>
       <arg name="cx" value="321.04638671875"/>
       <arg name="cy" value="243.44969177246094"/>

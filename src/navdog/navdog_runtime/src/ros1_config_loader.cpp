@@ -68,6 +68,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("odom_topic", app.runtime_io.odom_topic);
   LOAD("final_cmd_topic", app.runtime_io.final_cmd_topic);
   LOAD("odom_twist_in_world_frame", app.runtime_io.odom_twist_in_world_frame);
+  LOAD("publish_mqtt_status", app.runtime_io.publish_mqtt_status);
   LOAD("final_output/command_timeout_sec", app.final_output.command_timeout_sec);
   LOAD("final_output/publish_rate_hz", app.final_output.publish_rate_hz);
 

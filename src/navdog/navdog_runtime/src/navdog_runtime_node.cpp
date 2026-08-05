@@ -216,9 +216,10 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   // Publish the terminal state first so the mux hard-stops before native
   // SCAN is reset.  The edge detector prevents a 50 Hz reset loop.
   handleTerminalTransition(output);
-  if (last_status_publish_.isZero() ||
+  if (application_config_.runtime_io.publish_mqtt_status &&
+      (last_status_publish_.isZero() ||
       (ros::Time::now() - last_status_publish_).toSec() >=
-          1.0 / application_config_.runtime_io.status_rate_hz)
+          1.0 / application_config_.runtime_io.status_rate_hz))
   {
     publishMqttStatus(output);
     last_status_publish_ = ros::Time::now();

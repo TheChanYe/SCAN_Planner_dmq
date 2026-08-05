@@ -30,6 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-message-filters \
  && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y --no-install-recommends ccache \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN echo "Built for TARGETPLATFORM=${TARGETPLATFORM:-unknown} TARGETARCH=${TARGETARCH:-unknown}" \
  && uname -m
 

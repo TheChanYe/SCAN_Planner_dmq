@@ -1,0 +1,175 @@
+mqtt:
+  enabled: true
+  host: "192.168.1.2"
+  port: 1883
+  keepalive_sec: 30
+  client_id: "dmq_dog"
+  # Keep the physical-controller output identical to the proven Agibot driver.
+  qos: 0
+  control_topic: "robot/local_planning/ctrl"
+  odom_topic: "robot/dog/odom"
+  dog_status_topic: "robot/dog/status"
+  task_topic: "robot/global_planning/info"
+  pause_topic: "robot/local_planning/pause_resume"
+  status_topic: "robot/local_planning/ctrl"
+  max_queue_size: 32
+
+topics:
+  cmd_vel: "/cmd_vel"
+  ros_odom: "/Odometry"
+  lidar_scan: "/scan"
+  lidar_cloud: "/rslidar_points"
+  mqtt_odom_ros: "/dmq_dog/odom"
+  # Stable internal outputs consumed by bringup_real.launch.
+  navigation_odom: "/dmq_dog/navigation_odom"
+  navigation_cloud: "/dmq_dog/navigation_cloud"
+  lidar_pose: "/dmq_dog/lidar_pose"
+  nav_state: "/navdog/state"
+  nav_mode: "/navdog/navigation_mode"
+
+publish_rate_hz: 10.0
+cmd_vel_timeout_sec: 0.30
+odom_timeout_sec: 0.50
+lidar_timeout_sec: 0.50
+use_watchdog_error: true
+
+# Navigation runtime. MQTT status publishing is disabled here because the
+# dmq_bridge publishes the complete error/status/velocity payload.
+control_rate_hz: 50.0
+status_rate_hz: 10.0
+publish_mqtt_status: false
+odom_topic: "/dmq_dog/navigation_odom"
+odom_twist_in_world_frame: true
+final_cmd_topic: "/navdog/route_cmd"
+default_route_z: 0.30
+default_max_vx: 0.40
+
+limits:
+  max_vx: 0.50
+  max_vy: 0.12
+  max_yaw_rate: 0.65
+  max_accel_x: 0.50
+  max_accel_y: 0.25
+  max_accel_yaw: 0.80
+
+# Hard limits applied immediately before publishing to the physical dog.
+driver_limits:
+  max_vx: 3.0
+  max_vy: 1.0
+  max_yaw_rate: 3.0
+
+# Values used by the proven agibot_1.1.6.0 physical-dog publisher.
+driver_deadband:
+  enabled: true
+  zero_threshold_vx: 0.03
+  zero_threshold_vy: 0.05
+  zero_threshold_yaw_rate: 0.015
+  min_effective_vx: 0.06
+  min_effective_vy: 0.12
+  min_effective_yaw_rate: 0.03
+
+# The planners are holonomic, but a guide dog should face its travel path.
+# Convert lateral velocity into steering; use turn-in-place for large angles.
+driver_motion:
+  prefer_forward_motion: true
+  lateral_to_yaw_gain: 1.2
+  max_yaw_rate: 0.65
+  turn_only_angle_deg: 25.0
+
+frames:
+  odom: "odom"
+  base: "base_link"
+  lidar: "lidar"
+
+dog:
+  length: 0.60
+  width: 0.30
+  height: 0.30
+
+lidar:
+  # Body frame: x forward, y left, z up.
+  # Default: front at +0.30 m, lidar 10 cm behind it.
+  xyz:
+    x: 0.20
+    y: 0.0
+    z: 0.30
+  rpy:
+    roll: 0.0
+    pitch: 0.0
+    yaw: 0.0
+
+grid_map:
+  need_extrinsic: false
+  sensor_type: "lidar"
+  cloud_is_world: false
+  resolution: 0.05
+  sliding_map_size_x: 10.0
+  sliding_map_size_y: 10.0
+  sliding_map_size_z: 5.0
+  map_sliding_thresh: 0.2
+  body_height: 0.30
+  double_cylinder_radius: 0.25
+  double_cylinder_offset: 0.18
+  obstacles_inflation_z_up: 0.10
+  obstacles_inflation_z_down: 0.40
+  p_hit: 0.85
+  p_miss: 0.30
+  p_min: 0.12
+  p_max: 0.98
+  p_occ: 0.80
+  max_ray_length: 5.0
+  vis_height: 0.30
+
+route_corridor:
+  lookahead_distance_m: 2.5
+  half_width_m: 0.60
+
+navigation_mode:
+  enter_blocked_distance_m: 2.0
+  enter_confirm_sec: 0.04
+  immediate_enter_distance_m: 0.45
+  min_local_avoid_hold_sec: 1.0
+  exit_clear_confirm_sec: 0.50
+  exit_front_clearance_m: 2.50
+  exit_left_clearance_m: 0.60
+  exit_right_clearance_m: 0.60
+
+route_follower:
+  lookahead_distance_m: 0.60
+  kp_x: 0.80
+  kp_y: 0.60
+  kp_yaw: 1.20
+  heading_turn_only_threshold_rad: 0.20
+  max_vx: 0.50
+
+route_corridor_observation:
+  map_timeout_sec: 1.50
+  max_progress_lag_m: 0.50
+
+safety:
+  slow_down_front: 1.50
+  emergency_stop: 0.45
+  odom_timeout_sec: 0.50
+  obstacle_timeout_sec: 1.50
+  planner_cmd_timeout_sec: 0.30
+  future_tolerance_sec: 0.05
+
+start_align:
+  enter_deg: 15.0
+  exit_deg: 5.0
+  max_hold_sec: 8.0
+  kp_yaw: 1.50
+  max_yaw_rate: 0.65
+  target_min_dist_m: 0.20
+
+goal_controller:
+  near_goal_switch_dist: 0.90
+  near_goal_kp_v: 0.35
+  near_goal_min_v: 0.12
+  near_goal_max_v: 0.30
+  near_goal_turn_only_deg: 20.0
+  near_goal_kp_w: 1.20
+  near_goal_max_w: 0.65
+  obstacle_finish_timeout_sec: 6.0
+  finish_dist: 0.20
+  finish_yaw_tolerance_deg: 10.0

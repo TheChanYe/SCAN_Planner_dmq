@@ -22,6 +22,7 @@ struct ApplicationConfig
     bool odom_twist_in_world_frame{true};
     double control_rate_hz{50.0};
     double status_rate_hz{10.0};
+    bool publish_mqtt_status{true};
   } runtime_io;
 
   struct FinalOutputConfig

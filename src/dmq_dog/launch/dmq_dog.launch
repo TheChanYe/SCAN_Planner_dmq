@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="config" default="$(find dmq_dog)/config/dmq_dog.yaml"/>
+  <arg name="mqtt_host" default=""/>
+  <arg name="mqtt_port" default="0"/>
+
+  <node pkg="dmq_dog" type="dmq_bridge_node" name="dmq_bridge"
+        output="screen" respawn="false">
+    <rosparam command="load" file="$(arg config)"/>
+    <param name="mqtt/host" value="$(arg mqtt_host)"
+           if="$(eval arg('mqtt_host') != '')"/>
+    <param name="mqtt/port" value="$(arg mqtt_port)"
+           if="$(eval int(arg('mqtt_port')) != 0)"/>
+  </node>
+</launch>

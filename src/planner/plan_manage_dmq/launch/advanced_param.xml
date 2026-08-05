@@ -6,6 +6,7 @@
   <arg name="sensor_pose_topic"/>
   <arg name="cloud_topic"/>
   <arg name="cloud_is_world"/>
+  <arg name="need_extrinsic" default="$(arg is_real_world)"/>
   <arg name="depth_topic"/>
   <arg name="cx"/>
   <arg name="cy"/>
@@ -26,7 +27,7 @@
     <remap from="/grid_map/cloud" to="$(arg cloud_topic)"/>
     <param name="grid_map/cloud_is_world" value="$(arg cloud_is_world)"/>
     <remap from="/grid_map/depth" to="$(arg depth_topic)"/>
-    <param name="grid_map/need_extrinsic" value="$(arg is_real_world)" type="bool"/>
+    <param name="grid_map/need_extrinsic" value="$(arg need_extrinsic)" type="bool"/>
 
     <!-- planning fsm -->
     <param name="fsm/navi_mode" value="$(arg navi_mode)" type="int"/>

@@ -9,8 +9,11 @@ DEVEL_DIR="${DEVEL_DIR:-${ROOT_DIR}/devel_runtime}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(nproc)}"
 STRIP_ELF="${STRIP_ELF:-1}"
+CLEAN_BUILD="${CLEAN_BUILD:-0}"
+USE_CCACHE="${USE_CCACHE:-1}"
 ARCH="${ARCH:-$(uname -m)}"
 BUNDLE_NAME="${BUNDLE_NAME:-scan_planner_runtime_${ARCH}_$(date +%Y%m%d_%H%M%S)}"
+ARCH_MARKER="${BUILD_DIR}/.runtime_arch"
 
 # SCAN_Planner 源码在 src/ 下
 if [ ! -d "${ROOT_DIR}/src" ]; then
@@ -25,12 +28,31 @@ fi
 
 source /opt/ros/noetic/setup.bash
 
-echo "[1/4] Cleaning runtime build dirs"
-rm -rf "${INSTALL_DIR}" "${BUILD_DIR}" "${DEVEL_DIR}"
+if [ "${CLEAN_BUILD}" = "1" ]; then
+  echo "[1/4] Cleaning runtime build dirs (CLEAN_BUILD=1)"
+  rm -rf "${INSTALL_DIR}" "${BUILD_DIR}" "${DEVEL_DIR}"
+elif [ -f "${ARCH_MARKER}" ] && [ "$(cat "${ARCH_MARKER}")" != "${ARCH}" ]; then
+  echo "[1/4] Architecture changed; cleaning runtime build dirs"
+  rm -rf "${INSTALL_DIR}" "${BUILD_DIR}" "${DEVEL_DIR}"
+else
+  echo "[1/4] Reusing runtime build dirs (incremental build)"
+fi
 mkdir -p "${INSTALL_DIR}"
+mkdir -p "${BUILD_DIR}"
+printf '%s\n' "${ARCH}" > "${ARCH_MARKER}"
 
 echo "[2/4] Building + installing runtime artifacts"
 echo "Architecture: ${ARCH}"
+CCACHE_ARGS=()
+if [ "${USE_CCACHE}" = "1" ] && command -v ccache >/dev/null 2>&1; then
+  CCACHE_ARGS=(
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+  )
+  echo "Compiler cache: enabled (${CCACHE_DIR:-default cache directory})"
+else
+  echo "Compiler cache: disabled"
+fi
 cd "${ROOT_DIR}"
 catkin_make \
   --source src \
@@ -38,6 +60,7 @@ catkin_make \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DCATKIN_DEVEL_PREFIX="${DEVEL_DIR}" \
   -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+  "${CCACHE_ARGS[@]}" \
   install -j"${JOBS}"
 
 if [ "${STRIP_ELF}" = "1" ]; then

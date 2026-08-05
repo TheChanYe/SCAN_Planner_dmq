@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Complete real-dog navigation: MQTT route -> tracking/SCAN -> MQTT velocity. -->
+  <arg name="driver_config" default="$(find dmq_dog)/config/robot_real.yaml"/>
+  <arg name="navigation_config"
+       default="$(find dmq_dog)/config/robot_real.yaml"/>
+  <arg name="mqtt_host" default=""/>
+  <arg name="mqtt_port" default="0"/>
+
+  <!-- Stable internal topics. The physical input topics remain configurable
+       only in robot_real.yaml and are normalized by dmq_bridge. -->
+  <arg name="odom_topic" default="/dmq_dog/navigation_odom"/>
+  <arg name="lidar_pose_topic" default="/dmq_dog/lidar_pose"/>
+  <arg name="lidar_cloud_topic" default="/dmq_dog/navigation_cloud"/>
+  <arg name="cloud_is_world" default="false"/>
+
+  <!-- Generates lidar_pose from odom + YAML extrinsic, monitors sensors, and
+       publishes the final error/status/velocity JSON to the dog. -->
+  <include file="$(find dmq_dog)/launch/dmq_dog.launch">
+    <arg name="config" value="$(arg driver_config)"/>
+    <arg name="mqtt_host" value="$(arg mqtt_host)"/>
+    <arg name="mqtt_port" value="$(arg mqtt_port)"/>
+  </include>
+
+  <!-- SCAN local obstacle avoidance on the remaining MQTT reference route. -->
+  <include file="$(find scan_planner_dmq)/launch/native_scan_takeover.launch">
+    <arg name="body_pose_topic" value="$(arg odom_topic)"/>
+    <arg name="sensor_pose_topic" value="$(arg lidar_pose_topic)"/>
+    <arg name="cloud_topic" value="$(arg lidar_cloud_topic)"/>
+    <arg name="is_real_world" value="true"/>
+    <arg name="cloud_is_world" value="$(arg cloud_is_world)"/>
+    <arg name="need_extrinsic" value="false"/>
+  </include>
+
+  <!-- Chooses route-follow or SCAN velocity and is the sole /cmd_vel source. -->
+  <node pkg="navdog_runtime" type="cmd_vel_owner_mux"
+        name="cmd_vel_owner_mux" output="screen">
+    <param name="route_cmd_timeout" value="0.30"/>
+    <param name="scan_cmd_timeout" value="0.30"/>
+    <param name="mode_sync_grace_sec" value="0.10"/>
+    <param name="scan_handoff_hold_sec" value="0.10"/>
+    <param name="handoff_accel_x" value="0.50"/>
+    <param name="handoff_decel_x" value="0.80"/>
+    <param name="handoff_accel_y" value="0.25"/>
+    <param name="handoff_decel_y" value="0.50"/>
+    <param name="handoff_accel_yaw" value="0.80"/>
+    <param name="handoff_decel_yaw" value="1.20"/>
+  </node>
+
+  <!-- Receives MQTT routes/pause commands and coordinates route following
+       with SCAN takeover. Status MQTT is disabled here because dmq_bridge
+       publishes the complete protocol payload. -->
+  <node pkg="navdog_runtime" type="navdog_runtime_node"
+        name="navdog_runtime" output="screen">
+    <rosparam command="load" file="$(arg navigation_config)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="mqtt/host" value="$(arg mqtt_host)"
+           if="$(eval arg('mqtt_host') != '')"/>
+    <param name="mqtt/port" value="$(arg mqtt_port)"
+           if="$(eval int(arg('mqtt_port')) != 0)"/>
+    <remap from="/grid_map/body_pose" to="$(arg odom_topic)"/>
+    <remap from="/grid_map/sensor_pose" to="$(arg lidar_pose_topic)"/>
+    <remap from="/grid_map/cloud" to="$(arg lidar_cloud_topic)"/>
+  </node>
+</launch>
