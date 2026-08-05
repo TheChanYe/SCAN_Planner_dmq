@@ -11,6 +11,37 @@
 namespace navdog_runtime
 {
 
+namespace
+{
+
+enum class MotionClass
+{
+  STOP = 0,
+  TURN,
+  DRIVE
+};
+
+MotionClass classifyMotion(const navdog::VelocityCommand& cmd)
+{
+  if (!cmd.valid) return MotionClass::STOP;
+  if (std::hypot(cmd.vx, cmd.vy) > 0.02) return MotionClass::DRIVE;
+  if (std::fabs(cmd.yaw_rate) > 0.015) return MotionClass::TURN;
+  return MotionClass::STOP;
+}
+
+const char* motionClassName(const MotionClass value)
+{
+  switch (value)
+  {
+    case MotionClass::DRIVE: return "DRIVE";
+    case MotionClass::TURN: return "TURN";
+    case MotionClass::STOP:
+    default: return "STOP";
+  }
+}
+
+}  // namespace
+
 navdog::NavdogConfig NavdogRuntimeNode::loadNavdogConfig(ros::NodeHandle& nh)
 { return Ros1ConfigLoader::load(nh).core; }
 
@@ -122,6 +153,7 @@ void NavdogRuntimeNode::processEvents()
     if (result == navdog_task::TaskHandleResult::STARTED)
     {
       terminal_cleanup_sequence_ = 0;
+      log_progress_initialized_ = false;
       resetNativeScan("TASK_STARTED");
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
@@ -137,11 +169,18 @@ void NavdogRuntimeNode::processEvents()
     }
     else if (result == navdog_task::TaskHandleResult::CANCELLED)
     {
+      log_progress_initialized_ = false;
       resetNativeScan("TASK_CANCELLED");
       last_route_progress_ = navdog::RouteProgress{};
       pending_planner_feedback_ = navdog::PlannerFeedback{};
       route_publisher_.publish(nav_msgs::Path{});
       ROS_INFO("navigation task cancelled");
+    }
+    else if (result == navdog_task::TaskHandleResult::REJECTED_BUSY)
+    {
+      ROS_INFO_THROTTLE(1.0,
+          "NAV_EVENT_IGNORED type=START_TASK reason=TASK_BUSY active_sequence=%lu",
+          static_cast<unsigned long>(coordinator_->taskSession().sequence));
     }
   }
 }
@@ -238,6 +277,79 @@ void NavdogRuntimeNode::publishTakeoverSync(
 void NavdogRuntimeNode::logNavigationChanges(
     const navdog::CoreOutput& output, const navdog::CoreInput& input)
 {
+  if (!log_state_initialized_ || output.state != last_logged_state_)
+  {
+    const auto& progress = output.route_progress;
+    ROS_INFO("NAV_STATE prev=%s next=%s seq=%lu source=%s "
+             "cmd_valid=%d cmd=[%.3f %.3f %.3f] "
+             "progress_valid=%d segment=%lu ratio=%.3f remaining=%.3f "
+             "lateral_error=%.3f robot=[%.3f %.3f %.3f]",
+        log_state_initialized_ ? navdog::navStateName(last_logged_state_) : "NONE",
+        navdog::navStateName(output.state),
+        static_cast<unsigned long>(output.task_sequence),
+        navdog::commandSourceName(output.final_cmd.source),
+        output.final_cmd.valid ? 1 : 0,
+        output.final_cmd.vx, output.final_cmd.vy, output.final_cmd.yaw_rate,
+        progress.valid ? 1 : 0,
+        static_cast<unsigned long>(progress.segment_index),
+        progress.segment_ratio, progress.remaining_distance_m,
+        progress.lateral_error_m,
+        input.robot.x, input.robot.y, input.robot.yaw);
+    last_logged_state_ = output.state;
+    log_state_initialized_ = true;
+  }
+
+  const MotionClass motion = classifyMotion(output.final_cmd);
+  if (last_logged_motion_class_ != static_cast<int>(motion))
+  {
+    const auto& progress = output.route_progress;
+    ROS_INFO("NAV_COMMAND motion=%s state=%s mode=%s source=%s valid=%d "
+             "cmd=[%.3f %.3f %.3f] segment=%lu ratio=%.3f remaining=%.3f",
+        motionClassName(motion), navdog::navStateName(output.state),
+        navdog::navigationModeName(output.navigation_mode.mode),
+        navdog::commandSourceName(output.final_cmd.source),
+        output.final_cmd.valid ? 1 : 0,
+        output.final_cmd.vx, output.final_cmd.vy, output.final_cmd.yaw_rate,
+        static_cast<unsigned long>(progress.segment_index),
+        progress.segment_ratio, progress.remaining_distance_m);
+    last_logged_motion_class_ = static_cast<int>(motion);
+  }
+
+  if (output.route_progress.valid &&
+      (!log_progress_initialized_ ||
+       output.route_progress.segment_index != last_logged_segment_index_))
+  {
+    ROS_INFO("ROUTE_PROGRESS segment_prev=%lu segment_next=%lu ratio=%.3f "
+             "arc=%.3f remaining=%.3f lateral=%.3f motion=%s cmd=[%.3f %.3f %.3f]",
+        static_cast<unsigned long>(log_progress_initialized_
+            ? last_logged_segment_index_ : output.route_progress.segment_index),
+        static_cast<unsigned long>(output.route_progress.segment_index),
+        output.route_progress.segment_ratio,
+        output.route_progress.arc_length_m,
+        output.route_progress.remaining_distance_m,
+        output.route_progress.lateral_error_m,
+        motionClassName(motion), output.final_cmd.vx,
+        output.final_cmd.vy, output.final_cmd.yaw_rate);
+    last_logged_segment_index_ = output.route_progress.segment_index;
+    log_progress_initialized_ = true;
+  }
+
+  ROS_INFO_THROTTLE(1.0,
+      "NAV_TRACE state=%s mode=%s source=%s cmd=[%.3f %.3f %.3f] "
+      "segment=%lu ratio=%.3f arc=%.3f remaining=%.3f lateral=%.3f "
+      "robot=[%.3f %.3f %.3f] obstacles=[%.3f %.3f %.3f]",
+      navdog::navStateName(output.state),
+      navdog::navigationModeName(output.navigation_mode.mode),
+      navdog::commandSourceName(output.final_cmd.source),
+      output.final_cmd.vx, output.final_cmd.vy, output.final_cmd.yaw_rate,
+      static_cast<unsigned long>(output.route_progress.segment_index),
+      output.route_progress.segment_ratio, output.route_progress.arc_length_m,
+      output.route_progress.remaining_distance_m,
+      output.route_progress.lateral_error_m,
+      input.robot.x, input.robot.y, input.robot.yaw,
+      input.obstacles.front_min, input.obstacles.left_min,
+      input.obstacles.right_min);
+
   if (!log_mode_initialized_ ||
       output.navigation_mode.mode !=
           last_logged_mode_)

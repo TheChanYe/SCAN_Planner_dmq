@@ -38,6 +38,13 @@ enum class CommandOwner
   SCAN
 };
 
+enum class MotionClass
+{
+  STOP,
+  TURN,
+  DRIVE
+};
+
 CommandOwner previous_owner_{CommandOwner::NONE};
 double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
@@ -49,6 +56,8 @@ navdog_runtime::VelocitySlewLimiter slew_limiter_;
 geometry_msgs::Twist last_output_cmd_{};
 double last_publish_stamp_sec_{0.0};
 bool limiter_initialized_{false};
+MotionClass last_logged_motion_{MotionClass::STOP};
+bool motion_log_initialized_{false};
 
 ros::Publisher cmd_vel_pub_;
 
@@ -114,6 +123,68 @@ bool isFresh(double stamp_sec, double now_sec, double timeout_sec)
 geometry_msgs::Twist zeroCommand()
 {
   return geometry_msgs::Twist{};
+}
+
+MotionClass classifyMotion(const geometry_msgs::Twist& cmd)
+{
+  if (std::hypot(cmd.linear.x, cmd.linear.y) > 0.02)
+    return MotionClass::DRIVE;
+  if (std::fabs(cmd.angular.z) > 0.015)
+    return MotionClass::TURN;
+  return MotionClass::STOP;
+}
+
+const char* motionClassName(const MotionClass value)
+{
+  switch (value)
+  {
+    case MotionClass::DRIVE: return "DRIVE";
+    case MotionClass::TURN: return "TURN";
+    case MotionClass::STOP:
+    default: return "STOP";
+  }
+}
+
+void logOutputCommand(const geometry_msgs::Twist& output,
+                      const geometry_msgs::Twist& target,
+                      const CommandOwner owner,
+                      const bool target_valid,
+                      const char* reason,
+                      const double now_sec)
+{
+  const MotionClass motion = classifyMotion(output);
+  const double route_age = route_cmd_stamp_sec_ > 0.0
+      ? now_sec - route_cmd_stamp_sec_ : -1.0;
+  const double scan_age = scan_cmd_stamp_sec_ > 0.0
+      ? now_sec - scan_cmd_stamp_sec_ : -1.0;
+
+  if (!motion_log_initialized_ || motion != last_logged_motion_)
+  {
+    ROS_INFO("CMD_OUTPUT motion=%s owner=%s state=%s mode=%s reason=%s "
+             "target_valid=%d target=[%.3f %.3f %.3f] "
+             "output=[%.3f %.3f %.3f] route_age=%.3f scan_age=%.3f",
+        motionClassName(motion), ownerName(owner),
+        navdog::navStateName(nav_state_),
+        navdog::navigationModeName(navigation_mode_),
+        reason ? reason : "UNKNOWN", target_valid ? 1 : 0,
+        target.linear.x, target.linear.y, target.angular.z,
+        output.linear.x, output.linear.y, output.angular.z,
+        route_age, scan_age);
+    last_logged_motion_ = motion;
+    motion_log_initialized_ = true;
+  }
+
+  ROS_INFO_THROTTLE(1.0,
+      "CMD_TRACE motion=%s owner=%s state=%s mode=%s reason=%s "
+      "target_valid=%d target=[%.3f %.3f %.3f] "
+      "output=[%.3f %.3f %.3f] route_age=%.3f scan_age=%.3f ready=%d",
+      motionClassName(motion), ownerName(owner),
+      navdog::navStateName(nav_state_),
+      navdog::navigationModeName(navigation_mode_),
+      reason ? reason : "UNKNOWN", target_valid ? 1 : 0,
+      target.linear.x, target.linear.y, target.angular.z,
+      output.linear.x, output.linear.y, output.angular.z,
+      route_age, scan_age, scan_takeover_ready ? 1 : 0);
 }
 
 void routeCmdCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
@@ -211,6 +282,7 @@ void timerCallback(const ros::TimerEvent&)
   // --- Compute target command ---
   geometry_msgs::Twist target_cmd = zeroCommand();
   bool target_valid = false;
+  const char* selection_reason = "NO_TARGET";
 
   // States that require immediate zero — no slew limiting.
   const bool hard_stop =
@@ -229,6 +301,8 @@ void timerCallback(const ros::TimerEvent&)
     scan_takeover_forward_confirmed = false;
     slew_limiter_.reset();
     last_output_cmd_ = zeroCommand();
+    logOutputCommand(last_output_cmd_, target_cmd, owner, false,
+        "HARD_STOP_STATE", now_sec);
     cmd_vel_pub_.publish(zeroCommand());
     last_publish_stamp_sec_ = now_sec;
     return;
@@ -241,8 +315,13 @@ void timerCallback(const ros::TimerEvent&)
       {
         target_cmd = latest_route_cmd_;
         target_valid = true;
+        selection_reason = "ROUTE_FRESH";
       }
-      else ROS_WARN_THROTTLE(1.0, "ROUTE_CMD_STALE");
+      else
+      {
+        selection_reason = "ROUTE_STALE";
+        ROS_WARN_THROTTLE(1.0, "ROUTE_CMD_STALE");
+      }
       break;
 
     case CommandOwner::SCAN:
@@ -255,6 +334,7 @@ void timerCallback(const ros::TimerEvent&)
       {
         target_cmd = latest_scan_cmd_;
         target_valid = true;
+        selection_reason = "SCAN_FRESH";
         if (!scan_takeover_forward_confirmed)
         {
           if (target_cmd.linear.x >= 0.0)
@@ -285,19 +365,27 @@ void timerCallback(const ros::TimerEvent&)
           // commands beyond this bounded window.
           target_cmd = last_output_cmd_;
           target_valid = true;
+          selection_reason = "SCAN_HANDOFF_HOLD";
         }
         else
         {
           target_cmd = zeroCommand();
           target_valid = true;
+          selection_reason = "SCAN_WAITING_READY";
         }
         ROS_WARN_THROTTLE(1.0, "SCAN_TAKEOVER_WAITING_READY handoff_age=%.3f", handoff_age);
       }
       else if (!scan_cmd_after_handoff)
+      {
+        selection_reason = "SCAN_WAITING_COMMAND";
         ROS_WARN_THROTTLE(1.0, "SCAN_CMD_WAITING handoff_age=%.3f",
             now_sec - owner_change_stamp_sec_);
+      }
       else
+      {
+        selection_reason = "SCAN_STALE";
         ROS_WARN_THROTTLE(1.0, "SCAN_CMD_STALE");
+      }
       // If SCAN command not ready yet: target remains zero, and we slew
       // down from the current velocity to zero.
       break;
@@ -325,6 +413,8 @@ void timerCallback(const ros::TimerEvent&)
   output.linear.y = out_vy;
   output.angular.z = out_yaw;
 
+  logOutputCommand(output, target_cmd, owner, target_valid,
+      selection_reason, now_sec);
   cmd_vel_pub_.publish(output);
   last_output_cmd_ = output;
   last_publish_stamp_sec_ = now_sec;

@@ -89,6 +89,28 @@ enum class CommandSource : std::uint8_t
   RECOVERY
 };
 
+/** @brief Convert CommandSource to a stable diagnostic name. */
+inline const char* commandSourceName(CommandSource value) noexcept
+{
+  switch (value)
+  {
+    case CommandSource::NONE: return "NONE";
+    case CommandSource::IDLE_STOP: return "IDLE_STOP";
+    case CommandSource::PLANNING_STOP: return "PLANNING_STOP";
+    case CommandSource::FAILED_STOP: return "FAILED_STOP";
+    case CommandSource::TRACKING_STOP: return "TRACKING_STOP";
+    case CommandSource::PLANNER: return "PLANNER";
+    case CommandSource::START_ALIGN: return "START_ALIGN";
+    case CommandSource::GOAL_ALIGN: return "GOAL_ALIGN";
+    case CommandSource::PAUSE_STOP: return "PAUSE_STOP";
+    case CommandSource::CANCEL_STOP: return "CANCEL_STOP";
+    case CommandSource::SAFETY_SLOW: return "SAFETY_SLOW";
+    case CommandSource::SAFETY_STOP: return "SAFETY_STOP";
+    case CommandSource::RECOVERY: return "RECOVERY";
+  }
+  return "UNKNOWN";
+}
+
 // =============================================================================
 // 4.5 规划动作类型
 // =============================================================================

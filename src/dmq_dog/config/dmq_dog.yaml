@@ -57,6 +57,9 @@ driver_motion:
   prefer_forward_motion: true
   lateral_to_yaw_gain: 1.2
   max_yaw_rate: 0.65
+  lateral_filter_alpha: 0.20
+  max_yaw_accel: 0.80
+  max_yaw_decel: 1.20
   turn_only_angle_deg: 25.0
 
 frames:

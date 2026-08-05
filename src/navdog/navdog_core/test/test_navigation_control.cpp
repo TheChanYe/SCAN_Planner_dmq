@@ -231,6 +231,37 @@ TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
+TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.4;
+  config.heading_turn_only_threshold_rad = 0.45;
+  config.max_vx = 0.5;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.4;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 1.0;
+  p2.y = 1.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 0.7, 1.3, 0.0);
+  progress.projected_x = 0.7;
+  const RobotState robot = makeRobot(0.7, 0.0, 0.0);
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd =
+      follower.update(task, robot, progress, 0.4, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
+}
+
 TEST(RouteFollowerTest, RejectsProgressRegression)
 {
   RouteFollowerConfig config{};

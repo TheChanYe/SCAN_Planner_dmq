@@ -225,8 +225,15 @@ VelocityCommand RouteFollower::update(
   const double ex_world = look_x - robot.x;
   const double ey_world = look_y - robot.y;
 
+  // Aim at the lookahead point instead of using the tangent of whichever
+  // polyline segment contains it. Segment tangents jump at every waypoint
+  // and made the physical dog stop and realign at otherwise gentle corners.
+  const double target_distance = std::hypot(ex_world, ey_world);
+  const double desired_yaw = target_distance > kEpsilon
+      ? std::atan2(ey_world, ex_world)
+      : look_yaw;
   const double heading_error =
-      normalizeAngle(look_yaw - robot.yaw);
+      normalizeAngle(desired_yaw - robot.yaw);
 
   const bool aligned = isYawAligned(heading_error);
 

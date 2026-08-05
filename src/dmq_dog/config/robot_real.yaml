@@ -74,6 +74,9 @@ driver_motion:
   prefer_forward_motion: true
   lateral_to_yaw_gain: 1.2
   max_yaw_rate: 0.65
+  lateral_filter_alpha: 0.20
+  max_yaw_accel: 0.80
+  max_yaw_decel: 1.20
   turn_only_angle_deg: 25.0
 
 frames:
@@ -139,7 +142,9 @@ route_follower:
   kp_x: 0.80
   kp_y: 0.60
   kp_yaw: 1.20
-  heading_turn_only_threshold_rad: 0.20
+  # Stop to rotate only for a genuine sharp turn; ordinary waypoint corners
+  # are followed continuously using the lookahead target.
+  heading_turn_only_threshold_rad: 0.45
   max_vx: 0.50
 
 route_corridor_observation:

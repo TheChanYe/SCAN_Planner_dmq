@@ -21,6 +21,13 @@ namespace
 
 constexpr double kPi = 3.14159265358979323846;
 
+enum class MotionClass
+{
+  STOP,
+  TURN,
+  DRIVE
+};
+
 template <typename T>
 T clampValue(const T value, const T limit)
 {
@@ -38,20 +45,23 @@ double applyMinimumEffectiveVelocity(const double value,
   return std::copysign(minimum_effective, value);
 }
 
-void preferForwardMotion(double& vx, double& vy, double& yaw_rate,
-                         const double lateral_to_yaw_gain,
-                         const double turn_only_angle_rad)
+MotionClass classifyMotion(const double vx, const double vy,
+                           const double yaw_rate)
 {
-  if (std::fabs(vy) < 1e-6) return;
+  if (std::hypot(vx, vy) > 0.02) return MotionClass::DRIVE;
+  if (std::fabs(yaw_rate) > 0.015) return MotionClass::TURN;
+  return MotionClass::STOP;
+}
 
-  // Convert the holonomic body-frame velocity direction into steering. This
-  // keeps SCAN's 2-D path intent while making the physical dog face its path.
-  const double motion_heading_error = std::atan2(vy, std::fabs(vx));
-  yaw_rate += lateral_to_yaw_gain * motion_heading_error;
-  vy = 0.0;
-
-  if (std::fabs(motion_heading_error) >= turn_only_angle_rad)
-    vx = 0.0;
+const char* motionClassName(const MotionClass value)
+{
+  switch (value)
+  {
+    case MotionClass::DRIVE: return "DRIVE";
+    case MotionClass::TURN: return "TURN";
+    case MotionClass::STOP:
+    default: return "STOP";
+  }
 }
 
 std::string normalizeFrameId(std::string frame_id)
@@ -175,6 +185,13 @@ private:
                lateral_to_yaw_gain_, lateral_to_yaw_gain_);
     pnh_.param("driver_motion/max_yaw_rate",
                forward_motion_max_yaw_rate_, forward_motion_max_yaw_rate_);
+    pnh_.param("driver_motion/lateral_filter_alpha",
+               lateral_filter_alpha_, lateral_filter_alpha_);
+    pnh_.param("driver_motion/max_yaw_accel",
+               max_yaw_accel_, max_yaw_accel_);
+    pnh_.param("driver_motion/max_yaw_decel",
+               max_yaw_decel_, max_yaw_decel_);
+    lateral_filter_alpha_ = std::max(0.0, std::min(1.0, lateral_filter_alpha_));
     double turn_only_angle_deg = turn_only_angle_rad_ * 180.0 / kPi;
     pnh_.param("driver_motion/turn_only_angle_deg",
                turn_only_angle_deg, turn_only_angle_deg);
@@ -277,15 +294,128 @@ private:
     navigation_cloud_pub_.publish(*msg);
   }
 
+  void resetMotionAdapter()
+  {
+    lateral_heading_error_ = 0.0;
+    lateral_filter_initialized_ = false;
+    published_yaw_rate_ = 0.0;
+    last_publish_time_ = ros::Time();
+  }
+
+  void adaptToForwardMotion(double& vx, double& vy, double& yaw_rate)
+  {
+    if (std::fabs(vy) < 1e-6)
+    {
+      lateral_heading_error_ *= (1.0 - lateral_filter_alpha_);
+      if (std::fabs(lateral_heading_error_) < 1e-4)
+        lateral_heading_error_ = 0.0;
+      return;
+    }
+
+    const double heading_error = std::atan2(vy, std::fabs(vx));
+    if (!lateral_filter_initialized_)
+    {
+      lateral_heading_error_ = heading_error;
+      lateral_filter_initialized_ = true;
+    }
+    else
+    {
+      lateral_heading_error_ += lateral_filter_alpha_ *
+          (heading_error - lateral_heading_error_);
+    }
+
+    // The planner is holonomic. Preserve its path intent while making the
+    // physical dog rotate toward that direction instead of walking sideways.
+    yaw_rate += lateral_to_yaw_gain_ * lateral_heading_error_;
+    vy = 0.0;
+    if (std::fabs(lateral_heading_error_) >= turn_only_angle_rad_)
+      vx = 0.0;
+  }
+
+  double limitPublishedYawRate(const double target, const ros::Time& now)
+  {
+    double dt = 1.0 / std::max(1.0, publish_rate_hz_);
+    if (!last_publish_time_.isZero())
+    {
+      const double measured_dt = (now - last_publish_time_).toSec();
+      if (measured_dt > 0.0 && measured_dt < 0.5) dt = measured_dt;
+    }
+    last_publish_time_ = now;
+
+    double result = published_yaw_rate_;
+    if (result * target < 0.0)
+    {
+      // A physical turn must pass through zero before reversing direction.
+      const double step = std::min(std::fabs(result), max_yaw_decel_ * dt);
+      result -= std::copysign(step, result);
+    }
+    else
+    {
+      const bool slowing = std::fabs(target) < std::fabs(result);
+      const double max_delta = (slowing ? max_yaw_decel_ : max_yaw_accel_) * dt;
+      result += clampValue(target - result, max_delta);
+    }
+
+    published_yaw_rate_ = result;
+    return result;
+  }
+
+  void logMqttControl(const geometry_msgs::Twist& raw_cmd,
+                      const double vx, const double vy,
+                      const double yaw_rate, const bool cmd_stale,
+                      const bool zero_command, const int status,
+                      const int error)
+  {
+    if (!watchdog_log_initialized_ || cmd_stale != last_logged_cmd_stale_)
+    {
+      if (cmd_stale)
+      {
+        ROS_WARN("MQTT_CMD_WATCHDOG state=STALE timeout=%.3f action=ZERO",
+            cmd_vel_timeout_sec_);
+      }
+      else
+      {
+        ROS_INFO("MQTT_CMD_WATCHDOG state=FRESH");
+      }
+      last_logged_cmd_stale_ = cmd_stale;
+      watchdog_log_initialized_ = true;
+    }
+
+    const MotionClass motion = classifyMotion(vx, vy, yaw_rate);
+    const char* reason = cmd_stale ? "CMD_STALE" :
+        (zero_command ? "INPUT_ZERO" :
+        (motion == MotionClass::TURN ? "TURN_ONLY" :
+        (motion == MotionClass::STOP ? "ADAPTER_ZERO" : "FORWARD")));
+
+    if (!mqtt_motion_log_initialized_ || motion != last_logged_mqtt_motion_)
+    {
+      ROS_INFO("MQTT_CTRL motion=%s reason=%s status=%d error=%d "
+               "raw=[%.3f %.3f %.3f] output=[%.3f %.3f %.3f]",
+          motionClassName(motion), reason, status, error,
+          raw_cmd.linear.x, raw_cmd.linear.y, raw_cmd.angular.z,
+          vx, vy, yaw_rate);
+      last_logged_mqtt_motion_ = motion;
+      mqtt_motion_log_initialized_ = true;
+    }
+
+    ROS_INFO_THROTTLE(1.0,
+        "MQTT_TRACE motion=%s reason=%s status=%d error=%d stale=%d "
+        "raw=[%.3f %.3f %.3f] output=[%.3f %.3f %.3f]",
+        motionClassName(motion), reason, status, error, cmd_stale ? 1 : 0,
+        raw_cmd.linear.x, raw_cmd.linear.y, raw_cmd.angular.z,
+        vx, vy, yaw_rate);
+  }
+
   void publishTimer(const ros::TimerEvent&)
   {
     geometry_msgs::Twist cmd;
     int error = 0;
     int status = 0;
+    bool cmd_stale = false;
+    const ros::Time now = ros::Time::now();
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      const ros::Time now = ros::Time::now();
-      const bool cmd_stale = latest_cmd_time_.isZero() ||
+      cmd_stale = latest_cmd_time_.isZero() ||
           (now - latest_cmd_time_).toSec() > cmd_vel_timeout_sec_;
       cmd = cmd_stale ? geometry_msgs::Twist{} : latest_cmd_;
 
@@ -306,9 +436,11 @@ private:
     double vx = cmd.linear.x;
     double vy = cmd.linear.y;
     double yaw_rate = cmd.angular.z;
+    const geometry_msgs::Twist raw_cmd = cmd;
+    const bool zero_command = std::fabs(vx) < 1e-6 &&
+        std::fabs(vy) < 1e-6 && std::fabs(yaw_rate) < 1e-6;
     if (prefer_forward_motion_)
-      preferForwardMotion(vx, vy, yaw_rate,
-          lateral_to_yaw_gain_, turn_only_angle_rad_);
+      adaptToForwardMotion(vx, vy, yaw_rate);
 
     vx = clampValue(vx, max_vx_);
     vy = clampValue(vy, max_vy_);
@@ -325,6 +457,20 @@ private:
       yaw_rate = applyMinimumEffectiveVelocity(
           yaw_rate, zero_threshold_yaw_rate_, min_effective_yaw_rate_);
     }
+    if (prefer_forward_motion_)
+    {
+      if (cmd_stale || zero_command)
+      {
+        resetMotionAdapter();
+        yaw_rate = 0.0;
+      }
+      else
+      {
+        yaw_rate = limitPublishedYawRate(yaw_rate, now);
+      }
+    }
+    logMqttControl(raw_cmd, vx, vy, yaw_rate, cmd_stale, zero_command,
+        status, error);
     mqtt_.publishControl(error, status, vx, vy, yaw_rate);
   }
 
@@ -439,7 +585,13 @@ private:
   double min_effective_yaw_rate_{0.03};
   double lateral_to_yaw_gain_{1.2};
   double forward_motion_max_yaw_rate_{0.65};
+  double lateral_filter_alpha_{0.20};
+  double max_yaw_accel_{0.80};
+  double max_yaw_decel_{1.20};
   double turn_only_angle_rad_{25.0 * kPi / 180.0};
+  double lateral_heading_error_{0.0};
+  double published_yaw_rate_{0.0};
+  ros::Time last_publish_time_;
   double dog_length_m_{0.60};
   double dog_width_m_{0.30};
   double dog_height_m_{0.30};
@@ -452,6 +604,11 @@ private:
   bool use_watchdog_error_{true};
   bool deadband_enabled_{true};
   bool prefer_forward_motion_{true};
+  bool lateral_filter_initialized_{false};
+  bool watchdog_log_initialized_{false};
+  bool last_logged_cmd_stale_{true};
+  bool mqtt_motion_log_initialized_{false};
+  MotionClass last_logged_mqtt_motion_{MotionClass::STOP};
 };
 
 }  // namespace

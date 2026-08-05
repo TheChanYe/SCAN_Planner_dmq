@@ -102,6 +102,9 @@ private:
   navdog::NavigationMode last_logged_mode_{navdog::NavigationMode::NONE};
   bool log_state_initialized_{false};
   bool log_mode_initialized_{false};
+  int last_logged_motion_class_{-1};
+  std::size_t last_logged_segment_index_{0};
+  bool log_progress_initialized_{false};
   navdog::NavState last_output_state_{navdog::NavState::IDLE};
   bool output_state_initialized_{false};
   std::uint64_t terminal_cleanup_sequence_{0};
