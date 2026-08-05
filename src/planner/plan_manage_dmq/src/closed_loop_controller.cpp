@@ -1,18 +1,23 @@
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include <Eigen/Eigen>
 #include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/UInt8.h>
 #include <tf/tf.h>
 
 #include "bspline_opt/uniform_bspline.h"
+#include "plan_manage_dmq/route_path_tracker.h"
 #include "scan_planner/Bspline.h"
 
 namespace
@@ -21,6 +26,8 @@ using scan_planner::UniformBspline;
 
 constexpr double kMaxVYawLimit = 1.0;
 constexpr double kTakeoverTimestampToleranceSec = 0.10;
+constexpr std::uint8_t kModeRouteFollow = 1;
+constexpr std::uint8_t kModeLocalAvoid = 2;
 
 ros::Publisher cmd_vel_pub;
 ros::Publisher execution_frozen_pub;
@@ -29,6 +36,8 @@ ros::Subscriber bspline_sub;
 ros::Subscriber odom_sub;
 ros::Subscriber reset_sub;
 ros::Subscriber takeover_sync_sub;
+ros::Subscriber route_path_sub;
+ros::Subscriber navigation_mode_sub;
 ros::Timer cmd_timer;
 
 bool receive_traj = false;
@@ -56,6 +65,9 @@ double max_vy;
 double max_vyaw;
 double finish_dist;
 std::string body_pose_topic;
+std::uint8_t navigation_mode = 0;
+scan_planner_dmq::RoutePathTrackerConfig route_tracker_config;
+std::unique_ptr<scan_planner_dmq::RoutePathTracker> route_tracker;
 
 bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, double &value)
 {
@@ -110,6 +122,30 @@ bool loadParams(const ros::NodeHandle &nh)
       "finish_dist",
       finish_dist);
   nh.param("takeover_anchor_tolerance", takeover_anchor_tolerance, 0.25);
+  nh.param("route_tracking/lookahead_distance_m",
+      route_tracker_config.lookahead_distance_m,
+      route_tracker_config.lookahead_distance_m);
+  nh.param("route_tracking/heading_lookahead_m",
+      route_tracker_config.heading_lookahead_m,
+      route_tracker_config.heading_lookahead_m);
+  nh.param("route_tracking/max_forward_search_m",
+      route_tracker_config.max_forward_search_m,
+      route_tracker_config.max_forward_search_m);
+  nh.param("route_tracking/near_goal_slowdown_m",
+      route_tracker_config.near_goal_slowdown_m,
+      route_tracker_config.near_goal_slowdown_m);
+  nh.param("route_tracking/kp_position",
+      route_tracker_config.kp_position,
+      route_tracker_config.kp_position);
+  nh.param("route_tracking/kp_yaw",
+      route_tracker_config.kp_yaw,
+      route_tracker_config.kp_yaw);
+  nh.param("route_tracking/max_vx",
+      route_tracker_config.max_vx,
+      route_tracker_config.max_vx);
+  nh.param("route_tracking/max_yaw_rate",
+      route_tracker_config.max_yaw_rate,
+      route_tracker_config.max_yaw_rate);
 
   if (!ok)
     return false;
@@ -169,6 +205,16 @@ bool loadParams(const ros::NodeHandle &nh)
     ROS_ERROR("[closed_loop_controller_dmq] takeover_anchor_tolerance must be finite and >= 0");
     ok = false;
   }
+  if (!std::isfinite(route_tracker_config.lookahead_distance_m) ||
+      route_tracker_config.lookahead_distance_m <= 0.0 ||
+      !std::isfinite(route_tracker_config.max_vx) ||
+      route_tracker_config.max_vx <= 0.0 ||
+      !std::isfinite(route_tracker_config.max_yaw_rate) ||
+      route_tracker_config.max_yaw_rate <= 0.0)
+  {
+    ROS_ERROR("[closed_loop_controller_dmq] invalid route_tracking configuration");
+    ok = false;
+  }
 
   if (!ok)
     return false;
@@ -199,6 +245,17 @@ bool loadParams(const ros::NodeHandle &nh)
       max_vx,
       max_vy,
       max_vyaw);
+
+  ROS_INFO(
+      "[closed_loop_controller_dmq] ROUTE_TRACK_CONFIG "
+      "lookahead=%.3f heading_lookahead=%.3f kp_pos=%.3f kp_yaw=%.3f "
+      "max_vx=%.3f max_yaw_rate=%.3f",
+      route_tracker_config.lookahead_distance_m,
+      route_tracker_config.heading_lookahead_m,
+      route_tracker_config.kp_position,
+      route_tracker_config.kp_yaw,
+      route_tracker_config.max_vx,
+      route_tracker_config.max_yaw_rate);
 
   return true;
 }
@@ -288,10 +345,54 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   takeover_sync_time = ros::Time();
   publishTakeoverReady(false);
   publishStop();
+  if (route_tracker) route_tracker->reset();
 
   ROS_WARN(
       "[closed_loop_controller_dmq] "
       "NATIVE_SCAN_CONTROLLER_RESET");
+}
+
+void routePathCallback(const nav_msgs::PathConstPtr& msg)
+{
+  if (!msg || msg->poses.size() < 2 || !route_tracker)
+  {
+    ROS_WARN_THROTTLE(1.0,
+        "[closed_loop_controller_dmq] reject empty route path");
+    return;
+  }
+
+  std::vector<Eigen::Vector3d> points;
+  points.reserve(msg->poses.size());
+  for (const auto& pose : msg->poses)
+  {
+    points.emplace_back(
+        pose.pose.position.x,
+        pose.pose.position.y,
+        pose.pose.position.z);
+  }
+
+  if (!route_tracker->setPath(points))
+  {
+    ROS_ERROR("[closed_loop_controller_dmq] ROUTE_TRACK_PATH_REJECTED points=%zu",
+        points.size());
+    return;
+  }
+
+  ROS_INFO("[closed_loop_controller_dmq] ROUTE_TRACK_PATH_ACCEPTED points=%zu",
+      points.size());
+}
+
+void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
+{
+  if (!msg) return;
+  const std::uint8_t previous_mode = navigation_mode;
+  navigation_mode = msg->data;
+  if (navigation_mode == kModeRouteFollow &&
+      previous_mode != kModeRouteFollow && route_tracker)
+  {
+    route_tracker->requestReacquire();
+    ROS_INFO("[closed_loop_controller_dmq] ROUTE_TRACK_REACQUIRE");
+  }
 }
 
 void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
@@ -422,7 +523,46 @@ void odomCallback(const nav_msgs::OdometryConstPtr &msg)
 
 void cmdCallback(const ros::TimerEvent &)
 {
-  if (!receive_traj || !have_odom)
+  if (!have_odom)
+  {
+    publishExecutionFrozen(false);
+    publishStop();
+    return;
+  }
+
+  if (navigation_mode == kModeRouteFollow)
+  {
+    publishExecutionFrozen(true);
+    if (!route_tracker)
+    {
+      publishStop();
+      return;
+    }
+
+    const auto route_output = route_tracker->update(odom_pos, odom_yaw);
+    if (!route_output.valid)
+    {
+      ROS_WARN_THROTTLE(1.0,
+          "[closed_loop_controller_dmq] ROUTE_TRACK_WAITING_PATH");
+      publishStop();
+      return;
+    }
+
+    geometry_msgs::Twist cmd;
+    cmd.linear.x = route_output.vx;
+    cmd.linear.y = 0.0;
+    cmd.angular.z = route_output.yaw_rate;
+    cmd_vel_pub.publish(cmd);
+    ROS_DEBUG_THROTTLE(1.0,
+        "ROUTE_TRACK_CONTROL progress=%.3f remaining=%.3f "
+        "target=(%.3f,%.3f) cmd=(%.3f,0.000,%.3f)",
+        route_output.progress_m, route_output.remaining_m,
+        route_output.target_x, route_output.target_y,
+        route_output.vx, route_output.yaw_rate);
+    return;
+  }
+
+  if (navigation_mode != kModeLocalAvoid || !receive_traj)
   {
     publishExecutionFrozen(false);
     publishStop();
@@ -537,12 +677,18 @@ int main(int argc, char **argv)
 
   if (!loadParams(nh))
     return 1;
+  route_tracker.reset(
+      new scan_planner_dmq::RoutePathTracker(route_tracker_config));
 
   bspline_sub = node.subscribe("/native_scan/planning/bspline", 10, bsplineCallback);
   odom_sub = node.subscribe(body_pose_topic, 20, odomCallback, ros::TransportHints().tcpNoDelay());
   reset_sub = node.subscribe("/native_scan/reset", 10, resetCallback);
   takeover_sync_sub = node.subscribe("/native_scan/takeover_sync", 10,
       takeoverSyncCallback);
+  route_path_sub = node.subscribe("/native_scan/initial_path", 1,
+      routePathCallback);
+  navigation_mode_sub = node.subscribe("/navdog/navigation_mode", 10,
+      navigationModeCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("/navdog/scan_cmd", 20);
   execution_frozen_pub = node.advertise<std_msgs::Bool>("/native_scan/planning/go2_execution_frozen", 10);
   takeover_ready_pub = node.advertise<std_msgs::Bool>("/native_scan/takeover_ready", 1, true);

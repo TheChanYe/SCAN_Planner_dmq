@@ -77,9 +77,20 @@ add_executable(open_loop_controller_dmq src/open_loop_controller.cpp)
 target_link_libraries(open_loop_controller_dmq ${catkin_LIBRARIES})
 add_dependencies(open_loop_controller_dmq ${catkin_EXPORTED_TARGETS})
 
-add_executable(closed_loop_controller_dmq src/closed_loop_controller.cpp)
+add_executable(closed_loop_controller_dmq
+  src/closed_loop_controller.cpp
+  src/route_path_tracker.cpp)
 target_link_libraries(closed_loop_controller_dmq ${catkin_LIBRARIES})
 add_dependencies(closed_loop_controller_dmq ${catkin_EXPORTED_TARGETS})
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_route_path_tracker
+    test/test_route_path_tracker.cpp
+    src/route_path_tracker.cpp)
+  if(TARGET test_route_path_tracker)
+    target_link_libraries(test_route_path_tracker ${catkin_LIBRARIES})
+  endif()
+endif()
 
 add_executable(go2_kinematic_sim_dmq src/go2_kinematic_sim.cpp)
 target_link_libraries(go2_kinematic_sim_dmq ${catkin_LIBRARIES})

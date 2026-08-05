@@ -35,7 +35,7 @@ enum class CommandOwner
 {
   NONE,
   ROUTE,
-  SCAN
+  TRACKER
 };
 
 enum class MotionClass
@@ -48,6 +48,8 @@ enum class MotionClass
 CommandOwner previous_owner_{CommandOwner::NONE};
 double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
+double route_follow_enter_stamp_sec_{0.0};
+double local_avoid_enter_stamp_sec_{0.0};
 bool scan_takeover_ready{false};
 bool scan_takeover_forward_confirmed{false};
 
@@ -66,7 +68,7 @@ const char* ownerName(CommandOwner owner)
   switch (owner)
   {
     case CommandOwner::ROUTE: return "ROUTE";
-    case CommandOwner::SCAN:  return "SCAN";
+    case CommandOwner::TRACKER: return "TRACKER";
     case CommandOwner::NONE:
     default:                  return "NONE";
   }
@@ -81,10 +83,9 @@ CommandOwner effectiveOwner()
       return CommandOwner::ROUTE;
 
     case navdog::NavState::TRACKING:
-      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-        return CommandOwner::ROUTE;
-      if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
-        return CommandOwner::SCAN;
+      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW ||
+          navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+        return CommandOwner::TRACKER;
       // mode NONE during TRACKING — grace period.
       return CommandOwner::NONE;
 
@@ -219,7 +220,20 @@ void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
 
 void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
+  const auto previous = navigation_mode_;
   navigation_mode_ = static_cast<navdog::NavigationMode>(msg->data);
+  if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW &&
+      previous != navdog::NavigationMode::ROUTE_FOLLOW)
+  {
+    route_follow_enter_stamp_sec_ = ros::Time::now().toSec();
+  }
+  else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID &&
+      previous != navdog::NavigationMode::LOCAL_AVOID)
+  {
+    local_avoid_enter_stamp_sec_ = ros::Time::now().toSec();
+    scan_takeover_ready = false;
+    scan_takeover_forward_confirmed = false;
+  }
 }
 
 void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& msg)
@@ -259,12 +273,12 @@ void timerCallback(const ros::TimerEvent&)
         last_output_cmd_.angular.z);
     limiter_initialized_ = true;
 
-    if (old_owner == CommandOwner::ROUTE && owner == CommandOwner::SCAN)
+    if (old_owner == CommandOwner::ROUTE && owner == CommandOwner::TRACKER)
     {
       scan_takeover_ready = false;
       scan_takeover_forward_confirmed = false;
     }
-    else if (owner != CommandOwner::SCAN)
+    else if (owner != CommandOwner::TRACKER)
     {
       scan_takeover_ready = false;
       scan_takeover_forward_confirmed = false;
@@ -324,12 +338,33 @@ void timerCallback(const ros::TimerEvent&)
       }
       break;
 
-    case CommandOwner::SCAN:
+    case CommandOwner::TRACKER:
     {
-      const bool scan_cmd_after_handoff =
-          scan_cmd_stamp_sec_ > owner_change_stamp_sec_ + kEpsilon;
       const bool scan_cmd_fresh =
           isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec);
+      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+      {
+        const bool route_track_cmd_after_handoff =
+            scan_cmd_stamp_sec_ >
+                std::max(owner_change_stamp_sec_,
+                         route_follow_enter_stamp_sec_) + kEpsilon;
+        if (route_track_cmd_after_handoff && scan_cmd_fresh)
+        {
+          target_cmd = latest_scan_cmd_;
+          target_valid = true;
+          selection_reason = "ROUTE_TRACK_FRESH";
+        }
+        else
+        {
+          selection_reason = route_track_cmd_after_handoff
+              ? "ROUTE_TRACK_STALE" : "ROUTE_TRACK_WAITING_COMMAND";
+          ROS_WARN_THROTTLE(1.0, "%s", selection_reason);
+        }
+        break;
+      }
+
+      const bool scan_cmd_after_handoff =
+          scan_cmd_stamp_sec_ > local_avoid_enter_stamp_sec_ + kEpsilon;
       if (scan_takeover_ready && scan_cmd_after_handoff && scan_cmd_fresh)
       {
         target_cmd = latest_scan_cmd_;
@@ -357,7 +392,7 @@ void timerCallback(const ros::TimerEvent&)
       }
       else if (!scan_takeover_ready)
       {
-        const double handoff_age = now_sec - owner_change_stamp_sec_;
+        const double handoff_age = now_sec - local_avoid_enter_stamp_sec_;
         if (handoff_age < scan_handoff_hold_sec)
         {
           // Preserve the actual last output briefly while prewarmed SCAN
@@ -379,7 +414,7 @@ void timerCallback(const ros::TimerEvent&)
       {
         selection_reason = "SCAN_WAITING_COMMAND";
         ROS_WARN_THROTTLE(1.0, "SCAN_CMD_WAITING handoff_age=%.3f",
-            now_sec - owner_change_stamp_sec_);
+            now_sec - local_avoid_enter_stamp_sec_);
       }
       else
       {

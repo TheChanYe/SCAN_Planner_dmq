@@ -156,6 +156,18 @@ route_follower:
   heading_turn_only_threshold_rad: 0.80
   max_vx: 0.40
 
+# Continuous controller for the original MQTT polyline. It publishes forward
+# velocity plus one yaw correction; lateral velocity is intentionally zero.
+route_tracking:
+  lookahead_distance_m: 0.60
+  heading_lookahead_m: 0.40
+  max_forward_search_m: 2.50
+  near_goal_slowdown_m: 0.80
+  kp_position: 0.70
+  kp_yaw: 1.50
+  max_vx: 0.30
+  max_yaw_rate: 0.65
+
 route_corridor_observation:
   map_timeout_sec: 1.50
   max_progress_lag_m: 0.50

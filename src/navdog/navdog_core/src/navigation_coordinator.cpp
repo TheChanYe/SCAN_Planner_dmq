@@ -372,6 +372,10 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
       resetNearGoalBlockedTimer();
       safety_supervisor_.reset();
     }
+    else
+    {
+      state_ = NavState::GOAL_ALIGN;
+    }
 
     return result.command;
   }
@@ -946,6 +950,42 @@ CoreOutput NavigationCoordinator::update(
         }
       }
       break;
+
+      case NavState::GOAL_ALIGN:
+      {
+        if (!task_manager_.hasActiveTask() || !route_manager_.hasRoute())
+        {
+          enterFailedState();
+          final_cmd = makeZeroCommand(CommandSource::FAILED_STOP, now_sec);
+          break;
+        }
+
+        const RouteProgressOutput progress_output =
+            route_manager_.updateProgress(input.robot, now_sec);
+        if (progress_output.result != RouteProgressResult::VALID)
+        {
+          final_cmd = makeZeroCommand(CommandSource::GOAL_ALIGN, now_sec);
+          break;
+        }
+
+        output.route_progress = progress_output.progress;
+        const auto result = goal_controller_.update(
+            route_manager_.taskView(),
+            input.robot,
+            progress_output.progress,
+            task_manager_.session().max_vx,
+            std::min(config_.limits.max_yaw_rate,
+                     config_.goal_controller.near_goal_max_w),
+            now_sec);
+        final_cmd = result.command;
+        if (result.finished)
+        {
+          state_ = NavState::SUCCEEDED;
+          resetNearGoalBlockedTimer();
+          safety_supervisor_.reset();
+        }
+        break;
+      }
 
       case NavState::FAILED:
         final_cmd =

@@ -33,7 +33,8 @@
     <arg name="config_file" value="$(arg navigation_config)"/>
   </include>
 
-  <!-- Chooses route-follow or SCAN velocity and is the sole /cmd_vel source. -->
+  <!-- Selects alignment or unified trajectory tracking and is the sole
+       /cmd_vel source. TRACKING uses one controller for route and avoidance. -->
   <node pkg="navdog_runtime" type="cmd_vel_owner_mux"
         name="cmd_vel_owner_mux" output="screen">
     <param name="route_cmd_timeout" value="0.30"/>
