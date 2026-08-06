@@ -17,6 +17,8 @@ public:
   void reset() noexcept;
   /** @brief 处理 START/CANCEL/PAUSE/RESUME 等事件并返回一次可观察的会话转换。 */
   TaskTransition handleEvent(NavigationEvent event);
+  /** @brief 导航自然终止后关闭活动会话，保留 sequence 用于终态上报。 */
+  bool complete(std::uint64_t sequence) noexcept;
   const TaskSession& session() const noexcept; // 获取当前任务会话状态
   bool hasActiveTask() const noexcept; // 检查是否有正在执行的任务
 

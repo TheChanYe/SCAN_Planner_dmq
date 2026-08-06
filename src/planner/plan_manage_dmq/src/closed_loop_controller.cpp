@@ -106,6 +106,7 @@ bool loadParams(const ros::NodeHandle &nh)
       nh,
       "max_vx",
       max_vx);
+  nh.param("speed_limits/local_avoid_linear_mps", max_vx, max_vx);
 
   ok &= loadRequiredParam(
       nh,
@@ -141,6 +142,9 @@ bool loadParams(const ros::NodeHandle &nh)
       route_tracker_config.kp_yaw,
       route_tracker_config.kp_yaw);
   nh.param("route_tracking/max_vx",
+      route_tracker_config.max_vx,
+      route_tracker_config.max_vx);
+  nh.param("speed_limits/route_follow_linear_mps",
       route_tracker_config.max_vx,
       route_tracker_config.max_vx);
   nh.param("route_tracking/max_yaw_rate",

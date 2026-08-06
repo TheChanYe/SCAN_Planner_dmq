@@ -24,6 +24,8 @@ public:
   {
     VelocityCommand command{};
     bool finished{false};
+    bool position_lost{false};
+    bool timed_out{false};
   };
 
   Result update(
@@ -39,6 +41,8 @@ public:
 
 private:
   GoalControllerConfig config_{};
+  double align_started_sec_{0.0};
+  bool align_timer_active_{false};
 };
 
 }  // namespace navdog

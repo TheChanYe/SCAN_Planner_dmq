@@ -1355,6 +1355,64 @@ TEST(GoalControllerTest, GoalYawAlignOnlyAfterPositionReached)
   EXPECT_NE(result.command.yaw_rate, 0.0);
 }
 
+TEST(GoalControllerTest, RequestsRouteReacquisitionAfterPositionDrift)
+{
+  GoalControllerConfig config{};
+  config.finish_dist = 0.15;
+  config.goal_align_reacquire_dist = 0.25;
+  GoalController controller(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RobotState robot = makeRobot(9.70, 0.0, kPi / 4.0);
+  const RouteProgress progress = makeProgress(1, 9.70, 0.30, 0.0);
+
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0);
+
+  EXPECT_TRUE(result.position_lost);
+  EXPECT_FALSE(result.finished);
+  EXPECT_DOUBLE_EQ(result.command.vx, 0.0);
+  EXPECT_DOUBLE_EQ(result.command.yaw_rate, 0.0);
+}
+
+TEST(GoalControllerTest, UsesEffectiveMinimumYawRate)
+{
+  GoalControllerConfig config{};
+  config.finish_dist = 0.15;
+  config.finish_yaw_tolerance_rad = 0.01;
+  config.goal_align_min_yaw_rate = 0.03;
+  GoalController controller(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RobotState robot = makeRobot(10.0, 0.0, -0.02);
+  const RouteProgress progress = makeProgress(1, 10.0, 0.0, 0.0);
+
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0);
+
+  EXPECT_FALSE(result.finished);
+  EXPECT_DOUBLE_EQ(result.command.yaw_rate, 0.03);
+}
+
+TEST(GoalControllerTest, FinishesWhenAlignmentTimesOut)
+{
+  GoalControllerConfig config{};
+  config.finish_dist = 0.15;
+  config.finish_yaw_tolerance_rad = 0.01;
+  config.goal_align_timeout_sec = 2.0;
+  GoalController controller(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RobotState robot = makeRobot(10.0, 0.0, -0.2);
+  const RouteProgress progress = makeProgress(1, 10.0, 0.0, 0.0);
+
+  EXPECT_FALSE(controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0).finished);
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 3.0);
+
+  EXPECT_TRUE(result.finished);
+  EXPECT_TRUE(result.timed_out);
+  EXPECT_DOUBLE_EQ(result.command.yaw_rate, 0.0);
+}
+
 }  // namespace
 }  // namespace navdog
 

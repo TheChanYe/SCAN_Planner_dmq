@@ -39,6 +39,8 @@ GoalController::GoalController(
 
 void GoalController::reset() noexcept
 {
+  align_started_sec_ = 0.0;
+  align_timer_active_ = false;
 }
 
 // =============================================================================
@@ -108,13 +110,38 @@ GoalController::Result GoalController::update(
       std::abs(yaw_error) <=
       config_.finish_yaw_tolerance_rad;
 
-  if (position_reached && yaw_reached)
+  if (dist > std::max(config_.finish_dist,
+                      config_.goal_align_reacquire_dist))
+  {
+    result.command.vx = 0.0;
+    result.command.vy = 0.0;
+    result.command.yaw_rate = 0.0;
+    result.command.valid = true;
+    result.position_lost = true;
+    reset();
+    return result;
+  }
+
+  if (!align_timer_active_ && std::isfinite(now_sec))
+  {
+    align_started_sec_ = now_sec;
+    align_timer_active_ = true;
+  }
+
+  const double align_elapsed = now_sec - align_started_sec_;
+  const bool align_timed_out = align_timer_active_ &&
+      std::isfinite(align_elapsed) &&
+      config_.goal_align_timeout_sec > 0.0 &&
+      align_elapsed >= config_.goal_align_timeout_sec;
+
+  if ((position_reached && yaw_reached) || align_timed_out)
   {
     result.command.vx = 0.0;
     result.command.vy = 0.0;
     result.command.yaw_rate = 0.0;
     result.command.valid = true;
     result.finished = true;
+    result.timed_out = align_timed_out;
     return result;
   }
 
@@ -129,6 +156,14 @@ GoalController::Result GoalController::update(
       std::max(-effective_max_w,
           std::min(effective_max_w,
               config_.near_goal_kp_w * yaw_error));
+
+  const double minimum_yaw_rate = std::min(
+      effective_max_w, std::max(0.0, config_.goal_align_min_yaw_rate));
+  if (!yaw_reached && minimum_yaw_rate > 0.0 &&
+      std::abs(result.command.yaw_rate) < minimum_yaw_rate)
+  {
+    result.command.yaw_rate = std::copysign(minimum_yaw_rate, yaw_error);
+  }
 
   if (!std::isfinite(result.command.vx))
     result.command.vx = 0.0;

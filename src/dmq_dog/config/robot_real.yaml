@@ -52,6 +52,12 @@ limits:
   max_accel_y: 0.25
   max_accel_yaw: 0.80
 
+# Final planar speed caps selected by navigation mode. These are applied by
+# cmd_vel_owner_mux immediately before /cmd_vel is published.
+speed_limits:
+  route_follow_linear_mps: 0.70
+  local_avoid_linear_mps: 0.52
+
 # Hard limits applied immediately before publishing to the physical dog.
 driver_limits:
   max_vx: 3.0
@@ -129,6 +135,11 @@ grid_map:
   max_ray_length: 5.0
   vis_height: 0.30
 
+optimization:
+  # Bound one B-spline solve so the single-threaded SCAN ROS callback queue
+  # can continue processing reset, path and takeover messages.
+  max_wall_time_sec: 0.60
+
 route_corridor:
   lookahead_distance_m: 2.5
   half_width_m: 0.60
@@ -142,6 +153,10 @@ navigation_mode:
   exit_front_clearance_m: 2.50
   exit_left_clearance_m: 0.60
   exit_right_clearance_m: 0.60
+
+scan_recovery:
+  takeover_timeout_sec: 1.50
+  max_attempts: 2
 
 route_follower:
   lookahead_distance_m: 0.60
@@ -198,4 +213,8 @@ goal_controller:
   near_goal_max_w: 0.65
   obstacle_finish_timeout_sec: 6.0
   finish_dist: 0.20
+  goal_align_reacquire_dist: 0.30
+  goal_align_timeout_sec: 3.0
+  # Must remain above driver_deadband.zero_threshold_yaw_rate.
+  goal_align_min_yaw_rate: 0.03
   finish_yaw_tolerance_deg: 10.0

@@ -46,6 +46,8 @@ public:
   void stop();
   /** @brief 由 Runtime 线程弹出最早事件；没有事件返回 false。 */
   bool popEvent(navdog_task::NavigationEvent& event);
+  /** @brief 导航正常到达后解除路线锁；ctrl=0 的取消语义保持不变。 */
+  void completeActiveTask();
   /** @brief 原样发布既有状态协议 payload，不解释其 JSON 业务含义。 */
   void publishStatus(const std::string& payload);
   int consumeProtocolError();
@@ -56,21 +58,26 @@ private:
   static void onConnect(struct mosquitto*, void*, int);
   static void onDisconnect(struct mosquitto*, void*, int);
   static void onMessage(struct mosquitto*, void*, const struct mosquitto_message*);
+  /** @brief 暂停/恢复事件入队；任务启停使用 enqueueTask 保证协议锁。 */
+  void enqueue(const navdog_task::NavigationEvent& event);
   /**
-   * @brief 在互斥保护下入队；满队列丢弃最早事件以保留最新控制意图。
-   * cancel_first 表示已解析的取消事件应先清空尚未消费的旧意图，而非直接
-   * 改变导航状态；状态改变仍由 Runtime 调用 Coordinator 完成。
+   * @brief 实体狗协议的活动任务锁：ctrl=0 或导航正常到达时解锁。
+   * 返回 false 表示当前任务执行期间的重复路线已被协议层忽略。
    */
-  void enqueue(const navdog_task::NavigationEvent& event, bool cancel_first);
+  bool enqueueTask(navdog_task::NavigationEvent& event, bool charging,
+                   std::uint64_t& active_sequence);
+  void pushEventLocked(const navdog_task::NavigationEvent& event);
 
   MqttBridgeConfig config_{};
   struct mosquitto* client_{nullptr};
   mutable std::mutex mutex_{};
   std::deque<navdog_task::NavigationEvent> events_{};
   std::uint64_t next_sequence_{1};
+  std::uint64_t active_sequence_{0};
   int protocol_errors_{0};
   bool started_{false};
   bool charging_reserved_{false};
+  bool route_locked_{false};
   std::string resolved_client_id_;
 };
 

@@ -1391,8 +1391,19 @@ namespace scan_planner
 
     const LocalTrajData previous_local_trajectory =
         planner_manager_->local_data_;
+    const ros::WallTime replan_started = ros::WallTime::now();
+    ROS_DEBUG("SCAN_REPLAN_BEGIN start=(%.3f,%.3f) target=(%.3f,%.3f)",
+        start_pt_(0), start_pt_(1), local_target_pt_(0), local_target_pt_(1));
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
+    const double replan_elapsed_ms =
+        (ros::WallTime::now() - replan_started).toSec() * 1000.0;
+    if (replan_elapsed_ms >= 200.0)
+      ROS_WARN("SCAN_REPLAN_SLOW elapsed_ms=%.1f success=%d",
+          replan_elapsed_ms, plan_success ? 1 : 0);
+    else
+      ROS_DEBUG("SCAN_REPLAN_END elapsed_ms=%.1f success=%d",
+          replan_elapsed_ms, plan_success ? 1 : 0);
     have_new_target_ = false;
 
     if (plan_success)

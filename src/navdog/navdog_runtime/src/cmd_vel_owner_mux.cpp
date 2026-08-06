@@ -20,6 +20,8 @@ double scan_cmd_timeout_sec = 0.30;
 double publish_rate_hz = 50.0;
 double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
+double route_follow_linear_speed_mps = 0.30;
+double local_avoid_linear_speed_mps = 0.30;
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -124,6 +126,20 @@ bool isFresh(double stamp_sec, double now_sec, double timeout_sec)
 geometry_msgs::Twist zeroCommand()
 {
   return geometry_msgs::Twist{};
+}
+
+void limitLinearSpeed(geometry_msgs::Twist& command, double max_speed,
+                      const char* mode_name)
+{
+  const double speed = std::hypot(command.linear.x, command.linear.y);
+  if (speed <= max_speed || speed <= kEpsilon) return;
+
+  const double scale = max_speed / speed;
+  command.linear.x *= scale;
+  command.linear.y *= scale;
+  ROS_INFO_THROTTLE(1.0,
+      "CMD_LINEAR_LIMIT mode=%s requested=%.3f limited=%.3f",
+      mode_name, speed, max_speed);
 }
 
 MotionClass classifyMotion(const geometry_msgs::Twist& cmd)
@@ -431,6 +447,16 @@ void timerCallback(const ros::TimerEvent&)
       break;
   }
 
+  if (target_valid && owner == CommandOwner::TRACKER)
+  {
+    if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+      limitLinearSpeed(target_cmd, route_follow_linear_speed_mps,
+          "ROUTE_FOLLOW");
+    else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+      limitLinearSpeed(target_cmd, local_avoid_linear_speed_mps,
+          "LOCAL_AVOID");
+  }
+
   // --- Apply velocity slew limiting ---
   double dt = (last_publish_stamp_sec_ > 0.0)
       ? (now_sec - last_publish_stamp_sec_)
@@ -469,6 +495,10 @@ int main(int argc, char** argv)
   private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
   private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
   private_nh.param("scan_handoff_hold_sec", scan_handoff_hold_sec, 0.10);
+  private_nh.param("speed_limits/route_follow_linear_mps",
+      route_follow_linear_speed_mps, 0.30);
+  private_nh.param("speed_limits/local_avoid_linear_mps",
+      local_avoid_linear_speed_mps, 0.30);
 
   // Slew limiter params
   navdog_runtime::VelocitySlewLimiter::Config slew_config;
@@ -483,7 +513,11 @@ int main(int argc, char** argv)
   if (!std::isfinite(route_cmd_timeout_sec) || route_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(scan_cmd_timeout_sec) || scan_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(publish_rate_hz) || publish_rate_hz <= 0.0 ||
-      !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0)
+      !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0 ||
+      !std::isfinite(route_follow_linear_speed_mps) ||
+      route_follow_linear_speed_mps <= 0.0 ||
+      !std::isfinite(local_avoid_linear_speed_mps) ||
+      local_avoid_linear_speed_mps <= 0.0)
   {
     ROS_FATAL("cmd_vel_owner_mux: invalid configuration");
     return 1;
@@ -510,9 +544,11 @@ int main(int argc, char** argv)
 
   ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f "
            "rate=%.1f grace=%.2f scan_hold=%.2f "
+           "route_linear=%.2f avoid_linear=%.2f "
            "handoff accel_x=%.2f decel_x=%.2f accel_yaw=%.2f decel_yaw=%.2f",
       route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz,
       mode_sync_grace_sec, scan_handoff_hold_sec,
+      route_follow_linear_speed_mps, local_avoid_linear_speed_mps,
       slew_config.accel_x, slew_config.decel_x,
       slew_config.accel_yaw, slew_config.decel_yaw);
 

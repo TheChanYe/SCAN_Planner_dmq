@@ -117,6 +117,9 @@ namespace scan_planner
     //
     double dist0_;             // safe distance
     double max_vel_, max_acc_; // dynamic limits
+    double max_wall_time_sec_{0.60};
+    ros::WallTime optimize_started_wall_{};
+    bool optimize_timed_out_{false};
 
     int variable_num_;              // optimization variables
     int iter_num_;                  // iteration of the solver

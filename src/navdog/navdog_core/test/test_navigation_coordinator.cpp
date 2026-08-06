@@ -6,6 +6,18 @@
 
 namespace navdog
 {
+class NavigationCoordinatorTestPeer
+{
+public:
+  static void enterCompletedState(NavigationCoordinator& coordinator)
+  {
+    const std::uint64_t sequence =
+        coordinator.task_manager_.session().sequence;
+    ASSERT_TRUE(coordinator.task_manager_.complete(sequence));
+    coordinator.state_ = NavState::SUCCEEDED;
+  }
+};
+
 namespace
 {
 NavigationEvent startEvent()
@@ -67,6 +79,24 @@ TEST(NavigationCoordinator, CancelClearsTaskAndRoute)
   NavigationCoordinator coordinator;
   ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
   NavigationEvent cancel{}; cancel.type = NavigationEventType::CANCEL_TASK;
+  EXPECT_EQ(TaskHandleResult::CANCELLED, coordinator.handleEvent(cancel));
+  EXPECT_EQ(NavState::IDLE, coordinator.state());
+  EXPECT_FALSE(coordinator.hasActiveTask());
+  EXPECT_FALSE(coordinator.routeManager().hasRoute());
+}
+
+TEST(NavigationCoordinator, CancelAcknowledgesCompletedTaskAndReturnsIdle)
+{
+  NavigationCoordinator coordinator;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  NavigationCoordinatorTestPeer::enterCompletedState(coordinator);
+
+  ASSERT_FALSE(coordinator.hasActiveTask());
+  ASSERT_EQ(NavState::SUCCEEDED, coordinator.state());
+  ASSERT_TRUE(coordinator.routeManager().hasRoute());
+
+  NavigationEvent cancel{};
+  cancel.type = NavigationEventType::CANCEL_TASK;
   EXPECT_EQ(TaskHandleResult::CANCELLED, coordinator.handleEvent(cancel));
   EXPECT_EQ(NavState::IDLE, coordinator.state());
   EXPECT_FALSE(coordinator.hasActiveTask());

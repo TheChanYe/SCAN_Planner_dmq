@@ -37,6 +37,7 @@
        /cmd_vel source. TRACKING uses one controller for route and avoidance. -->
   <node pkg="navdog_runtime" type="cmd_vel_owner_mux"
         name="cmd_vel_owner_mux" output="screen">
+    <rosparam command="load" file="$(arg navigation_config)"/>
     <param name="route_cmd_timeout" value="0.30"/>
     <param name="scan_cmd_timeout" value="0.30"/>
     <param name="mode_sync_grace_sec" value="0.10"/>

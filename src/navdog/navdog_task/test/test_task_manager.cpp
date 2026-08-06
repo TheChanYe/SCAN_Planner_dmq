@@ -66,3 +66,17 @@ TEST(TaskManager, ResetDoesNotReuseSequence)
   manager.reset();
   EXPECT_EQ(2u, manager.handleEvent(startEvent()).session.sequence);
 }
+
+TEST(TaskManager, CompletedTaskAllowsNextStartWithoutCancel)
+{
+  navdog_task::TaskManager manager;
+  const auto first = manager.handleEvent(startEvent());
+
+  ASSERT_TRUE(manager.hasActiveTask());
+  EXPECT_TRUE(manager.complete(first.session.sequence));
+  EXPECT_FALSE(manager.hasActiveTask());
+
+  const auto second = manager.handleEvent(startEvent());
+  EXPECT_EQ(navdog_task::TaskHandleResult::STARTED, second.result);
+  EXPECT_GT(second.session.sequence, first.session.sequence);
+}

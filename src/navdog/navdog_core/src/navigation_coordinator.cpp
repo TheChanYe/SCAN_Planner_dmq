@@ -366,6 +366,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
     if (result.finished)
     {
       state_ = NavState::SUCCEEDED;
+      task_manager_.complete(task_manager_.session().sequence);
 
       // Full cleanup: do not leave a stale local trajectory / safety state
       // after the task is successfully completed.
@@ -451,6 +452,7 @@ VelocityCommand NavigationCoordinator::executeMode(
         config_.goal_controller.obstacle_finish_timeout_sec)
     {
       state_ = NavState::SUCCEEDED;
+      task_manager_.complete(task_manager_.session().sequence);
       resetNearGoalBlockedTimer();
       safety_supervisor_.reset();
     }
@@ -506,8 +508,17 @@ TaskHandleResult NavigationCoordinator::handleEvent(
     NavigationEvent event)
 {
   const std::uint64_t prior_sequence = task_manager_.session().sequence;
+  const bool terminal_cancel_ack =
+      event.type == NavigationEventType::CANCEL_TASK &&
+      !task_manager_.hasActiveTask() &&
+      (state_ == NavState::SUCCEEDED || state_ == NavState::FAILED);
   navdog_task::TaskTransition task_output =
       task_manager_.handleEvent(std::move(event));
+  if (terminal_cancel_ack &&
+      task_output.result == TaskHandleResult::CANCEL_IGNORED)
+  {
+    task_output.result = TaskHandleResult::CANCELLED;
+  }
   /* 任务处理结果，输入任务 */
   switch (task_output.result)
   {
@@ -978,9 +989,14 @@ CoreOutput NavigationCoordinator::update(
                      config_.goal_controller.near_goal_max_w),
             now_sec);
         final_cmd = result.command;
-        if (result.finished)
+        if (result.position_lost)
+        {
+          state_ = NavState::TRACKING;
+        }
+        else if (result.finished)
         {
           state_ = NavState::SUCCEEDED;
+          task_manager_.complete(task_manager_.session().sequence);
           resetNearGoalBlockedTimer();
           safety_supervisor_.reset();
         }

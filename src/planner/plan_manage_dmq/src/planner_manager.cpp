@@ -50,6 +50,7 @@ namespace scan_planner
     /* read algorithm parameters */
 
     nh.param("manager/max_vel", pp_.max_vel_, -1.0);
+    nh.param("speed_limits/local_avoid_linear_mps", pp_.max_vel_, pp_.max_vel_);
     nh.param("manager/max_acc", pp_.max_acc_, -1.0);
     nh.param("manager/max_jerk", pp_.max_jerk_, -1.0);
     nh.param("optimization/vel_tolerance", pp_.vel_tolerance_, 1.0);

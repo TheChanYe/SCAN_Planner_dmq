@@ -65,6 +65,9 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("goal_controller/near_goal_max_w", c.goal_controller.near_goal_max_w);
   LOAD("goal_controller/obstacle_finish_timeout_sec", c.goal_controller.obstacle_finish_timeout_sec);
   LOAD("goal_controller/finish_dist", c.goal_controller.finish_dist);
+  LOAD("goal_controller/goal_align_reacquire_dist", c.goal_controller.goal_align_reacquire_dist);
+  LOAD("goal_controller/goal_align_timeout_sec", c.goal_controller.goal_align_timeout_sec);
+  LOAD("goal_controller/goal_align_min_yaw_rate", c.goal_controller.goal_align_min_yaw_rate);
   LOAD("goal_controller/finish_yaw_tolerance_deg", c.goal_controller.finish_yaw_tolerance_deg);
   app.runtime_io.control_rate_hz = c.runtime.control_rate_hz;
   app.runtime_io.status_rate_hz = c.runtime.status_rate_hz;

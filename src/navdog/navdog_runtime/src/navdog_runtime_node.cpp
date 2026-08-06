@@ -65,6 +65,16 @@ bool NavdogRuntimeNode::initialize()
     ROS_ERROR("invalid runtime rates");
     return false;
   }
+  private_nh_.param("scan_recovery/takeover_timeout_sec",
+      scan_takeover_timeout_sec_, 1.5);
+  private_nh_.param("scan_recovery/max_attempts",
+      scan_recovery_max_attempts_, 2);
+  if (!std::isfinite(scan_takeover_timeout_sec_) ||
+      scan_takeover_timeout_sec_ <= 0.0 || scan_recovery_max_attempts_ < 0)
+  {
+    ROS_ERROR("invalid SCAN recovery configuration");
+    return false;
+  }
 
   // Create a standalone GridMap for corridor/obstacle evaluation.
   // The native SCAN node (scan_planner_dmq_node) owns its own GridMap.
@@ -87,6 +97,9 @@ bool NavdogRuntimeNode::initialize()
   odom_subscriber_ = nh_.subscribe(io.odom_topic, 10,
       &NavdogRuntimeNode::odomCallback, this,
       ros::TransportHints().tcpNoDelay());
+  scan_takeover_ready_subscriber_ = nh_.subscribe(
+      "/native_scan/takeover_ready", 10,
+      &NavdogRuntimeNode::scanTakeoverReadyCallback, this);
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
   native_scan_path_publisher_ =
@@ -112,8 +125,16 @@ bool NavdogRuntimeNode::initialize()
       nm.immediate_enter_distance_m, nm.min_local_avoid_hold_sec,
       nm.exit_clear_confirm_sec, nm.exit_front_clearance_m,
       nm.exit_left_clearance_m, nm.exit_right_clearance_m);
+  ROS_INFO("SCAN_RECOVERY_CONFIG takeover_timeout=%.2f max_attempts=%d",
+      scan_takeover_timeout_sec_, scan_recovery_max_attempts_);
 
   return true;
+}
+
+void NavdogRuntimeNode::scanTakeoverReadyCallback(
+    const std_msgs::Bool::ConstPtr& msg)
+{
+  scan_takeover_ready_ = msg && msg->data;
 }
 
 void NavdogRuntimeNode::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
@@ -153,6 +174,10 @@ void NavdogRuntimeNode::processEvents()
       terminal_cleanup_sequence_ = 0;
       log_progress_initialized_ = false;
       resetNativeScan("TASK_STARTED");
+      scan_recovery_attempts_ = 0;
+      scan_takeover_ready_ = false;
+      scan_takeover_request_sec_ = 0.0;
+      pending_takeover_sync_ = false;
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
       // SCAN builds its global/local reference while RouteFollower owns the
@@ -239,6 +264,9 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
       publishTakeoverSync(input, output);
+      scan_takeover_ready_ = false;
+      scan_takeover_request_sec_ = now_sec;
+      scan_recovery_attempts_ = 0;
       ROS_INFO("SCAN_HANDOFF_ENTER prewarmed=1 scan_ready=%d",
           pending_native_scan_path_ ? 0 : 1);
     }
@@ -251,6 +279,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
           output.route_progress.remaining_distance_m);
     }
   }
+  handleScanRecovery(output, now_sec);
   // Deferred native scan reference path: ensure reset arrives before path
   scheduleNativeScanReferencePath();
   processPlannerAction(output.planner_action, now_sec);
@@ -276,6 +305,54 @@ void NavdogRuntimeNode::publishTakeoverSync(
   ROS_INFO("SCAN_TAKEOVER_SYNC_REQUEST sequence=%lu robot_x=%.3f robot_y=%.3f robot_vx=%.3f robot_vy=%.3f",
       static_cast<unsigned long>(output.task_sequence), input.robot.x,
       input.robot.y, input.robot.vx, input.robot.vy);
+}
+
+void NavdogRuntimeNode::handleScanRecovery(
+    const navdog::CoreOutput& output, double now_sec)
+{
+  if (output.navigation_mode.mode != navdog::NavigationMode::LOCAL_AVOID)
+  {
+    scan_takeover_request_sec_ = 0.0;
+    scan_recovery_attempts_ = 0;
+    if (pending_takeover_sync_)
+      pending_native_scan_path_ = false;
+    pending_takeover_sync_ = false;
+    return;
+  }
+
+  if (scan_takeover_ready_)
+  {
+    scan_takeover_request_sec_ = 0.0;
+    return;
+  }
+
+  if (scan_takeover_request_sec_ <= 0.0)
+  {
+    scan_takeover_request_sec_ = now_sec;
+    return;
+  }
+
+  const double elapsed = now_sec - scan_takeover_request_sec_;
+  if (!std::isfinite(elapsed) || elapsed < scan_takeover_timeout_sec_)
+    return;
+
+  if (scan_recovery_attempts_ >= scan_recovery_max_attempts_)
+  {
+    ROS_ERROR_THROTTLE(2.0,
+        "SCAN_RECOVERY_EXHAUSTED sequence=%lu attempts=%d action=SAFE_STOP",
+        static_cast<unsigned long>(output.task_sequence),
+        scan_recovery_attempts_);
+    return;
+  }
+
+  ++scan_recovery_attempts_;
+  ROS_WARN("SCAN_TAKEOVER_TIMEOUT sequence=%lu elapsed=%.3f attempt=%d/%d",
+      static_cast<unsigned long>(output.task_sequence), elapsed,
+      scan_recovery_attempts_, scan_recovery_max_attempts_);
+  resetNativeScan("TAKEOVER_TIMEOUT");
+  pending_native_scan_path_ = true;
+  pending_takeover_sync_ = true;
+  scan_takeover_request_sec_ = now_sec;
 }
 
 void NavdogRuntimeNode::logNavigationChanges(
@@ -478,6 +555,8 @@ void NavdogRuntimeNode::handleTerminalTransition(
     resetNativeScan(entered_succeeded ? "TASK_SUCCEEDED" : "TASK_FAILED");
     pending_native_scan_path_ = false;
     pending_planner_feedback_ = navdog::PlannerFeedback{};
+    if (entered_succeeded && mqtt_)
+      mqtt_->completeActiveTask();
 
     nav_msgs::Path empty_path;
     empty_path.header.stamp = ros::Time::now();
@@ -511,6 +590,14 @@ void NavdogRuntimeNode::scheduleNativeScanReferencePath()
   {
     publishNativeScanReferencePath(last_route_progress_);
     pending_native_scan_path_ = false;
+    if (pending_takeover_sync_)
+    {
+      native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
+      pending_takeover_sync_ = false;
+      scan_takeover_request_sec_ = ros::Time::now().toSec();
+      ROS_INFO("SCAN_RECOVERY_SYNC_REQUEST attempt=%d",
+          scan_recovery_attempts_);
+    }
   }
 }
 

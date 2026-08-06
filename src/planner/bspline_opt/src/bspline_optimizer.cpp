@@ -16,7 +16,9 @@ namespace scan_planner
 
     nh.param("optimization/dist0", dist0_, -1.0);
     nh.param("optimization/max_vel", max_vel_, -1.0);
+    nh.param("speed_limits/local_avoid_linear_mps", max_vel_, max_vel_);
     nh.param("optimization/max_acc", max_acc_, -1.0);
+    nh.param("optimization/max_wall_time_sec", max_wall_time_sec_, 0.60);
 
     nh.param("optimization/order", order_, 3);
   }
@@ -366,6 +368,14 @@ namespace scan_planner
   int BsplineOptimizer::earlyExit(void *func_data, const double *x, const double *g, const double fx, const double xnorm, const double gnorm, const double step, int n, int k, int ls)
   {
     BsplineOptimizer *opt = reinterpret_cast<BsplineOptimizer *>(func_data);
+    if (opt->max_wall_time_sec_ > 0.0 &&
+        (ros::WallTime::now() - opt->optimize_started_wall_).toSec() >=
+            opt->max_wall_time_sec_)
+    {
+      opt->optimize_timed_out_ = true;
+      opt->force_stop_type_ = STOP_FOR_ERROR;
+      return 1;
+    }
     // cout << "k=" << k << endl;
     // cout << "opt->flag_continue_to_optimize_=" << opt->flag_continue_to_optimize_ << endl;
     return (opt->force_stop_type_ == STOP_FOR_ERROR || opt->force_stop_type_ == STOP_FOR_REBOUND);
@@ -965,6 +975,8 @@ namespace scan_planner
     ;
     bool flag_force_return, flag_occ, success;
     new_lambda2_ = lambda2_;
+    optimize_started_wall_ = ros::WallTime::now();
+    optimize_timed_out_ = false;
     constexpr int MAX_RESART_NUMS_SET = 3;
     do
     {
@@ -990,6 +1002,14 @@ namespace scan_planner
       t2 = ros::Time::now();
       double time_ms = (t2 - t1).toSec() * 1000;
       double total_time_ms = (t2 - t0).toSec() * 1000;
+
+      if (optimize_timed_out_)
+      {
+        ROS_ERROR("SCAN_OPTIMIZE_TIMEOUT elapsed_ms=%.1f limit_ms=%.1f",
+            (ros::WallTime::now() - optimize_started_wall_).toSec() * 1000.0,
+            max_wall_time_sec_ * 1000.0);
+        return false;
+      }
 
       /* ---------- success temporary, check collision again ---------- */
       if (result == lbfgs::LBFGS_CONVERGENCE ||

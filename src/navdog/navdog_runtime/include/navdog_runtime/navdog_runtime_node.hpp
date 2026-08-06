@@ -14,6 +14,7 @@
 #include <nav_msgs/Path.h>
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/Bool.h>
 #include <std_msgs/UInt8.h>
 
 #include <memory>
@@ -47,6 +48,7 @@ public:
 private:
   /** @brief ROS 回调：将里程计转换为世界系 m/rad 的 RobotState 并互斥保存。 */
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
+  void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& message);
   /**
    * @brief 固定 50 Hz 控制顺序：事件、输入快照、SCAN 观察、Core、SCAN 副作用、发布。
    * Runtime 不在此处重新判断 Route/SCAN 切换条件。
@@ -57,6 +59,7 @@ private:
   /** @brief Reset is reserved for task lifecycle boundaries; path publication is deferred for ROS ordering. */
   void resetNativeScan(const char* reason);
   void scheduleNativeScanReferencePath();
+  void handleScanRecovery(const navdog::CoreOutput& output, double now_sec);
   void publishRoute();
   /** @brief 发布当前进度后的剩余路点，已通过的路点绝不重新交给 Native SCAN。 */
   void publishNativeScanReferencePath(const navdog::RouteProgress& progress);
@@ -79,6 +82,7 @@ private:
   std::unique_ptr<navdog_protocol::MqttBridge> mqtt_;
 
   ros::Subscriber odom_subscriber_;
+  ros::Subscriber scan_takeover_ready_subscriber_;
   ros::Publisher route_publisher_;
   ros::Publisher native_scan_path_publisher_;
   ros::Publisher native_scan_reset_publisher_;
@@ -95,6 +99,12 @@ private:
   ros::Time last_status_publish_{};
 
   bool pending_native_scan_path_{false};
+  bool pending_takeover_sync_{false};
+  bool scan_takeover_ready_{false};
+  double scan_takeover_request_sec_{0.0};
+  double scan_takeover_timeout_sec_{1.5};
+  int scan_recovery_attempts_{0};
+  int scan_recovery_max_attempts_{2};
   std::uint32_t native_scan_reset_count_{0};
   ros::Time native_scan_reset_time_{};
   navdog::NavState last_logged_state_{navdog::NavState::IDLE};

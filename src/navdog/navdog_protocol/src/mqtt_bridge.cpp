@@ -135,31 +135,42 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
       static_cast<std::size_t>(message->payloadlen));
   navdog_task::NavigationEvent event{};
   bool valid = false;
-  bool cancel_first = false;
+  bool task_message = false;
+  bool charging = false;
   const std::string topic(message->topic ? message->topic : "");
   if (topic == self->config_.task_topic) // 如果是任务消息
   {
-    bool charging = false;
+    task_message = true;
     std::uint64_t sequence;
     {
       std::lock_guard<std::mutex> lock(self->mutex_);
-      sequence = self->next_sequence_++;
+      sequence = self->next_sequence_;
     }
     valid = MqttCodec::parseTaskMessage(payload, self->config_.default_route_z,
         self->config_.default_max_vx, sequence, event, charging);
-    cancel_first = valid &&
-        event.type == navdog_task::NavigationEventType::CANCEL_TASK;
-    if (valid)
-    {
-      std::lock_guard<std::mutex> lock(self->mutex_);
-      self->charging_reserved_ = charging;
-    }
   }
   else if (topic == self->config_.pause_topic) // 如果是暂停消息
     valid = MqttCodec::parsePauseMessage(payload, event);
   if (valid)
   {
-    self->enqueue(event, cancel_first);
+    std::uint64_t active_sequence = 0;
+    const bool admitted = !task_message ||
+        self->enqueueTask(event, charging, active_sequence);
+    if (!admitted)
+    {
+      MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=1 "
+          "reason=WAIT_CTRL_0 active_sequence=" +
+          std::to_string(active_sequence));
+      return;
+    }
+    if (!task_message) self->enqueue(event);
+    if (task_message &&
+        event.type == navdog_task::NavigationEventType::CANCEL_TASK &&
+        !charging)
+    {
+      MqttLog::write("INFO",
+          "event=MQTT_ROUTE_CLEARED ctrl=0 action=CANCEL_AND_UNLOCK");
+    }
     MqttLog::write("INFO", "event=MQTT_EVENT_ACCEPTED topic=" + topic +
         " type=" + std::to_string(static_cast<unsigned>(event.type)) +
         " sequence=" + std::to_string(event.task.sequence) +
@@ -178,13 +189,45 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
  * @brief enqueue
  * 将导航事件加入线程安全队列。
  * @param event 导航事件
- * @param cancel_first 是否先取消当前任务
  */
-void MqttBridge::enqueue(const navdog_task::NavigationEvent& event,
-                         bool cancel_first)
+void MqttBridge::enqueue(const navdog_task::NavigationEvent& event)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (cancel_first) events_.clear();
+  pushEventLocked(event);
+}
+
+bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
+                             bool charging,
+                             std::uint64_t& active_sequence)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (event.type == navdog_task::NavigationEventType::START_TASK)
+  {
+    if (route_locked_)
+    {
+      active_sequence = active_sequence_;
+      return false;
+    }
+    event.task.sequence = next_sequence_++;
+    active_sequence_ = event.task.sequence;
+    route_locked_ = true;
+    charging_reserved_ = false;
+  }
+  else if (event.type == navdog_task::NavigationEventType::CANCEL_TASK)
+  {
+    events_.clear();
+    active_sequence_ = 0;
+    route_locked_ = false;
+    charging_reserved_ = charging;
+  }
+  pushEventLocked(event);
+  active_sequence = active_sequence_;
+  return true;
+}
+
+void MqttBridge::pushEventLocked(
+    const navdog_task::NavigationEvent& event)
+{
   bool dropped_oldest = false;
   while (events_.size() >= config_.max_queue_size) { events_.pop_front(); dropped_oldest = true; }
   events_.push_back(event);
@@ -204,6 +247,21 @@ bool MqttBridge::popEvent(navdog_task::NavigationEvent& event)
   event = std::move(events_.front());
   events_.pop_front();
   return true;
+}
+
+void MqttBridge::completeActiveTask()
+{
+  std::uint64_t sequence = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!route_locked_) return;
+    sequence = active_sequence_;
+    active_sequence_ = 0;
+    route_locked_ = false;
+    charging_reserved_ = false;
+  }
+  MqttLog::write("INFO", "event=MQTT_TASK_UNLOCK sequence=" +
+      std::to_string(sequence) + " reason=NAV_SUCCEEDED");
 }
 /**
  * @brief publishStatus

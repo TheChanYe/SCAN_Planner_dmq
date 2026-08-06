@@ -164,6 +164,16 @@ TaskTransition TaskManager::handleEvent(NavigationEvent event)
   transition.session = session_;
   return transition;
 }
+
+bool TaskManager::complete(std::uint64_t sequence) noexcept
+{
+  if (!session_.active || sequence == 0 || session_.sequence != sequence)
+    return false;
+
+  session_.active = false;
+  session_.paused = false;
+  return true;
+}
 /**
  * @brief session
  * 获取当前任务会话
