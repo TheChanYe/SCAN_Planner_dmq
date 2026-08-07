@@ -9,16 +9,30 @@ namespace navdog
 // =============================================================================
 // RouteFollower
 //
-// 沿着原始 NavigationTask 路线生成速度命令。
-// 全向机器人支持 vy。
+// 沿着原始 NavigationTask 路线生成速度指令（TRACKING 阶段的默认跟踪器）。
+// 采用类似纯追踪(pure pursuit)的前瞻点策略：在路线上根据当前弧长
+// 加上一个随速度自适应的前瞻距离找到目标点，朝向该点行驶，
+// 避免直接追随折线每段的切线方向造成在拐角处频繁停下对齐。
+// 机器人为全向底盘，支持侧向速度 vy。
 // =============================================================================
 
 class RouteFollower
 {
 public:
+  // 构造函数：传入跟踪相关配置（比例增益 kp_x/kp_y/kp_yaw、前瞻距离、
+  // 转向阈值等）。
   explicit RouteFollower(
       const RouteFollowerConfig& config);
 
+  // update：路线跟踪主入口，每个控制周期调用一次。
+  // 输入：
+  //   task     - 当前导航任务（完整路线点列）
+  //   robot    - 机器人当前位姿与速度状态
+  //   progress - 当前路线跟踪进度（已走弧长、总长度等）
+  //   max_vx   - 当前允许的最大线速度上限
+  //   now_sec  - 当前时间戳（秒）
+  // 输出：VelocityCommand，包含 vx/vy/yaw_rate 及有效性标志。
+  // 若路线只有单个点或总长度接近零，会退化为 updatePointGoal 直达模式。
   VelocityCommand update(
       const NavigationTask& task,
       const RobotState& robot,
@@ -27,6 +41,8 @@ public:
       double now_sec);
 
 private:
+  // updatePointGoal：单点/极短路线的直达模式，直接朝向任务最后一个点行驶，
+  // 不使用前瞻点插值。先转向对齐再前进，接近时自动减速。
   VelocityCommand updatePointGoal(
       const NavigationTask& task,
       const RobotState& robot,
@@ -34,6 +50,10 @@ private:
       double max_vx,
       double now_sec) const;
 
+  // interpolateRoutePoint：根据目标弧长在折线路线上插值出对应位置与朝向。
+  // 输入：task - 路线点列；target_arc_length_m - 目标累积弧长（米）
+  // 输出：out_x/out_y/out_yaw - 插值得到的坐标与朝向；返回值表示是否插值成功
+  // （点数少于2个时失败）。若目标弧长超出路线总长，则钳到终点。
   bool interpolateRoutePoint(
       const NavigationTask& task,
       double target_arc_length_m,
@@ -41,9 +61,10 @@ private:
       double& out_y,
       double& out_yaw) const noexcept;
 
+  // isYawAligned：判断朝向误差是否已在"仅转向"阈值以内（达标后才允许平移）。
   bool isYawAligned(double heading_error) const noexcept;
 
-  RouteFollowerConfig config_{};
+  RouteFollowerConfig config_{};    // 跟踪控制配置参数
 };
 
 }  // namespace navdog

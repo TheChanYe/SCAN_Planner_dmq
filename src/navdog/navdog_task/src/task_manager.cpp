@@ -17,6 +17,10 @@
 namespace navdog_task
 {
 
+/**
+ * @brief 构造函数
+ * 保存任务配置（默认/最小/最大 max_vx），会话与序号使用类内默认初始值。
+ */
 TaskManager::TaskManager(const TaskConfig& config) : config_(config) {}
 
 void TaskManager::reset() noexcept
@@ -165,6 +169,14 @@ TaskTransition TaskManager::handleEvent(NavigationEvent event)
   return transition;
 }
 
+/**
+ * @brief complete
+ * 导航自然终止（成功/失败）后由上层调用，关闭活动会话。
+ * 输入：sequence - 触发终止的任务序号，必须与当前会话序号一致才生效（防止旧异步
+ *       反馈误关闭新任务）。
+ * 输出：是否成功关闭（无活动任务、序号为0或序号不匹配均返回false）。
+ * 注意：不清空 session_.sequence，保留该序号供上层做终态上报关联。
+ */
 bool TaskManager::complete(std::uint64_t sequence) noexcept
 {
   if (!session_.active || sequence == 0 || session_.sequence != sequence)

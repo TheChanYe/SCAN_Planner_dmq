@@ -21,7 +21,16 @@
   <arg name="max_replan_fail_count" default="12"/>
 
   <!-- main node -->
-  <node pkg="scan_planner_dmq" name="scan_planner_dmq_node" type="scan_planner_dmq_node" output="screen" clear_params="true">
+  <!-- respawn: scan_planner_dmq_node owns the SCAN FSM. If it dies
+       (OOM-kill, uncaught exception, etc.) while the robot is in
+       LOCAL_AVOID, the takeover handshake with navdog_runtime can never
+       complete and the robot stays permanently stopped after recovery is
+       exhausted. roslaunch respawn keeps the process supervised so the
+       existing deferred takeover-sync logic (see
+       SCANReplanFSM::takeoverSyncCallback/execFSMCallback) can resume the
+       handoff once the node restarts. -->
+  <node pkg="scan_planner_dmq" name="scan_planner_dmq_node" type="scan_planner_dmq_node"
+        output="screen" clear_params="true" respawn="true" respawn_delay="1.0">
     <remap from="/grid_map/body_pose" to="$(arg body_pose_topic)"/>
     <remap from="/grid_map/sensor_pose" to="$(arg sensor_pose_topic)"/>
     <param name="grid_map/sensor_type" value="$(arg sensor_type)" type="str"/>
@@ -104,6 +113,16 @@
     <param name="grid_map/p_max" value="0.98"/>
     <param name="grid_map/p_occ" value="0.80"/>
     <param name="grid_map/max_ray_length" value="5.0"/>
+    <!-- Hard cap on how many projected lidar points get a full free-space
+         raycast walk per occupancy update cycle (occ_timer_, 50ms period).
+         Dense indoor scans can carry tens of thousands of unique occupied
+         voxels even after per-voxel dedup, and the walk cost can exceed the
+         timer period by 2-3x, starving the FSM/odom/SCAN-takeover callbacks
+         on the same single-threaded ros::spin(). Every point still gets its
+         own occupancy hit mark regardless of this cap; only the free-space
+         miss walk beyond the cap is deferred to later cycles in rotation.
+         <= 0 disables the cap. -->
+    <param name="grid_map/max_raycast_walk_points" value="15000"/>
     <param name="grid_map/vis_height" value="0.3" type="double"/>
 
     <!-- planner manager -->

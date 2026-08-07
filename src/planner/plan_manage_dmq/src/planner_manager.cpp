@@ -7,6 +7,10 @@ namespace scan_planner
 {
   namespace
   {
+    // applyLinearZReference：根据路径点在XY平面上的累计弧长比例，对每个点的Z高度在
+    // start_z与target_z之间做线性插值，用于为初始路径补充平滑的高度参考。
+    // 边界情况：空列表直接返回；单点直接设为start_z；若总XY长度接近0（如原地
+    // 打转）则改用按点序列索引均匀插值，最后强制首、尾点精确等于start_z/target_z。
     void applyLinearZReference(std::vector<Eigen::Vector3d> &points, const double start_z, const double target_z)
     {
       if (points.empty())
@@ -41,10 +45,14 @@ namespace scan_planner
 
   // SECTION interfaces for setup and query
 
+  // 构造/析构函数：无额外资源，成员变量均使用默认初始化。
   SCANPlannerManager::SCANPlannerManager() {}
 
   SCANPlannerManager::~SCANPlannerManager() {}
 
+  // initPlanModules：从ROS参数服务器加载全部规划参数（速度/加速度/加速度变化率限制、
+  // 容差、控制点间距、规划地平线），创建GridMap并初始化，创建BsplineOptimizer并注入
+  // 环境与内部A*搜索器，最后保存可选的可视化模块指针。
   void SCANPlannerManager::initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis)
   {
     /* read algorithm parameters */
@@ -76,6 +84,23 @@ namespace scan_planner
 
   // SECTION rebond replanning
 
+  // reboundReplan：核心局部重规划入口（rebound优化算法）。
+  // 整体三阶段流程：
+  // STEP 1 INIT：生成初始路径点列point_set与边界导数：
+  //   - 若首次调用/强制多项式初始化/上一轮初始路径异常过长，从一段min-snap多项式
+  //     轨迹（直接生成或插入随机中间点后生成）采样得到初始控制点，若相邻采样点
+  //     过远则缩小采样步长ts重试，确保至少7个控制点；
+  //   - 否则从上一次局部轨迹的剩余部分接一段新的多项式过渡到新目标，按伪弧长
+  //     重新均匀采样得到控制点；若初始路径异常过长则标记flag_force_polynomial在下一轮
+  //     强制回退到多项式初始化。
+  //   - 对初始点列应用线性Z高度参考，参数化为B样条控制点，并调用内部A*初始化
+  //     控制点（避开障碍物），发布初始路径/A*路径可视化。
+  // STEP 2 OPTIMIZE：调用BsplineOptimizeTrajRebound对控制点做rebound优化（碰撞/平滑
+  //   等代价项），失败则累加连续失败计数并返回false。
+  // STEP 3 REFINE：检查优化后轨迹的动力学可行性，若不可行则调用refineTrajAlgo拉长
+  //   时间轴重新优化，仍不可行则失败。成功后调用updateTrajInfo保存结果并清零连续
+  //   失败计数。
+  // 若起始与目标点过于接近（<0.2m）则直接判定失败（无需重规划）。
   bool SCANPlannerManager::reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
                                         Eigen::Vector3d start_acc, Eigen::Vector3d local_target_pt,
                                         Eigen::Vector3d local_target_vel, bool flag_polyInit, bool flag_randomPolyTraj)
@@ -309,6 +334,8 @@ namespace scan_planner
     return true;
   }
 
+  // EmergencyStop：生成一段所有控制点都固定在stop_pos的B样条轨迹（等效于原地静止），
+  // 直接作为局部轨迹保存，用于紧急情况快速停车。
   bool SCANPlannerManager::EmergencyStop(Eigen::Vector3d stop_pos)
   {
     Eigen::MatrixXd control_points(3, 6);
@@ -322,6 +349,12 @@ namespace scan_planner
     return true;
   }
 
+  // planGlobalTrajWaypoints：根据一组中间路点规划途经全部路点的全局多项式轨迹。
+  // 步骤：1.过滤非有限/重复路点，若有效点少于2个或最大速度无效则失败；
+  // 2.计算总路径长度并根据其确定插入中间点的距离阈值；3.对距离过大的相邻点均匀
+  // 插入中间过渡点；4.构造位置矩阵与每段时长（首、尾段时长加倍以平滑起、制动），
+  // 若任一段时长非法则失败；5.根据点数选择minSnapTraj（>=3点）或单段直接生成（=2点）；
+  // 6.写入global_data_。
   bool SCANPlannerManager::planGlobalTrajWaypoints(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
                                                   const std::vector<Eigen::Vector3d> &waypoints, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
@@ -423,6 +456,10 @@ namespace scan_planner
     return true;
   }
 
+  // planGlobalTraj：根据单个起、终点规划一条完整全局多项式轨迹。
+  // 步骤与planGlobalTrajWaypoints类似，但只有两个端点，距离阈值固定为4.0m：
+  // 若两点距离过大则插入均匀中间过渡点，构造位置矩阵与每段时长（首、尾段加倍），
+  // 根据点数选择minSnapTraj或单段生成，成功后写入global_data_。
   bool SCANPlannerManager::planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
                                          const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc)
   {
@@ -487,6 +524,9 @@ namespace scan_planner
     return true;
   }
 
+  // refineTrajAlgo：单次调用reparamBspline拉长时间轴得到新控制点后，重新采样参考点
+  // 并调用BsplineOptimizeTrajRefine重新优化（以新轨迹为参考，尽量贴近原轨迹形状同时
+  // 满足时间拉长后的动力学限制），返回优化是否成功。
   bool SCANPlannerManager::refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio, double &ts, Eigen::MatrixXd &optimal_control_points)
   {
     double t_inc;
@@ -508,6 +548,8 @@ namespace scan_planner
     return success;
   }
 
+  // updateTrajInfo：用新生成的位置B样条更新local_data_：记录开始时刻、求导得到
+  // 速度/加速度轨迹、记录起始位置与总时长，并自增轨迹ID。
   void SCANPlannerManager::updateTrajInfo(const UniformBspline &position_traj, const ros::Time time_now)
   {
     local_data_.start_time_ = time_now;
@@ -519,6 +561,9 @@ namespace scan_planner
     local_data_.traj_id_ += 1;
   }
 
+  // checkDynamicFeasibility：对位置B样条求导得到速度/加速度轨迹，按自适应采样步长
+  // （总时长的1/50，夹在[0.01,0.05]之间）逐点采样，若任一采样点的速度或加速度模
+  // 超过（限制+容差）则判定不可行并输出告警日志。
   bool SCANPlannerManager::checkDynamicFeasibility(UniformBspline position_traj)
   {
     UniformBspline vel_traj = position_traj.getDerivative();
@@ -551,6 +596,9 @@ namespace scan_planner
     return true;
   }
 
+  // reparamBspline：根据超限比例ratio拉长现有B样条的时间轴（降低速度/加速度
+  // 需求），保持段数不变重新计算时间步长dt与时长增量time_inc，沿新时间轴重新均匀采样
+  // 位置点列并重新参数化为B样条控制点。
   void SCANPlannerManager::reparamBspline(UniformBspline &bspline, vector<Eigen::Vector3d> &start_end_derivative, double ratio,
                                          Eigen::MatrixXd &ctrl_pts, double &dt, double &time_inc)
   {

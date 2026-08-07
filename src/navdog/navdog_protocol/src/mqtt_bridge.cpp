@@ -16,8 +16,16 @@
 namespace navdog_protocol
 {
 
+/**
+ * @brief 构造函数
+ * 保存桥接配置并初始化Mosquitto库（进程级全局初始化，与析构函数中的cleanup配套）。
+ */
 MqttBridge::MqttBridge(const MqttBridgeConfig& config) : config_(config)
 { mosquitto_lib_init(); }
+/**
+ * @brief 析构函数
+ * 先stop()停止网络循环并释放客户端，再清理Mosquitto库全局资源。
+ */
 MqttBridge::~MqttBridge() { stop(); mosquitto_lib_cleanup(); }
 /**
  * @brief start
@@ -190,12 +198,27 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
  * 将导航事件加入线程安全队列。
  * @param event 导航事件
  */
+/**
+ * @brief enqueue
+ * 将非任务类事件（暂停/恢复）直接加锁后入队，不涉及协议锁判断。
+ * @param event 待入队的导航事件
+ */
 void MqttBridge::enqueue(const navdog_task::NavigationEvent& event)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   pushEventLocked(event);
 }
 
+/**
+ * @brief enqueueTask
+ * 任务类事件（START_TASK/CANCEL_TASK）的入队入口，负责实体狗协议的“活动任务锁”语义。
+ * 步骤：
+ *   1.START_TASK：若已有路线被锁定（route_locked_），拒绝入队并返回当前活动序号；
+ *      否则分配新序号、锁定路线、清除充电保留标记；
+ *   2.CANCEL_TASK：清空事件队列、释放活动序号与路线锁，并根据charging参数设置充电保留标记；
+ *   3.无论哪种情况最后都会入队并返回当前活动序号。
+ * 返回 false 表示当前任务执行期间的重复路线已被协议层忽略。
+ */
 bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
                              bool charging,
                              std::uint64_t& active_sequence)
@@ -225,6 +248,11 @@ bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
   return true;
 }
 
+/**
+ * @brief pushEventLocked
+ * 已持锁前提下将事件推入队列尾部；若队列已满（达到max_queue_size）则先丢弃最旧事件，
+ * 并记录一条队列溢出警告日志。
+ */
 void MqttBridge::pushEventLocked(
     const navdog_task::NavigationEvent& event)
 {
@@ -249,6 +277,11 @@ bool MqttBridge::popEvent(navdog_task::NavigationEvent& event)
   return true;
 }
 
+/**
+ * @brief completeActiveTask
+ * 导航正常到达后由上层调用，解除实体狗协议的活动任务锁，使后续新路线可被接受。
+ * 若当前并无锁定路线则直接返回（无副作用）。
+ */
 void MqttBridge::completeActiveTask()
 {
   std::uint64_t sequence = 0;

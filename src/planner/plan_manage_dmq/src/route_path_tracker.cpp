@@ -13,6 +13,7 @@ constexpr double kEpsilon = 1e-9;
 constexpr double kDuplicatePointDistanceM = 0.01;
 constexpr double kPi = 3.14159265358979323846;
 
+// normalizeAngle：将角度归一化到[-pi, pi]区间。
 double normalizeAngle(double angle) noexcept
 {
   while (angle > kPi) angle -= 2.0 * kPi;
@@ -20,11 +21,13 @@ double normalizeAngle(double angle) noexcept
   return angle;
 }
 
+// clamp：将value限制在[low, high]区间内。
 double clamp(double value, double low, double high) noexcept
 {
   return std::max(low, std::min(high, value));
 }
 
+// finitePoint：校验三维点的三个分量是否均为有限数。
 bool finitePoint(const Eigen::Vector3d& point) noexcept
 {
   return std::isfinite(point.x()) && std::isfinite(point.y()) &&
@@ -33,11 +36,16 @@ bool finitePoint(const Eigen::Vector3d& point) noexcept
 
 }  // namespace
 
+// 构造函数：保存跟踪器配置。
 RoutePathTracker::RoutePathTracker(const RoutePathTrackerConfig& config)
     : config_(config)
 {
 }
 
+// setPath：设置新路径点列。步骤：1.先重置当前状态；2.过滤掉非有限点与与上一个
+// 保留点过于接近的重复点（避免零长度段引发数值问题）；3.若有效点少于2个则
+// 重置并返回false；4.计算每个点的累计弧长；5.若总长度接近0则重置并返回false；
+// 6.标记需要重新全路径搜索投影点。
 bool RoutePathTracker::setPath(
     const std::vector<Eigen::Vector3d>& points)
 {
@@ -77,6 +85,7 @@ bool RoutePathTracker::setPath(
   return true;
 }
 
+// reset：清空路径点、累计弧长与进度状态，并标记需重新搜索投影。
 void RoutePathTracker::reset() noexcept
 {
   points_.clear();
@@ -86,11 +95,19 @@ void RoutePathTracker::reset() noexcept
   reacquire_requested_ = true;
 }
 
+// requestReacquire：标记下一次projectProgress需从头全路径搜索（而非从上次
+// 段附近局部搜索）。
 void RoutePathTracker::requestReacquire() noexcept
 {
   reacquire_requested_ = true;
 }
 
+// projectProgress：将机器人当前位置投影到路径上，找到距离最近且弧长不小于当前
+// 进度（防止进度回退）的投影点。
+// 步骤：1.若未要求重新搜索，仅从当前段开始搜索到前搜索上限search_end，否则
+// 从头全路径搜索；2.对每一段计算机器人到该段的最近点（比例坐标ratio夹在[0,1]）及
+// 对应弧长；3.跳过弧长明显小于当前进度的段（防止倒退）；4.保留最小距离对应的
+// 弧长与段索引。输出的projected_arc不会小于当前进度。
 bool RoutePathTracker::projectProgress(
     const Eigen::Vector3d& robot_position,
     double& projected_arc,
@@ -141,6 +158,8 @@ bool RoutePathTracker::projectProgress(
   return true;
 }
 
+// sampleAtArc：根据给定累计弧长arc（先限制到[0, 总长度]），二分查找到对应的
+// 路径段，在段内线性插值得到位置点（可选输出所在段索引）。
 bool RoutePathTracker::sampleAtArc(
     double arc,
     Eigen::Vector3d& point,
@@ -166,6 +185,19 @@ bool RoutePathTracker::sampleAtArc(
   return finitePoint(point);
 }
 
+// update：根据机器人当前位置/朝向计算本周期的跟踪速度指令。
+// 步骤：
+// 1. 投影得到当前进度弧长与所在段，并标记已完成一次搜索；
+// 2. 计算剩余距离与预看目标弧长（progress_m_ + lookahead）；
+// 3. 采样目标点与其前后一小段距离的两个点，用于估计局部切线方向（若失败直接
+//    返回无效输出）；
+// 4. 若切线接近零向量，回退使用当前段的方向向量；
+// 5. 合成世界系目标速度：切线方向分量(最大速度) + 位置误差比例项，若超过最大
+//    速度则按比例缩放；
+// 6. 根据目标速度方向与当前朝向的夹角误差计算朝向余弦衰减系数，对线速度做衰减
+//    （朝向偏差越大越应该减速转向而非直接前进）；
+// 7. 接近终点时按剩余距离比例逐渐减速；
+// 8. 对线/角速度做最终限幅并填充输出结果。
 RoutePathTrackerOutput RoutePathTracker::update(
     const Eigen::Vector3d& robot_position,
     double robot_yaw) noexcept

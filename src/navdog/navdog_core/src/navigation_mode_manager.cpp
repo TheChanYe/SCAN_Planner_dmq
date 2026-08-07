@@ -16,6 +16,7 @@ NavigationModeManager::NavigationModeManager(
 {
 }
 
+// reset：将状态机完全重置到初始状态，在任务取消/重新开始导航时调用。
 void NavigationModeManager::reset() noexcept
 {
   status_ = NavigationModeStatus{};
@@ -29,6 +30,8 @@ void NavigationModeManager::reset() noexcept
   clear_candidate_start_sec_ = 0.0;
 }
 
+// isConfigValid：校验配置自身的合法性：确认时长不能为负、立即进入距离不能大于
+// 普通进入距离（否则逻辑矛盾）、退出各方向净空距离不能为负。
 bool NavigationModeManager::isConfigValid() const noexcept
 {
   if (config_.enter_confirm_sec < 0.0)
@@ -49,6 +52,7 @@ bool NavigationModeManager::isConfigValid() const noexcept
   return true;
 }
 
+// isTaskValid：任务 sequence 为0视为无效任务，且 mode 必须属于支持的三种模式之一。
 bool NavigationModeManager::isTaskValid(
     const NavigationTask& task) const noexcept
 {
@@ -59,6 +63,7 @@ bool NavigationModeManager::isTaskValid(
          task.mode == TaskMode::CHARGING;
 }
 
+// isProgressValid：路线进度必须有效、属于当前任务、弧长为非负有限数、时间戳为有限数。
 bool NavigationModeManager::isProgressValid(
     const NavigationTask& task,
     const RouteProgress& progress) const noexcept
@@ -70,6 +75,7 @@ bool NavigationModeManager::isProgressValid(
       std::isfinite(progress.stamp_sec);
 }
 
+// isRobotNumericValid：机器人 x/y/yaw 必须均为有限数。
 bool NavigationModeManager::isRobotNumericValid(
     const RobotState& robot) const noexcept
 {
@@ -77,6 +83,8 @@ bool NavigationModeManager::isRobotNumericValid(
          std::isfinite(robot.yaw);
 }
 
+// taskAllowsAvoidance：只有 NORMAL_AVOID 和 CHARGING 任务模式允许进入局部避障，
+// ROUTE_ONLY 模式必须严格沿预定义路线行走，即使前方被阻塞也不能自行迁移。
 bool NavigationModeManager::taskAllowsAvoidance(
     TaskMode task_mode) const noexcept
 {
@@ -84,6 +92,10 @@ bool NavigationModeManager::taskAllowsAvoidance(
          task_mode == TaskMode::CHARGING;
 }
 
+// initializeForTask：当检测到新任务（或首次初始化）时重置所有状态字段：
+// 把模式固定为 ROUTE_FOLLOW（新任务总是从全局跟踪开始，不继承上个任务的LOCAL_AVOID状态），
+// 根据是否之前已初始化过区分 reason 为 INITIALIZED 或 TASK_CHANGED，
+// 并清空阻塞/退出确认计时器。
 void NavigationModeManager::initializeForTask(
     const NavigationTask& task,
     double now_sec)
@@ -109,6 +121,11 @@ void NavigationModeManager::initializeForTask(
   clear_candidate_start_sec_ = 0.0;
 }
 
+// transitionTo：执行一次模式转换。
+// 步骤：记录 previous_mode，更新为新模式并标记 reason/时间戳；
+// 根据新模式同步更新 reference_intent（LOCAL_AVOID对应局部避障意图，
+// 否则为全局路线意图）；若进入 LOCAL_AVOID 则累加避障次数计数器；
+// 最后清空所有进入/退出确认计时器，避免上一个模式的确认进度污染新模式。
 void NavigationModeManager::transitionTo(
     NavigationMode new_mode,
     NavigationModeReason reason,
@@ -135,6 +152,35 @@ void NavigationModeManager::transitionTo(
   clear_candidate_start_sec_ = 0.0;
 }
 
+// update：导航模式状态机主入口，每个控制周期调用一次。整体流程：
+//   1. 时间戳校验：非有限数或相比上次调用时间倒流 -> INVALID_TIME；
+//   2. 配置/任务合法性校验（isConfigValid/isTaskValid），失败则直接返回对应错误码；
+//   3. 若检测到任务序号变化或尚未初始化，调用 initializeForTask 重置为新任务的
+//      ROUTE_FOLLOW 初始状态，并记住初始化原因供末尾回填；
+//   4. 同步更新 task_sequence 与 avoidance_allowed（是否允许避障）；
+//   5. 路线进度/机器人数值校验失败则直接返回对应错误码；
+//   6. 判断走廊评估结果是否为 CLEAR/BLOCKED：若都不是（如还在计算中），
+//      根据具体错误类型返回 INVALID_CORRIDOR_RESULT 或 WAITING_FOR_CORRIDOR，
+//      并将 corridor_available/route_blocked 相关字段清零；
+//   7. 走廊评估结果必须属于当前任务，否则 INVALID_CORRIDOR_RESULT；
+//   8. 计算 blocked_in_avoid_range（阻塞且首个阻塞点距离在"进入避障距离"以内）
+//      作为 route_blocked_near，并更新当前阻塞/退出确认计时器的已经过时长；
+//   9. 【ROUTE_FOLLOW -> LOCAL_AVOID】：当前处于全局跟踪且前方在避障距离内被阻塞时：
+//      - 若任务不允许避障，只记录 reason=ROUTE_ONLY_BLOCKED，不切换；
+//      - 若距离<=立即进入距离，不等待确认直接切换（BLOCK_IMMEDIATE，应对紧急障碍）；
+//      - 否则启动/继续阻塞确认计时，持续足够时间(enter_confirm_sec)后才切换
+//        （BLOCK_CONFIRMED，防止瞬时噪声误触发）；
+//  10. 【LOCAL_AVOID -> ROUTE_FOLLOW】：当前处于局部避障时，退出需同时满足：
+//      ① 已达到最小停留时长(min_local_avoid_hold_sec)；
+//      ② 走廊重新变为 CLEAR 且属于当前任务（确认原路线重新可通行，
+//        否则会在 corridor 仍为 BLOCKED 时过早退出导致立即重新进入）；
+//      ③ 前/左/右方向的障碍物净空都达标（clearance_satisfied）；
+//      以上三项均满足后启动/继续退出确认计时，持续足够时间(exit_clear_confirm_sec)
+//      后才真正切换回 ROUTE_FOLLOW（ROUTE_CLEAR）；任一条不满足则重置退出确认计时器；
+//  11. 否则（处于 ROUTE_FOLLOW 且未被阻塞）：重置阻塞确认计时器，标记 reason=ROUTE_CLEAR；
+//  12. 若本次刚刚初始化且未发生转换，回填初始化时记录的 reason；
+//  13. 更新时间戳与有效标志，返回 UPDATED 结果。
+// 输入：task/robot/progress/corridor/obstacles/now_sec；输出：NavigationModeOutput。
 NavigationModeOutput NavigationModeManager::update(
     const NavigationTask& task,
     const RobotState& robot,
@@ -375,6 +421,7 @@ NavigationModeOutput NavigationModeManager::update(
   return output;
 }
 
+// status：获取当前完整模式状态快照（只读，不触发任何状态转换）。
 const NavigationModeStatus&
 NavigationModeManager::status() const noexcept
 {

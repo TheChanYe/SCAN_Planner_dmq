@@ -14,23 +14,33 @@ namespace dmq_dog
 
 namespace
 {
+// clampUint8：将整数限制到 [0,255] 范围，用于 error/status 字段均为 uint8 语义的场景。
 int clampUint8(const int value)
 {
   return std::max(0, std::min(255, value));
 }
 }  // namespace
 
+// 构造函数：保存配置并初始化 mosquitto 库（进程级初始化，必须在创建客户端前调用）。
 MqttClient::MqttClient(const MqttConfig& config) : config_(config)
 {
   mosquitto_lib_init();
 }
 
+// 析构函数：先停止客户端释放连接资源，再清理 mosquitto 库全局资源。
 MqttClient::~MqttClient()
 {
   stop();
   mosquitto_lib_cleanup();
 }
 
+// start：启动 MQTT 客户端。步骤：
+//   1. 若配置禁用，直接返回 true（不真正连接）；
+//   2. 拼接 client_id+pid 作为实际客户端ID（避免多实例重名冲突），创建 mosquitto 客户端；
+//   3. 注册连接/断开/消息三个回调，设置自动重连退避策略(1~30秒指数退避)；
+//   4. 开始异步连接，失败则销毁客户端并返回 false；
+//   5. 启动 mosquitto 后台网络循环线程，失败则断开并销毁客户端后返回 false。
+// 输出：是否启动成功。
 bool MqttClient::start()
 {
   if (!config_.enabled)
@@ -82,6 +92,7 @@ bool MqttClient::start()
   return true;
 }
 
+// stop：停止后台网络循环、主动断开连接并销毁客户端实例，并重置启动/连接状态标志。
 void MqttClient::stop()
 {
   if (!client_) return;
@@ -93,12 +104,16 @@ void MqttClient::stop()
   connected_ = false;
 }
 
+// connected：线程安全地返回当前是否已连接到 Broker。
 bool MqttClient::connected() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return connected_;
 }
 
+// publishControl：将控制指令打包成 JSON 并发布到 control_topic。
+// 步骤：1.未启用/未启动时直接返回；2.按照真机控制器已验证的紧凑JSON格式拼接字符串
+// （error/status限幅到[0,255]，速度保留3位小数）；3.发布失败时限频打印警告日志。
 void MqttClient::publishControl(const int error, const int status,
                                 const double vx, const double vy,
                                 const double yaw_rate)
@@ -126,18 +141,23 @@ void MqttClient::publishControl(const int error, const int status,
   }
 }
 
+// setOdomCallback：线程安全地设置里程计数据回调。
 void MqttClient::setOdomCallback(OdomCallback callback)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   odom_callback_ = std::move(callback);
 }
 
+// setStatusCallback：线程安全地设置狗体状态回调。
 void MqttClient::setStatusCallback(StatusCallback callback)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   status_callback_ = std::move(callback);
 }
 
+// onConnect：mosquitto 连接完成静态回调。
+// 步骤：1.通过 data 拿到 this 指针，更新 connected_ 状态；2.若连接失败(rc!=0)直接返回；
+// 3.连接成功后自动订阅 odom_topic 与 dog_status_topic（topic为空则跳过）并打印日志。
 void MqttClient::onConnect(struct mosquitto* client, void* data, const int rc)
 {
   auto* self = static_cast<MqttClient*>(data);
@@ -173,6 +193,7 @@ void MqttClient::onConnect(struct mosquitto* client, void* data, const int rc)
                   << mosquitto_strerror(status_rc));
 }
 
+// onDisconnect：mosquitto 断开连接回调，更新 connected_ 为 false 并打印警告日志。
 void MqttClient::onDisconnect(struct mosquitto*, void* data, const int rc)
 {
   auto* self = static_cast<MqttClient*>(data);
@@ -184,6 +205,8 @@ void MqttClient::onDisconnect(struct mosquitto*, void* data, const int rc)
   ROS_WARN_STREAM("dmq_dog: MQTT disconnected, code=" << rc);
 }
 
+// onMessage：mosquitto 收到订阅消息时的回调。
+// 校验有效性后根据 topic 匹配结果分发到 handleOdomMessage 或 handleStatusMessage。
 void MqttClient::onMessage(struct mosquitto*, void* data,
                            const struct mosquitto_message* message)
 {
@@ -200,6 +223,10 @@ void MqttClient::onMessage(struct mosquitto*, void* data,
     self->handleStatusMessage(payload);
 }
 
+// handleOdomMessage：解析里程计 JSON 负载。
+// 步骤：1.JSON解析失败/非对象则限频打印警告并返回；2.逐字段提取（缺失字段默认为0）；
+// 3.校验所有字段均为有限数才置 valid=true，无效则直接丢弃；4.在锁内拷贝回调后释放锁再调用，
+// 避免在持锁状态下调用上层代码导致潜在死锁。
 void MqttClient::handleOdomMessage(const std::string& payload)
 {
   Json::Value root;
@@ -234,6 +261,9 @@ void MqttClient::handleOdomMessage(const std::string& payload)
   if (callback) callback(odom);
 }
 
+// handleStatusMessage：解析狗体状态 JSON 负载。
+// 步骤与 handleOdomMessage 类似：JSON解析失败则丢弃，提取error/status字段，
+// 校验error/status均为非负数才视为有效，有效时在锁外回调上层。
 void MqttClient::handleStatusMessage(const std::string& payload)
 {
   Json::Value root;

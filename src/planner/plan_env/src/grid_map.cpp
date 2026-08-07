@@ -42,6 +42,7 @@ void GridMap::initMap(ros::NodeHandle &nh)
   node_.param("grid_map/p_max", mp_.p_max_, -1.0);
   node_.param("grid_map/p_occ", mp_.p_occ_, -1.0);
   node_.param("grid_map/max_ray_length", mp_.max_ray_length_, -0.1);
+  node_.param("grid_map/max_raycast_walk_points", mp_.max_raycast_walk_points_, 15000);
 
   node_.param("grid_map/vis_height", mp_.vis_height_, 0.3);
   node_.param("grid_map/show_occ_time", mp_.show_occ_time_, false);
@@ -568,6 +569,25 @@ void GridMap::raycastProcess()
   Eigen::Vector3d half = Eigen::Vector3d(0.5, 0.5, 0.5);
   Eigen::Vector3d ray_pt, pt_w;
 
+  // Bounded walk budget: see MappingParameters::max_raycast_walk_points_.
+  // Every point still gets its endpoint hit/miss marked below regardless
+  // of this budget; only the expensive origin-to-point free-space walk is
+  // rationed and round-robined across cycles when a frame has more unique
+  // points than the budget allows.
+  const int walk_budget =
+      (mp_.max_raycast_walk_points_ > 0 &&
+       mp_.max_raycast_walk_points_ < md_.proj_points_cnt)
+          ? mp_.max_raycast_walk_points_
+          : md_.proj_points_cnt;
+  const bool walk_capped = walk_budget < md_.proj_points_cnt;
+  int walk_start = 0;
+  if (walk_capped)
+  {
+    walk_start = md_.raycast_walk_cursor_ % md_.proj_points_cnt;
+    md_.raycast_walk_cursor_ = (walk_start + walk_budget) % md_.proj_points_cnt;
+  }
+  int skipped_walk_count = 0;
+
   for (int i = 0; i < md_.proj_points_cnt; ++i)
   {
     pt_w = md_.proj_points_[i];
@@ -622,6 +642,17 @@ void GridMap::raycastProcess()
       }
     }
 
+    if (walk_capped)
+    {
+      int rel = i - walk_start;
+      if (rel < 0) rel += md_.proj_points_cnt;
+      if (rel >= walk_budget)
+      {
+        ++skipped_walk_count;
+        continue;
+      }
+    }
+
     raycaster.setInput(pt_w / mp_.resolution_, md_.ray_pos_ / mp_.resolution_);
 
     while (raycaster.step(ray_pt))
@@ -643,6 +674,13 @@ void GridMap::raycastProcess()
         }
       }
     }
+  }
+
+  if (skipped_walk_count > 0)
+  {
+    ROS_WARN_THROTTLE(2.0,
+        "SCAN_OCC_RAYCAST_BUDGET_CAPPED skipped=%d cap=%d total=%d",
+        skipped_walk_count, walk_budget, md_.proj_points_cnt);
   }
 
   min_x = min(min_x, md_.ray_pos_(0));
@@ -755,7 +793,23 @@ void GridMap::updateOccupancyCallback(const ros::TimerEvent & /*event*/)
   if (!md_.use_cloud_update_)
     projectDepthImage();
   // t2 = ros::Time::now();
+  const ros::WallTime raycast_t0 = ros::WallTime::now();
   raycastProcess();
+  const double raycast_ms = (ros::WallTime::now() - raycast_t0).toSec() * 1000.0;
+  // SCAN_OCC_UPDATE_SLOW: the FSM/GridMap/planner all run on the same
+  // single ros::spin() thread. raycastProcess() walks every projected
+  // lidar point voxel-by-voxel (see Raycast() in raycast.cpp) and has no
+  // upper bound on ray length or point count; an unexpectedly slow or
+  // stuck call here blocks every other callback (odom, reset,
+  // takeover_sync, FSM timer) indefinitely with no crash or exit, which
+  // looks identical to a dead process from the outside. Logged whenever a
+  // single update noticeably exceeds the 50ms timer period so a future
+  // silent-stop incident can be correlated with this call.
+  if (raycast_ms > 80.0)
+  {
+    ROS_WARN("SCAN_OCC_UPDATE_SLOW elapsed_ms=%.1f proj_points=%d",
+        raycast_ms, md_.proj_points_cnt);
+  }
   // t3 = ros::Time::now();
 
   // Update the occupancy timestamp only when raycast
@@ -937,12 +991,17 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
 
   md_.proj_points_cnt = 0;
   std::size_t self_filtered_count = 0;
+  std::size_t duplicate_voxel_count = 0;
 
   if (mp_.self_filter_enabled_ && !md_.has_body_pose_)
   {
     ROS_WARN_THROTTLE(1.0,
         "[GridMap] self filter enabled but no /grid_map/body_pose received.");
   }
+
+  // Cleared every callback (not per-node lifetime) so dedup only applies
+  // within a single lidar frame; see MappingData::cloud_voxel_seen_.
+  md_.cloud_voxel_seen_.clear();
 
   for (size_t i = 0; i < latest_cloud.points.size(); ++i)
   {
@@ -973,6 +1032,20 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
     if (!in_local_range && ray_length <= mp_.max_ray_length_)
       continue;
 
+    // Collapse points that quantize to the same occupancy voxel (at the
+    // map's own resolution) down to a single representative point. Dense
+    // near-range obstacles routinely put dozens of raw points into the
+    // same voxel; keeping all of them only multiplies the per-point cost
+    // downstream in raycastProcess() without adding any occupancy
+    // information, since the map itself cannot resolve sub-voxel detail.
+    Eigen::Vector3i vox_idx;
+    posToIndex(pt_world, vox_idx);
+    if (!md_.cloud_voxel_seen_.insert(vox_idx).second)
+    {
+      ++duplicate_voxel_count;
+      continue;
+    }
+
     if (md_.proj_points_cnt >= static_cast<int>(md_.proj_points_.size()))
       md_.proj_points_.push_back(pt_world);
     else
@@ -986,6 +1059,13 @@ void GridMap::cloudCallback(const sensor_msgs::PointCloud2ConstPtr &img)
     ROS_DEBUG_THROTTLE(2.0,
         "[GridMap] filtered %zu lidar points inside robot body.",
         self_filtered_count);
+  }
+
+  if (duplicate_voxel_count > 0)
+  {
+    ROS_DEBUG_THROTTLE(2.0,
+        "[GridMap] collapsed %zu duplicate-voxel lidar points, kept %d unique voxels.",
+        duplicate_voxel_count, md_.proj_points_cnt);
   }
 
   if (md_.proj_points_cnt == 0)

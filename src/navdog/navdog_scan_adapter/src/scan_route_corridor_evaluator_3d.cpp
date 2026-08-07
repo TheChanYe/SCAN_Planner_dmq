@@ -14,6 +14,7 @@ constexpr double kEpsilon = 1e-9;
 
 }  // namespace
 
+// 构造函数：保存走廊评估配置与膨胀地图查询接口。
 ScanRouteCorridorEvaluator3D::ScanRouteCorridorEvaluator3D(
     const navdog::RouteCorridorConfig& config,
     const std::shared_ptr<InflatedGridQuery3D>& grid)
@@ -23,7 +24,19 @@ ScanRouteCorridorEvaluator3D::ScanRouteCorridorEvaluator3D(
 }
 /**
  * @brief evaluate
- * 评估路径走廊是否被障碍物阻挡。
+ * 沿路线从当前投影位置开始向前逐段采样，检查路径走廊（中心线两侧half_width_m范围）
+ * 内是否存在障碍物，从而判断前方路径是否可行。
+ * 步骤：
+ *   1.校验地图就绪、分辨率/采样步长合法、机器人位姿有效、路线进度有效且任务序号匹配，
+ *      任一不满足直接返回默认（无效）结果；
+ *   2.初始化评估结果的来源/任务序号/当前弧长/地图分辨率等元信息字段；
+ *   3.校验前视距离/半宽配置合法；取前视距离与剩余距离中的较小值作为实际检查距离，
+ *      若已到达终点则直接返回未阻塞的有效结果；
+ *   4.单点路线与多点路线分别处理：从当前投影位置沿后续路线段逐段采样，
+ *      每个采样点在垂直于路径方向的法线上按sample_step步长展开到±half_width_m进行密集采样，
+ *      一旦遇到OCCUPIED则标记blocked并记录阻塞位置（前方距离与弧长），遇到OUT_OF_MAP或
+ *      INVALID则分别标记相应状态并提前终止；
+ *   5.所有补段均无阻塞则返回已检查距离与 blocked=false 的有效结果。
  * @param task 导航任务
  * @param progress 路径进度
  * @param robot 机器人状态
@@ -39,7 +52,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
 {
   navdog::RouteCorridorAssessment assessment;
 
-  // --- Grid readiness ---
+  // --- 地图就绪性检查 ---
   if (!grid_ || !grid_->ready())
     return assessment;
 
@@ -51,20 +64,19 @@ ScanRouteCorridorEvaluator3D::evaluate(
   if (!std::isfinite(sample_step) || sample_step <= 0.0)
     return assessment;
 
-  // --- Robot validity ---
+  // --- 机器人位姿有效性检查 ---
   if (!robot.valid)
     return assessment;
   if (!std::isfinite(robot.z))
     return assessment;
 
-  // --- Progress validity ---
+  // --- 路线进度有效性与任务序号匹配检查 ---
   if (!progress.valid)
     return assessment;
   if (progress.task_sequence != task.sequence)
     return assessment;
 
-  // --- Configuration ---
-  // --- Initialize assessment ---
+  // --- 初始化评估结果的基础元信息 ---
   assessment.source =
       navdog::RouteCorridorSource::SCAN_INFLATED_GRID_3D;
   assessment.task_sequence = task.sequence;
@@ -80,7 +92,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
   assessment.first_blocked_arc_length_m =
       std::numeric_limits<double>::infinity();
 
-  // 前视距由RouteCorridorConfig统一控制
+  // 前视距离由RouteCorridorConfig统一控制
   // 配置无效时返回默认无效assessment，禁止使用错误距离继续判断。
   if (!std::isfinite(config_.lookahead_distance_m) ||
       config_.lookahead_distance_m <= 0.0 ||
@@ -95,7 +107,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
   
   if (check_distance <= 0.0)
   {
-    // Already at goal
+    // 已到达终点，无需检查
     assessment.checked_distance_m = 0.0;
     assessment.samples_checked = 0;
     assessment.blocked = false;
@@ -103,25 +115,25 @@ ScanRouteCorridorEvaluator3D::evaluate(
     return assessment;
   }
 
-  // --- Build the list of segment endpoints to sample ---
-  // We walk from progress.projected_x/y forward through route points.
+  // --- 构建待采样的路径段端点列表 ---
+  // 从 progress.projected_x/y 开始沿路线点向前行进。
   //
-  // Segments:
-  //   [0] projected → points[segment_index + 1]
+  // 路段划分：
+  //   [0] 投影点 → points[segment_index + 1]
   //   [1] points[segment_index + 1] → points[segment_index + 2]
   //   ...
   //
-  // Each segment is trimmed to the remaining lookahead budget.
+  // 每个路段都会根据剩余的前视预算被截断。
 
   double remaining_budget = check_distance;
-  double cumulative_distance = 0.0;  // from progress start
+  double cumulative_distance = 0.0;  // 从进度起点开始累计的已检查距离
 
-  // Current segment start point
+  // 当前路段起点
   double cur_x = progress.projected_x;
   double cur_y = progress.projected_y;
 
-  // Helper lambda to query a single point.
-  // Returns true if evaluation should continue, false if stopped.
+  // 辅助lambda：对单个中心点沿垂直于行进方向的法线方向展开采样（走廊宽度方向）。
+  // 返回true表示继续评估，返回false表示已命中终止评估（障碍/超图/无效）。
   auto queryPoint = [&](
       double px, double py,
       double seg_yaw,
@@ -167,9 +179,9 @@ ScanRouteCorridorEvaluator3D::evaluate(
     return true;
   };
 
-  // Process a segment from (sx, sy) to (ex, ey) with a yaw.
-  // Samples: start point, step points, end point (trimmed).
-  // Returns true if should continue, false if stopped.
+  // 处理从(sx, sy)到(ex, ey)的一个路段（带朝向角）。
+  // 采样点：起点、中间步进点、终点（受budget截断）。
+  // 返回true表示继续，返回false表示已停止。
   auto processSegment = [&](
       double sx, double sy,
       double ex, double ey,
@@ -180,18 +192,18 @@ ScanRouteCorridorEvaluator3D::evaluate(
     const double seg_len = std::hypot(dx, dy);
 
     if (seg_len < kEpsilon)
-      return true;  // degenerate, skip
+      return true;  // 退化路段（起终点重合），跳过
 
     const double seg_yaw = std::atan2(dy, dx);
     const double usable_len = std::min(seg_len, budget);
 
-    // --- Query start point ---
+    // --- 采样起点 ---
     {
       if (!queryPoint(sx, sy, seg_yaw, cumulative_distance))
         return false;
     }
 
-    // --- Query step points ---
+    // --- 采样中间步进点 ---
     if (sample_step < usable_len)
     {
       const int num_steps =
@@ -200,7 +212,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
       for (int i = 1; i <= num_steps; ++i)
       {
         const double t = (i * sample_step) / seg_len;
-        // Don't sample beyond usable_len
+        // 不要采样超过usable_len
         if (t * seg_len > usable_len + kEpsilon)
           break;
 
@@ -213,7 +225,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
       }
     }
 
-    // --- Query end point (trimmed to budget) ---
+    // --- 采样终点（受budget截断） ---
     {
       const double t = usable_len / seg_len;
       const double px = sx + t * dx;
@@ -228,7 +240,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
     return true;
   };
 
-  // --- Single point route ---
+  // --- 单点路线特殊处理 ---
   if (task.points.size() == 1)
   {
     const navdog::RoutePoint& target = task.points.back();
@@ -238,7 +250,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
     if (robot_to_target < kEpsilon)
     {
-      // Robot at goal
+      // 机器人已在目标点
       assessment.checked_distance_m = 0.0;
       assessment.samples_checked = 0;
       assessment.blocked = false;
@@ -250,13 +262,13 @@ ScanRouteCorridorEvaluator3D::evaluate(
     const double usable_len =
         std::min(robot_to_target, check_distance);
 
-    // Query start (robot position)
+    // 采样起点（机器人当前位置）
     if (!queryPoint(robot.x, robot.y, seg_yaw, 0.0))
     {
       return assessment;
     }
 
-    // Query step points
+    // 采样中间步进点
     if (sample_step < usable_len)
     {
       const int num_steps =
@@ -279,7 +291,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
       }
     }
 
-    // Query end point
+    // 采样终点
     {
       const double t = usable_len / robot_to_target;
       const double px = robot.x + t * dx;
@@ -299,8 +311,8 @@ ScanRouteCorridorEvaluator3D::evaluate(
     return assessment;
   }
 
-  // --- Multi-point route ---
-  // First segment: projected → points[segment_index + 1]
+  // --- 多点路线处理 ---
+  // 第一段：投影点 → points[segment_index + 1]
   if (progress.segment_index + 1 < task.points.size())
   {
     const navdog::RoutePoint& next_pt =
@@ -320,7 +332,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
     cur_y = next_pt.y;
   }
 
-  // Remaining segments
+  // 处理剩余路段
   for (std::size_t i = progress.segment_index + 2;
        i < task.points.size() && remaining_budget > kEpsilon;
        ++i)
@@ -341,7 +353,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
     cur_y = seg_end.y;
   }
 
-  // All segments processed without finding obstacle
+  // 所有路段均处理完毕且未发现障碍物
   assessment.checked_distance_m = cumulative_distance;
   assessment.blocked = false;
   assessment.valid = true;

@@ -21,6 +21,7 @@ namespace
 
 constexpr double kPi = 3.14159265358979323846;
 
+// MotionClass：当前周期下发速度的运动分类，仅用于日志诊断。
 enum class MotionClass
 {
   STOP,
@@ -28,6 +29,7 @@ enum class MotionClass
   DRIVE
 };
 
+// clampValue：将数值限幅到 [-limit, limit] 区间内，limit<=0 时不限幅（直接返回原值）。
 template <typename T>
 T clampValue(const T value, const T limit)
 {
@@ -35,6 +37,10 @@ T clampValue(const T value, const T limit)
   return std::max(-limit, std::min(limit, value));
 }
 
+// applyMinimumEffectiveVelocity：死区修正。输入 value 为目标速度，zero_threshold 为
+// 视作零的阈值，minimum_effective 为真机能真正响应的最小有效速度。
+// 逻辑：小于zero_threshold直接归零；大于等于minimum_effective保持不变；
+// 介于两者之间时抬升到minimum_effective（保留符号），避免真机因指令过小而不动。
 double applyMinimumEffectiveVelocity(const double value,
                                      const double zero_threshold,
                                      const double minimum_effective)
@@ -45,6 +51,7 @@ double applyMinimumEffectiveVelocity(const double value,
   return std::copysign(minimum_effective, value);
 }
 
+// classifyMotion：根据线速度模长与角速度将当前指令分类为 DRIVE/TURN/STOP，仅用于日志。
 MotionClass classifyMotion(const double vx, const double vy,
                            const double yaw_rate)
 {
@@ -53,6 +60,7 @@ MotionClass classifyMotion(const double vx, const double vy,
   return MotionClass::STOP;
 }
 
+// motionClassName：将 MotionClass 转为字符串，供日志打印使用。
 const char* motionClassName(const MotionClass value)
 {
   switch (value)
@@ -64,15 +72,22 @@ const char* motionClassName(const MotionClass value)
   }
 }
 
+// normalizeFrameId：去除 frame_id 开头的 '/'（tf2 要求 frame_id 不能带前导斜杠）。
 std::string normalizeFrameId(std::string frame_id)
 {
   if (!frame_id.empty() && frame_id.front() == '/') frame_id.erase(0, 1);
   return frame_id;
 }
 
+// DmqBridgeNode：dmq_dog 桥接节点。连接 ROS 与真机 MQTT 接口，职责包括：
+//   1. 订阅 /cmd_vel 等规划指令，经限幅/死区/前进优先适配等处理后通过 MQTT 下发给真机；
+//   2. 订阅真机上报的里程计/状态并转发为 ROS 消息；
+//   3. 转发雷达点云/里程计给导航链路，并发布雷达安装位置的静态TF。
 class DmqBridgeNode
 {
 public:
+  // 构造函数：加载参数、注册所有订阅/发布者、绑定 MQTT 回调、发布雷达静态TF、
+  // 启动 MQTT 客户端、创建周期性发布定时器。
   DmqBridgeNode(ros::NodeHandle nh, ros::NodeHandle pnh)
     : nh_(std::move(nh)), pnh_(std::move(pnh)), mqtt_(loadMqttConfig())
   {
@@ -123,6 +138,7 @@ public:
   }
 
 private:
+  // loadMqttConfig：从参数服务器读取 MQTT 相关配置（host/port/topic等），未设置时使用默认值。
   dmq_dog::MqttConfig loadMqttConfig()
   {
     dmq_dog::MqttConfig config;
@@ -139,6 +155,10 @@ private:
     return config;
   }
 
+  // loadRuntimeConfig：从参数服务器读取运行时配置。包括：topic名、发布频率与超时阈值、
+  // 速度限幅、死区参数、前进优先适配参数（包括仅转向模式的进入/退出角度阈值转换）、
+  // 坐标系名称、狗体尺寸与雷达安装位姿。其中 turn_only_enter/exit 角度带滞后区间，
+  // exit角度不得超过enter角度，避免在临界值附近频繁抖动。
   void loadRuntimeConfig()
   {
     pnh_.param("topics/cmd_vel", cmd_vel_topic_, cmd_vel_topic_);
@@ -224,6 +244,8 @@ private:
     pnh_.param("lidar/rpy/yaw", lidar_yaw_, lidar_yaw_);
   }
 
+  // cmdCallback：接收规划下发的 /cmd_vel 指令，线程安全地缓存最新指令与时间戳，
+  // 供 publishTimer 周期性取用（并用于超时判断）。
   void cmdCallback(const geometry_msgs::Twist::ConstPtr& msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -231,6 +253,10 @@ private:
     latest_cmd_time_ = ros::Time::now();
   }
 
+  // rosOdomCallback：接收 ROS 里程计消息。
+  // 步骤：1.更新里程计时间戳用于看门狗超时检测；2.原样转发给导航链路；
+  // 3.将机体位姿按雷达安装外参(lidar_x/y/z, lidar_roll/pitch/yaw)平移+旋转得到
+  //   雷达在世界系下的位姿，发布为 lidar_pose 供定位/建图模块使用。
   void rosOdomCallback(const nav_msgs::Odometry::ConstPtr& msg)
   {
     {
@@ -259,6 +285,7 @@ private:
     lidar_pose_pub_.publish(lidar_pose);
   }
 
+  // navStateCallback：接收导航状态机当前状态（NAV_STATE枚举值），缓存并标记为有效。
   void navStateCallback(const std_msgs::UInt8::ConstPtr& msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -266,12 +293,16 @@ private:
     nav_state_valid_ = true;
   }
 
+  // navModeCallback：接收导航模式（ROUTE_FOLLOW/LOCAL_AVOID等）并缓存，当前仅用于缓存，
+  // 未在本文件其他处直接使用。
   void navModeCallback(const std_msgs::UInt8::ConstPtr& msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     latest_nav_mode_ = msg->data;
   }
 
+  // protocolState：将内部 NAV_STATE 枚举映射为真机 MQTT 协议约定的 status/error 编号。
+  // 若尚未收到过导航状态，保持 status/error 不变。未知状态则回退为 status=0, error=1。
   void protocolState(int& status, int& error) const
   {
     if (!nav_state_valid_) return;
@@ -290,12 +321,14 @@ private:
     }
   }
 
+  // lidarScanCallback：只用于更新雷达时间戳（看门狗），不转发具体数据。
   void lidarScanCallback(const sensor_msgs::LaserScan::ConstPtr&)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     latest_lidar_time_ = ros::Time::now();
   }
 
+  // lidarCloudCallback：更新雷达时间戳并将点云原样转发给导航链路使用。
   void lidarCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& msg)
   {
     {
@@ -305,6 +338,8 @@ private:
     navigation_cloud_pub_.publish(*msg);
   }
 
+  // resetMotionAdapter：重置前进优先适配器的内部状态（侧向误差滤波、仅转向标志、
+  // 上次发布角速度与时间戳），在指令过时/为零时调用，避免遗留状态影响下一次运动。
   void resetMotionAdapter()
   {
     lateral_heading_error_ = 0.0;
@@ -314,6 +349,19 @@ private:
     last_publish_time_ = ros::Time();
   }
 
+  // adaptToForwardMotion：将全向规划器输出的全向速度(vx,vy,yaw_rate)适配为
+  // 非全向真机（只能前进+转向）可执行的指令。
+  // 输入输出：vx/vy/yaw_rate 为引用传参，就地修改。
+  // 步骤：
+  //   1. 由 vy 计算朝向误差 heading_error=atan2(vy,|vx|)，并用一阶低通滤波
+  //      （lateral_filter_alpha_）平滑到 lateral_heading_error_，避免抖动；
+  //      vy接近零时误差指数衰减归零；
+  //   2. 把该误差按增益 lateral_to_yaw_gain_ 叠加到 yaw_rate 上，让机体转向这个
+  //      方向而非侧向平移，保留规划器的路径意图，并将 vy 清零；
+  //   3. 带滞后判断是否进入/退出“仅转向”模式（turn_only_active_）：
+  //      误差超过 enter 角度触发进入，低于 exit 角度退出，避免临界频繁切换；
+  //   4. 仅转向模式下将 vx 也清零，适合大角度偏差时原地转向对齐而不走斜线；
+  //   5. 模式发生切换时打印日志便于排查。
   void adaptToForwardMotion(double& vx, double& vy, double& yaw_rate)
   {
     if (std::fabs(vy) < 1e-6)
@@ -364,6 +412,12 @@ private:
     }
   }
 
+  // limitPublishedYawRate：对实际下发的角速度做加加速度限制，避免真机转向突变。
+  // 输入：target - 本周期期望的角速度；now - 当前时间（用于计算dt）。
+  // 步骤：1.根据上次发布时刻计算实际dt（异常则回退到发布周期值）；
+  // 2.若新旧方向相反，先按最大减速度递减到零再反向（真实转向必须过零才能反向）；
+  // 3.否则根据是加速还是减速选择对应的最大变化量并限幅过渡。
+  // 输出：限幅后的角速度，同时更新 published_yaw_rate_ 作为下次计算的起点。
   double limitPublishedYawRate(const double target, const ros::Time& now)
   {
     double dt = 1.0 / std::max(1.0, publish_rate_hz_);
@@ -392,6 +446,9 @@ private:
     return result;
   }
 
+  // logMqttControl：诊断日志输出。在看门狗状态变化、运动分类变化时打印一次变化日志，
+  // 并以 1Hz 频率打印完整 trace 日志。输入：原始指令、实际下发速度、指令是否
+  // 过时/为零、当前status/error。无返回值，仅供排查使用。
   void logMqttControl(const geometry_msgs::Twist& raw_cmd,
                       const double vx, const double vy,
                       const double yaw_rate, const bool cmd_stale,
@@ -438,6 +495,19 @@ private:
         vx, vy, yaw_rate);
   }
 
+  // publishTimer：定时器回调，按 publish_rate_hz_ 频率汇总当前指令/状态并通过 MQTT 下发给真机。
+  // 步骤：
+  //   1. 判断 cmd_vel 是否超时（cmd_stale），超时则使用全零指令；
+  //   2. 确定 status/error：优先使用真机上报的状态，否则根据指令是否为零推断，
+  //      再用 protocolState 根据导航状态机覆盖；
+  //   3. 若启用看门狗且里程计/雷达数据超时，强制置 error=1；
+  //   4. 若启用前进优先，调用 adaptToForwardMotion 适配全向指令；
+  //   5. 对 vx/vy/yaw_rate 依次做限幅（前进优先时角速度限幅取 max_yaw_rate_ 与
+  //      forward_motion_max_yaw_rate_ 中较小者）；
+  //   6. 若启用死区，对三个分量分别应用 applyMinimumEffectiveVelocity 修正；
+  //   7. 前进优先模式下，指令过时/为零时重置适配器并强制角速度为0，否则对角速度
+  //      应用 limitPublishedYawRate 做加加速度限制；
+  //   8. 记录诊断日志，最后通过 MQTT 发布最终指令。
   void publishTimer(const ros::TimerEvent&)
   {
     geometry_msgs::Twist cmd;
@@ -506,6 +576,8 @@ private:
     mqtt_.publishControl(error, status, vx, vy, yaw_rate);
   }
 
+  // publishMqttOdom：将真机上报的里程计数据转换为 nav_msgs::Odometry 并发布，
+  // 供需要真机自报位姿的上层模块使用（与rosOdomCallback转发的ROS自定位区分）。
   void publishMqttOdom(const dmq_dog::DogOdom& odom)
   {
     nav_msgs::Odometry msg;
@@ -522,6 +594,8 @@ private:
     mqtt_odom_pub_.publish(msg);
   }
 
+  // updateDogStatus：缓存真机上报的硬件状态，并将 error/status 分别发布为独立topic
+  // （带latch，方便新订阅者立即拿到最后一次值）。
   void updateDogStatus(const dmq_dog::DogStatus& status)
   {
     {
@@ -536,6 +610,8 @@ private:
     dog_status_pub_.publish(status_msg);
   }
 
+  // publishStaticLidarTf：根据雷达安装外参发布 base_link->lidar 的静态TF，
+  // 并打印狗体尺寸与雷达安装位置日志。
   void publishStaticLidarTf()
   {
     geometry_msgs::TransformStamped tf_msg;
@@ -647,6 +723,8 @@ private:
 
 }  // namespace
 
+// main：节点入口。初始化 ROS、构造 DmqBridgeNode（构造函数内完成所有订阅/发布/
+// MQTT启动的初始化），进入 ros::spin() 循环处理回调。
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "dmq_bridge_node");

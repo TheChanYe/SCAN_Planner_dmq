@@ -14,6 +14,7 @@ namespace navdog_runtime
 namespace
 {
 
+// MotionClass：用于日志分类的运动状态枚举（停止/原地转向/前进）。
 enum class MotionClass
 {
   STOP = 0,
@@ -21,6 +22,9 @@ enum class MotionClass
   DRIVE
 };
 
+// classifyMotion：根据最终速度指令粗略分类当前运动状态，仅用于日志变化检测，
+// 不参与任何控制决策。判定顺序：指令无效→STOP；线速度模超过阈值→DRIVE；
+// 角速度绝对值超过阈值→TURN；否则→STOP。
 MotionClass classifyMotion(const navdog::VelocityCommand& cmd)
 {
   if (!cmd.valid) return MotionClass::STOP;
@@ -29,6 +33,7 @@ MotionClass classifyMotion(const navdog::VelocityCommand& cmd)
   return MotionClass::STOP;
 }
 
+// motionClassName：将MotionClass枚举转换为可读字符串，供日志打印使用。
 const char* motionClassName(const MotionClass value)
 {
   switch (value)
@@ -42,9 +47,15 @@ const char* motionClassName(const MotionClass value)
 
 }  // namespace
 
+// loadNavdogConfig：从ROS参数服务器加载完整Runtime配置后，只取出其中的
+// navdog_core配置部分返回（供外部只需要核心配置的场景使用，例如单元测试）。
 navdog::NavdogConfig NavdogRuntimeNode::loadNavdogConfig(ros::NodeHandle& nh)
 { return Ros1ConfigLoader::load(nh).core; }
 
+// 构造函数：保存全局/私有节点句柄，从ROS参数服务器加载完整应用配置
+// （core/task/mqtt/runtime_io/final_output），并用core+task配置构造纯C++的
+// NavigationCoordinator实例。此处不做任何ROS话题订阅/发布的注册，
+// 具体的I/O创建延后到initialize()中完成。
 NavdogRuntimeNode::NavdogRuntimeNode(
     ros::NodeHandle nh, ros::NodeHandle private_nh)
     : nh_(std::move(nh)), private_nh_(std::move(private_nh)),
@@ -53,9 +64,22 @@ NavdogRuntimeNode::NavdogRuntimeNode(
           application_config_.core, application_config_.task))
 {}
 
+// 析构函数：若MQTT桥接已启动，则显式停止其后台线程，避免对象销毁后线程
+// 继续访问已释放的资源。
 NavdogRuntimeNode::~NavdogRuntimeNode()
 { if (mqtt_) mqtt_->stop(); }
 
+// initialize：完成Runtime节点的全部一次性初始化工作。
+// 步骤：
+// 1. 校验控制/状态频率参数合法（有限且为正）；
+// 2. 从私有参数服务器加载SCAN接管超时/最大重试次数配置并校验；
+// 3. 加载朝向卡滞诊断（heading_stall）相关参数并校验；
+// 4. 创建独立的GridMap用于走廊/障碍评估（与Native SCAN节点自身的GridMap相互独立）；
+// 5. 构造ScanGridMapQuery/走廊评估器/障碍汇总评估器；
+// 6. 构造并启动MQTT桥接（启动失败不阻断本地导航，仅告警）；
+// 7. 注册全部ROS订阅者/发布者，并创建固定频率控制定时器；
+// 8. 打印导航模式与SCAN恢复相关的配置日志，便于问题定位。
+// 返回值：任一关键校验失败返回false（节点应终止），否则返回true。
 bool NavdogRuntimeNode::initialize()
 {
   const auto& io = application_config_.runtime_io;
@@ -73,6 +97,22 @@ bool NavdogRuntimeNode::initialize()
       scan_takeover_timeout_sec_ <= 0.0 || scan_recovery_max_attempts_ < 0)
   {
     ROS_ERROR("invalid SCAN recovery configuration");
+    return false;
+  }
+  private_nh_.param("heading_stall/check_sec",
+      heading_stall_check_sec_, 2.5);
+  private_nh_.param("heading_stall/min_delta_rad",
+      heading_stall_min_delta_rad_, 0.15);
+  private_nh_.param("heading_stall/yaw_rate_frac",
+      heading_stall_yaw_rate_frac_, 0.8);
+  if (!std::isfinite(heading_stall_check_sec_) ||
+      heading_stall_check_sec_ <= 0.0 ||
+      !std::isfinite(heading_stall_min_delta_rad_) ||
+      heading_stall_min_delta_rad_ < 0.0 ||
+      !std::isfinite(heading_stall_yaw_rate_frac_) ||
+      heading_stall_yaw_rate_frac_ <= 0.0 || heading_stall_yaw_rate_frac_ > 1.0)
+  {
+    ROS_ERROR("invalid heading_stall diagnostic configuration");
     return false;
   }
 
@@ -131,12 +171,18 @@ bool NavdogRuntimeNode::initialize()
   return true;
 }
 
+// scanTakeoverReadyCallback：接收Native SCAN接管就绪信号，
+// 更新scan_takeover_ready_标志（消息为空或data为false时视为未就绪）。
 void NavdogRuntimeNode::scanTakeoverReadyCallback(
     const std_msgs::Bool::ConstPtr& msg)
 {
   scan_takeover_ready_ = msg && msg->data;
 }
 
+// odomCallback：ROS里程计回调，将Odometry消息转换为世界系下的RobotState。
+// 步骤：1.抽取位置与从yaw；2.若配置表示旋速为机体系，则旋转到世界系；
+// 3.抽取角速度与时间戳；4.对所有字段做有限性检查得到valid标志；
+// 5.加锁写入共享状态robot_，供控制周期读取。
 void NavdogRuntimeNode::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
 {
   navdog::RobotState robot{};
@@ -163,6 +209,13 @@ void NavdogRuntimeNode::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
   robot_ = robot;
 }
 
+// processEvents：从MQTT事件队列中依次取出待处理事件并提交给导航协调器处理，
+// 根据处理结果做相应的副作用：
+// - STARTED：重置终止清理序号/进度日志初始化标志，重置Native SCAN与接管计数，
+//   发布完整路线并标记待发布参考路径（预热，让RouteFollower先控制机器人）；
+// - CANCELLED：标记进度日志未初始化，若SCAN尚未因终止状态被清理则主动重置Native SCAN，
+//   清空进度/反馈并发布空路线；
+// - REJECTED_BUSY：仅节流日志提示当前任务占用中。
 void NavdogRuntimeNode::processEvents()
 {
   navdog_task::NavigationEvent event{};
@@ -214,6 +267,8 @@ void NavdogRuntimeNode::processEvents()
   }
 }
 
+// processPlannerAction：将导航协调器产生的规划器动作转换为下一周期提交给协调器的
+// 规划器反馈：SET_ROUTE时构造就绪反馈，CANCEL时清空待提交反馈，其余类型不处理。
 void NavdogRuntimeNode::processPlannerAction(
     const navdog::PlannerAction& action, double now_sec)
 {
@@ -223,6 +278,8 @@ void NavdogRuntimeNode::processPlannerAction(
     pending_planner_feedback_ = navdog::PlannerFeedback{};
 }
 
+// feedbackForAction：将SET_ROUTE类型的规划器动作转换为就绪状态的PlannerFeedback；
+// 若非SET_ROUTE、序号为0或now_sec无效，则返回默认（无效）反馈。
 navdog::PlannerFeedback NavdogRuntimeNode::feedbackForAction(
     const navdog::PlannerAction& action, double now_sec)
 {
@@ -236,6 +293,23 @@ navdog::PlannerFeedback NavdogRuntimeNode::feedbackForAction(
   return feedback;
 }
 
+// controlCallback：固定频率（默认50Hz）的主控制循环，严格按下列顺序执行：
+// 1. 处理待处理MQTT事件（processEvents）；
+// 2. 加锁读取最新机器人状态作为CoreInput输入；
+// 3. 若障碍汇总评估器存在则评估障碍信息；
+// 4. 若当前有有效路线且上次进度有效且地图已就绪，则评估路径走廊观测；
+// 5. 写入待提交的规划器反馈并清空；
+// 6. 调用导航协调器的update()得到本周期输出；
+// 7. 记录导航状态变化日志、检查朝向卡滞诊断；
+// 8. 若导航模式发生转换，处理进入/退出LOCAL_AVOID的交接日志与同步发布；
+// 9. 处理SCAN接管超时重试；
+// 10. 延迟发布待发布的Native SCAN参考路径（确保重置先于路径到达）；
+// 11. 分发规划器动作并更新路线进度快照；
+// 12. 发布最终速度指令/状态/模式；
+// 13. 处理终止状态迁移（先发布终止状态让mux硬停车，再重置Native SCAN，
+//     避免50Hz重置循环）；
+// 14. 按频率限制发布MQTT状态。
+// Runtime不在此处重新判断Route/SCAN切换条件，该判断始终留在navdog_core。
 void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 {
   const double now_sec = ros::Time::now().toSec();
@@ -259,6 +333,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 
   const navdog::CoreOutput output = coordinator_->update(input, now_sec);
   logNavigationChanges(output, input);
+  checkHeadingStall(output, input, now_sec);
   if (output.navigation_mode.transitioned)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
@@ -298,6 +373,8 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   }
 }
 
+// publishTakeoverSync：向Native SCAN发布接管同步信号（带上当前机器人位置/速度日志），
+// 用于提示Native SCAN即将接管。
 void NavdogRuntimeNode::publishTakeoverSync(
     const navdog::CoreInput& input, const navdog::CoreOutput& output)
 {
@@ -307,6 +384,13 @@ void NavdogRuntimeNode::publishTakeoverSync(
       input.robot.y, input.robot.vx, input.robot.vy);
 }
 
+// handleScanRecovery：当处于LOCAL_AVOID模式且SCAN接管迟迟未就绪时，按次数限制重试：
+// 1. 若不处于LOCAL_AVOID，清空计时/计数并在需要时取消待发布标志，直接返回；
+// 2. 若已就绪，清空计时并返回；
+// 3. 若尚未开始计时，记录请求时刻并返回；
+// 4. 若超过接管超时时长，判断重试次数是否已用尽：已用尽则仅告警不再重试（安全停车）；
+// 5. 否则增加重试计数、主动重置Native SCAN并标记待重新发布参考路径/接管同步，
+//    并重置请求计时以开始下一轮超时等待。
 void NavdogRuntimeNode::handleScanRecovery(
     const navdog::CoreOutput& output, double now_sec)
 {
@@ -355,6 +439,13 @@ void NavdogRuntimeNode::handleScanRecovery(
   scan_takeover_request_sec_ = now_sec;
 }
 
+// logNavigationChanges：对比本周期与上一次记录的导航状态/运动分类/路线进度段/
+// 导航模式，仅在发生变化时打印对应日志（避免日志泛滥）：
+// - NAV_STATE：状态变化时打印前后状态、指令、进度、机器人位姿等完整信息；
+// - NAV_COMMAND：运动分类变化时打印当前运动/状态/模式/指令；
+// - ROUTE_PROGRESS：路线段索引变化时打印前后段与进度详情；
+// - NAV_TRACE：固定1Hz节流打印完整状态追踪信息（不依赖变化检测）；
+// - NAV_MODE：导航模式变化时打印详细的走廊/障碍观测与确认计时信息。
 void NavdogRuntimeNode::logNavigationChanges(
     const navdog::CoreOutput& output, const navdog::CoreInput& input)
 {
@@ -490,6 +581,80 @@ void NavdogRuntimeNode::logNavigationChanges(
   }
 }
 
+// checkHeadingStall：只读诊断，不修改final_cmd。用于检测“持续接近最大角速度
+// 指令但实际朝向几乎不推进”的异常情况（可能意味着定位退化或机体卡滞，
+// 而现有SafetySupervisor的odom_timeout_sec只能检测里程计时间戳过时，
+// 无法覆盖里程计持续新鲜但位姿本身停滞的情况）。
+// 步骤：
+// 1. 输入无效则重置窗口并返回；
+// 2. 判断是否“几乎不平移+接近最大角速度”，否则重置窗口并返回；
+// 3. 若窗口未激活，开启新窗口（记录起始时刻与起始yaw）并返回；
+// 4. 若窗口时长未达到检查间隔，返回继续累积；
+// 5. 计算并归一化yaw变化量，若小于阈值则告警输出存在持续旋转但无实际转向的异常；
+// 6. 不论是否告警，重新开启窗口以便持续旋转过程中反复检查。
+void NavdogRuntimeNode::checkHeadingStall(
+    const navdog::CoreOutput& output, const navdog::CoreInput& input,
+    double now_sec)
+{
+  // Read-only diagnostic; never modifies output.final_cmd. See header
+  // comment for rationale: the existing SafetySupervisor odom_timeout_sec
+  // check only detects stale odometry timestamps, not odometry that keeps
+  // arriving on time while the reported pose itself stops advancing during
+  // an in-place rotation (a signature of degraded/lost localization).
+  if (!input.robot.valid || !std::isfinite(input.robot.yaw) ||
+      !output.final_cmd.valid || !std::isfinite(now_sec))
+  {
+    heading_stall_window_active_ = false;
+    return;
+  }
+
+  const double max_w = application_config_.core.limits.max_yaw_rate;
+  const bool near_max_turn =
+      std::isfinite(max_w) && max_w > 1e-6 &&
+      std::hypot(output.final_cmd.vx, output.final_cmd.vy) <= 0.02 &&
+      std::fabs(output.final_cmd.yaw_rate) >=
+          heading_stall_yaw_rate_frac_ * max_w;
+
+  if (!near_max_turn)
+  {
+    heading_stall_window_active_ = false;
+    return;
+  }
+
+  if (!heading_stall_window_active_)
+  {
+    heading_stall_window_active_ = true;
+    heading_stall_window_start_sec_ = now_sec;
+    heading_stall_window_start_yaw_ = input.robot.yaw;
+    return;
+  }
+
+  const double elapsed = now_sec - heading_stall_window_start_sec_;
+  if (!std::isfinite(elapsed) || elapsed < heading_stall_check_sec_)
+    return;
+
+  double delta_yaw = input.robot.yaw - heading_stall_window_start_yaw_;
+  while (delta_yaw > M_PI) delta_yaw -= 2.0 * M_PI;
+  while (delta_yaw < -M_PI) delta_yaw += 2.0 * M_PI;
+
+  if (std::fabs(delta_yaw) < heading_stall_min_delta_rad_)
+  {
+    ROS_WARN("NAV_HEADING_STALL commanded_w=%.3f actual_delta_yaw=%.3f "
+             "elapsed=%.2f state=%s mode=%s",
+        output.final_cmd.yaw_rate, delta_yaw, elapsed,
+        navdog::navStateName(output.state),
+        navdog::navigationModeName(output.navigation_mode.mode));
+  }
+
+  // Restart the window regardless of outcome so a sustained turn keeps
+  // being re-checked instead of triggering once and going silent.
+  heading_stall_window_active_ = true;
+  heading_stall_window_start_sec_ = now_sec;
+  heading_stall_window_start_yaw_ = input.robot.yaw;
+}
+
+// toTwist：将navdog核心层的VelocityCommand转换为geometry_msgs::Twist。
+// 若指令无效或存在非有限值，则返回默认零速度的Twist。
 geometry_msgs::Twist NavdogRuntimeNode::toTwist(
     const navdog::VelocityCommand& command)
 {
@@ -504,6 +669,8 @@ geometry_msgs::Twist NavdogRuntimeNode::toTwist(
   return result;
 }
 
+// publishOutput：将核心输出的速度指令转换并发布到最终输出主topic，
+// 同时发布当前导航状态与导航模式（供其他节点/监控订阅）。
 void NavdogRuntimeNode::publishOutput(
     const navdog::CoreOutput& output, double now_sec)
 {
@@ -519,6 +686,7 @@ void NavdogRuntimeNode::publishOutput(
   mode_publisher_.publish(mode);
 }
 
+// publishRoute：将当前导航任务的完整路线作为Path发布（供可视化/监控使用）。
 void NavdogRuntimeNode::publishRoute()
 {
   nav_msgs::Path path;
@@ -538,6 +706,13 @@ void NavdogRuntimeNode::publishRoute()
   route_publisher_.publish(path);
 }
 
+// handleTerminalTransition：当导航协调器进入终止状态（SUCCEEDED/FAILED）时精确重置
+// Native SCAN一次（供同一任务序号只触发一次，避免重复重置）：
+// 1. 判断是否刚刚进入SUCCEEDED或FAILED；
+// 2. 若刚进入且本任务序号尚未清理过，则标记已清理、重置Native SCAN，
+//    清空待发布标志与待提交反馈，若成功则通知MQTT完成当前活动任务，
+//    并发布空路线、打印终止日志；
+// 3. 无论是否发生迁移，都更新上次输出状态与初始化标志。
 void NavdogRuntimeNode::handleTerminalTransition(
     const navdog::CoreOutput& output)
 {
@@ -571,6 +746,8 @@ void NavdogRuntimeNode::handleTerminalTransition(
   output_state_initialized_ = true;
 }
 
+// resetNativeScan：向Native SCAN发布重置信号，并更新重置时刻与累计重置次数、
+// 取消待发布标志，最后打印重置原因告警日志便于问题定位。
 void NavdogRuntimeNode::resetNativeScan(const char* reason)
 {
   native_scan_reset_publisher_.publish(std_msgs::Empty{});
@@ -583,6 +760,10 @@ void NavdogRuntimeNode::resetNativeScan(const char* reason)
       reason ? reason : "UNKNOWN");
 }
 
+// scheduleNativeScanReferencePath：若标记了待发布Native SCAN参考路径，
+// 且距上次重置已经过了最小延迟（确保Native SCAN先收到重置信号），
+// 则实际发布参考路径并清除标志；若同时有待发布的接管同步，
+// 则发布同步信号并重置接管请求计时（开启下一轮超时等待）。
 void NavdogRuntimeNode::scheduleNativeScanReferencePath()
 {
   if (pending_native_scan_path_ &&
@@ -601,6 +782,11 @@ void NavdogRuntimeNode::scheduleNativeScanReferencePath()
   }
 }
 
+// publishNativeScanReferencePath：将当前进度之后的剩余路点作为参考路径发布给
+// Native SCAN，已通过的路点绝不重新交给Native SCAN。
+// 步骤：1.无效路线直接返回；2.根据进度确定首个剩余索引（若进度序号与当前
+// 任务序号匹配）；3.首点使用当前机器人位置；4.后续点仅取首个剩余索引之后的
+// 路点；5.发布并打印详细日志。
 void NavdogRuntimeNode::publishNativeScanReferencePath(
     const navdog::RouteProgress& progress)
 {
@@ -661,6 +847,10 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
       static_cast<unsigned long>(first_remaining_index));
 }
 
+// statusForOutput：根据核心输出状态与协议错误标志推导上报的status/error码：
+// 失败/紧急停止时status=0且error=2；暂停时status=5；
+// 规划/对齐/跟踪/恢复中等中间过程状态status=1；其余默认status=0，
+// error取决于输入的protocol_error。
 void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,
     bool protocol_error, int& status, int& error)
 {
@@ -676,6 +866,8 @@ void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,
            output.state == navdog::NavState::RECOVERY) status = 1;
 }
 
+// publishMqttStatus：根据核心输出与MQTT协议错误计数编码并发布MQTT状态上报，
+// 若MQTT桥接不存在则直接返回。
 void NavdogRuntimeNode::publishMqttStatus(const navdog::CoreOutput& output)
 {
   if (!mqtt_) return;

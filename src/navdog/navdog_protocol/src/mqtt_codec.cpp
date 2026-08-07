@@ -15,7 +15,9 @@ namespace
 {
 /**
  * @brief finiteJson
- * 检查JSON值是否为有限数，并将其转换为double类型。
+ * 检查JSON值是否为数值类型且为有限数，并转换为double输出。
+ * 输入：value - 待检查的JSON节点。输出：output - 转换后的数值（仅当返回true时有效）。
+ * 返回：非数值类型或NaN/Inf均返回false。
  */
 bool finiteJson(const Json::Value& value, double& output)
 {
@@ -26,9 +28,19 @@ bool finiteJson(const Json::Value& value, double& output)
 }
 /**
  * @brief parseTaskMessage
- * 解析任务消息，提取导航事件和充电保留标志。
- * 具体实现包括解析JSON负载，检查控制字段，提取导航数据和路点信息，并验证最大速度和路点的有效性。
- * 然后将解析结果存储在NavigationEvent对象中，并返回解析是否成功。
+ * 解析任务下发JSON报文为NavigationEvent。
+ * 步骤：
+ *   1.解析JSON失败或非object或ctrl非int直接返回false；
+ *   2.ctrl==0或ctrl==3表示取消任务（3为充电保留语义），直接构造CANCEL_TASK事件返回true；
+ *   3.非ctrl==1或sequence为0（未分配内部序号）均视为无效；
+ *   4.取navigation_data.points数组，非object/非array/空数组均无效；
+ *   5.构造START_TASK事件，填入内部sequence、模式固定为NORMAL_AVOID；
+ *   6.解析max_vx（缺失时用default_max_vx），必须为正数；
+ *   7.遍历每个路点：x/y必须存在且为有限数，z缺失时用default_route_z，
+ *      yaw可选但存在时必须为有限数并标记has_yaw；
+ *   8.全部通过则返回true，任一环节失败则返回false。
+ * 输入：payload - JSON文本；default_route_z/default_max_vx - 默认值；sequence - 内部序号。
+ * 输出：event - 解析结果；charging_reserve - 是否为充电保留。
  */
 bool MqttCodec::parseTaskMessage(const std::string& payload,
     double default_route_z, double default_max_vx, std::uint64_t sequence,

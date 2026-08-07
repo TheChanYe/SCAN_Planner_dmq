@@ -3,6 +3,14 @@
 namespace navdog_runtime
 {
 
+// load：从ROS参数服务器按层级路径加载navdog_runtime全部配置项（使用LOAD宏封装
+// nh.param(name, field, field)，未设置时保留传入field的默认值）。
+// 步骤：1.依次加载运行频率、任务速度范围、起点对齐、路线进度、路径走廊、
+//      安全、导航模式切换、速度/加速度限幅、路线跟随、目标控制器等各子模块参数；
+//   2.加载runtime IO/最终输出相关参数；3.加载MQTT桥接层参数（队列长度先用int
+//      中转再转换为size_t，避免param宏对size_t支持不佳）；
+//   4.将near_goal_turn_only_deg/finish_yaw_tolerance_deg两个度数配置预先转换为
+//      弧度缓存字段，避免下游每次使用时重复转换。
 ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
 {
   ApplicationConfig app{};

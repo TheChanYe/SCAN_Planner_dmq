@@ -13,11 +13,16 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 
+// clamp：将数值限制在 [min_value, max_value] 区间内。
 double clamp(double value, double min_value, double max_value)
 {
   return std::max(min_value, std::min(max_value, value));
 }
 
+// isExplicitStopCommand：判断这是否是一个"上游主动请求的零速停止"指令
+//（例如暂停/取消/失败等主动停止）：必须同时满足 vx/vy/yaw_rate 均为零，
+// 且 source 属于已知的"显式停止"来源集合。命中后 apply() 会直接放行该零速指令，
+// 不受传感器新鲜度等其他安全检查影响（因为零速本身就是安全的）。
 bool isExplicitStopCommand(const VelocityCommand& cmd) noexcept
 {
   const bool zero_motion =
@@ -60,6 +65,7 @@ SafetySupervisor::SafetySupervisor(
 // reset
 // =============================================================================
 
+// reset：清空上一周期输出记录，避免新任务开始时被旧速度影响加速度限制基准。
 void SafetySupervisor::reset() noexcept
 {
   previous_output_ = VelocityCommand{};
@@ -67,10 +73,10 @@ void SafetySupervisor::reset() noexcept
   has_previous_output_ = false;
 }
 
-// =============================================================================
-// safetyStop
-// =============================================================================
-
+// safetyStop：生成一个零速安全指令。
+// 步骤：构造 vx=vy=yaw_rate=0 的有效指令，打上时间戳与来源，
+// 并同时将其写入 previous_output_/previous_stamp_sec_，作为下一周期加速度限制的新基准，
+// 保证下次从零速重新加速时仍受加速度上限约束。
 VelocityCommand SafetySupervisor::safetyStop(
     double now_sec,
     CommandSource source) noexcept
@@ -92,6 +98,13 @@ VelocityCommand SafetySupervisor::safetyStop(
 // checkTimeouts
 // =============================================================================
 
+// checkTimeouts：依次检查里程计、障碍物、地图三个数据源的时效性：
+//   1. now_sec 本身必须是有限数；
+//   2. 机器人状态必须有效且时间戳有限，且其龄期(now_sec-stamp)在
+//      [-future_tolerance_sec, odom_timeout_sec] 范围内（既不能太旧也不能是"未来"时间戳）；
+//   3. 障碍物数据同样需要有效且龄期在 [-future_tolerance_sec, obstacle_timeout_sec] 内；
+//   4. 地图同样需要有效且龄期在同一阈值内（复用 obstacle_timeout_sec）。
+// 任一项不满足则立即返回 false，调用方应视为不安全而触发停止（防定位退化/感知卡死）。
 bool SafetySupervisor::checkTimeouts(
     const Context& context,
     double now_sec) const noexcept
@@ -144,6 +157,11 @@ bool SafetySupervisor::checkTimeouts(
 // checkTrajectoryIdentity
 // =============================================================================
 
+// checkTrajectoryIdentity：校验上报的局部轨迹是否属于当前有效任务。
+//   - 若根本没有上报轨迹（valid=false），认为无需校验，直接通过；
+//   - 若有轨迹但持续时长非法（非正数），视为无效；
+//   - 若 purpose 为 NONE 或 task_sequence 为 0，说明这是一条"没归属"的残留轨迹，
+//     视为无效以防止旧轨迹未及时清除而被错误使用。
 bool SafetySupervisor::checkTrajectoryIdentity(
     const Context& context) const noexcept
 {
@@ -172,6 +190,11 @@ bool SafetySupervisor::checkTrajectoryIdentity(
 // computeFrontSpeedLimit
 // =============================================================================
 
+// computeFrontSpeedLimit：根据正前方最近障碍物距离计算一个 [0,1] 的前进速度缩放系数。
+//   - 障碍物数据无效/距离非有限数时，认为没有前方障碍，返回无穷大（不限制）；
+//   - 距离 <= emergency_stop（紧急停止阈值）时返回 0（必须停下）；
+//   - 距离 >= slow_down_front（开始减速阈值）时返回无穷大（无需减速）；
+//   - 中间距离区间内按线性插值换算成 [0,1] 系数（距离越近系数越小）。
 double SafetySupervisor::computeFrontSpeedLimit(
     const ObstacleSummary& obstacles) const noexcept
 {
@@ -203,6 +226,10 @@ double SafetySupervisor::computeFrontSpeedLimit(
 // computeYawRateSpeedPenalty
 // =============================================================================
 
+// computeYawRateSpeedPenalty：根据当前转向角速度占最大角速度的比例，
+// 计算前进速度的惩罚系数 = 1 - |yaw_rate|/max_yaw_rate。
+// 参数非法（非有限数、max_vx 过小、最大角速度过小）时直接返回 1.0（不惩罚）。
+// 目的是让转得越快时允许的前进速度越低，避免转弯时打滑或过弯半径过大。
 double SafetySupervisor::computeYawRateSpeedPenalty(
     double yaw_rate_cmd,
     double max_vx) const noexcept
@@ -225,6 +252,12 @@ double SafetySupervisor::computeYawRateSpeedPenalty(
 // shouldApplyAccelerationLimit
 // =============================================================================
 
+// shouldApplyAccelerationLimit：判断本周期是否应对加速度进行限制。
+//   - 无效指令不限制；
+//   - 来源为 SAFETY_STOP/FAILED_STOP/PAUSE_STOP/CANCEL_STOP 等主动减速/停止场景不限制
+//     （允许立即停下，不能因为加速度限制而延迟制动）；
+//   - 地图无效时也不限制（后续会走到安全停止分支）；
+//   - 其余情况下需要限制加速度。
 bool SafetySupervisor::shouldApplyAccelerationLimit(
     const VelocityCommand& raw_cmd,
     const Context& context) const noexcept
@@ -251,6 +284,36 @@ bool SafetySupervisor::shouldApplyAccelerationLimit(
 // apply
 // =============================================================================
 
+// apply：安全监督主入口，每个控制周期对上游输出的原始指令做完整的安全审查与限幅。
+// 整体流程（按优先级从高到低）：
+//   1. 无效指令 -> 直接安全停止；
+//   2. vx/vy/yaw_rate 任一项非有限数(NaN/Inf) -> 安全停止；
+//   3. 若是上游主动请求的显式零速停止（isExplicitStopCommand）-> 直接放行，
+//      保持暂停/等待/取消语义不受传感器新鲜度影响（不削弱安全性）；
+//   4. 时效性检查失败(checkTimeouts) 或地图无效 -> 安全停止；
+//   5. 还没有历史输出记录（刚启动）-> 先输出一次停止作为基准；
+//   6. 局部轨迹身份校验失败(checkTrajectoryIdentity) -> 安全停止；
+//   7. 判断是否为 GOAL_ALIGN 或原地转向（vx=vy=0但yaw_rate非0），
+//      这两种情况强制将 vx/vy 归零（immediate_linear_stop），避免原地转向时有残留平移量；
+//   8. 计算动态最大线速度 effective_max_vx（任务上限与全局上限取较小值）；
+//   9. 前方障碍物减速：用 computeFrontSpeedLimit 限制 limited_vx（不能为负）；
+//  10. 转向惩罚：用 computeYawRateSpeedPenalty 进一步限制 limited_vx；
+//  11. 侧向速度 limited_vy 直接限幅到 ±max_vy；
+//  12. 角速度 limited_w 限幅到 ±min(max_yaw_rate, 0.65)（硬件安全上限）；
+//  13. 判断前方紧急障碍(front_emergency_stop：距离<=紧急停止阈值)与局部脱困轨迹激活
+//      (local_escape_active：当前轨迹目的为LOCAL_AVOID且属于当前任务)：
+//      全向底盘即使前方紧急也应允许旋转/侧移/沿经碰撞检查过的局部避障轨迹小幅度倒退，
+//      因此局部脱困时允许一个很小的前进封顶(kLocalEscapeForwardCapMps=0.06m/s)，
+//      否则直接归零制止正向前进；
+//  14. 加速度限制（仅当 shouldApplyAccelerationLimit 为 true 且已有历史输出时）：
+//      根据 dt 和最大加速度计算本周期允许的最大变化量，将 vx/vy/yaw_rate 钳制在
+//      [上次输出-最大变化, 上次输出+最大变化] 范围内（原地转向/对齐时不限制 vx/vy）；
+//  15. 加速度限制之后再次复查前方紧急停止（防止加速度限制把前进速度"拉回来"）；
+//  16. 构造最终指令，对接近零的分量做小幅度清零（避免浮点残留噪声）；
+//  17. 根据最终指令与原始指令的差异重新标记 source：
+//      若最终全零但原始非零 -> SAFETY_STOP；若任一分量被明显修改 -> SAFETY_SLOW；
+//      否则保留原始来源（未受安全干预）；
+//  18. 更新 previous_output_/previous_stamp_sec_/has_previous_output_，供下一周期使用。
 VelocityCommand SafetySupervisor::apply(
     const VelocityCommand& raw_cmd,
     const Context& context,

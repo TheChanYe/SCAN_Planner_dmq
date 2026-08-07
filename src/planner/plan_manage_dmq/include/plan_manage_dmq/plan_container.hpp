@@ -13,6 +13,10 @@ using std::vector;
 namespace scan_planner
 {
 
+  // GlobalTrajData：管理全局多项式轨迹与局部B样条轨迹的拼接与统一时间/位置查询。
+  // 当局部重规划发生时，局部轨迹会插入到全局轨迹的[local_start_time_,
+  // local_end_time_]时间段中，并且因为重规划后时长可能变化而产生 time_increase_
+  // 时间偏移量，在查询局部段之后的全局轨迹时需要扣除该偏移。
   class GlobalTrajData
   {
   private:
@@ -31,6 +35,7 @@ namespace scan_planner
 
     ~GlobalTrajData() {}
 
+    // reset：将全局/局部轨迹相关的时间与数据全部清空，恢复到初始状态。
     void reset()
     {
       global_duration_ = 0.0;
@@ -47,8 +52,12 @@ namespace scan_planner
       global_traj_ = PolynomialTraj();
     }
 
+    // localTrajReachTarget：判断局部轨迹的结束时刻是否已经接近全局轨迹总时长
+    // （误差<0.1s），用于判断是否可以切回全局轨迹/结束导航。
     bool localTrajReachTarget() { return fabs(local_end_time_ - global_duration_) < 0.1; }
 
+    // setGlobalTraj：设置新的全局多项式轨迹并初始化，同时清空旧的局部轨迹与
+    // 时间偏移状态（因为全局轨迹已重新生成，之前的局部拼接关系不再有效）。
     void setGlobalTraj(const PolynomialTraj &traj, const ros::Time &time)
     {
       global_traj_ = traj;
@@ -64,6 +73,9 @@ namespace scan_planner
       last_progress_time_ = 0.0;
     }
 
+    // setLocalTraj：设置一段新的局部B样条轨迹（位置），并自动求导得到速度与加速度
+    // 轨迹。local_ts/local_te为该局部轨迹在全局时间轴上的起止时刻，time_inc为
+    // 本次重规划相对旧轨迹新增/减少的时长，需累加到全局时长与累计偏移中。
     void setLocalTraj(UniformBspline traj, double local_ts, double local_te, double time_inc)
     {
       local_traj_.resize(3);
@@ -78,6 +90,10 @@ namespace scan_planner
       last_time_inc_ = time_inc;
     }
 
+    // getPosition：查询全局时间t对应的位置。根据t所处区间选择不同求值源：
+    // t在局部轨迹开始之前（仍处于旧全局段）时，需扣除之前累计的时间增量并加回上一次
+    // 增量修正；t在局部轨迹结束之后（已回到全局段）时，只需扣除总时间增量；
+    // 否则t落在局部轨迹区间内，换算到局部B样条的参数域后用DeBoor求值。
     Eigen::Vector3d getPosition(double t)
     {
       if (t >= -1e-3 && t <= local_start_time_)
@@ -96,6 +112,7 @@ namespace scan_planner
       }
     }
 
+    // getVelocity：查询全局时间t对应的速度，分段逻辑与getPosition一致。
     Eigen::Vector3d getVelocity(double t)
     {
       if (t >= -1e-3 && t <= local_start_time_)
@@ -114,6 +131,7 @@ namespace scan_planner
       }
     }
 
+    // getAcceleration：查询全局时间t对应的加速度，分段逻辑与getPosition一致。
     Eigen::Vector3d getAcceleration(double t)
     {
       if (t >= -1e-3 && t <= local_start_time_)
@@ -135,6 +153,12 @@ namespace scan_planner
     // get Bspline parameterization data of a local trajectory within a sphere
     // start_t: start time of the trajectory
     // dist_pt: distance between the discretized points
+    // getTrajByRadius：从起始时刻start_t开始，沿轨迹前行直到离起始点的欧式距离
+    // 达到des_radius（或到达全局轨迹末尾），得到一段截断后的轨迹。
+    // 步骤：1.以固定步长delta=0.2s前进采样直到满足半径或时间上限，累计弧长；
+    // 2.根据期望点间距 dist_pt 推算分段数与时间步长dt；3.按dt重新均匀采样位置点列；
+    // 4.追加起、止时刻的速度与加速度作为边界导数约束。
+    // 输出：point_set采样点、start_end_derivative边界导数、dt采样间隔、seg_duration截断时长。
     void getTrajByRadius(const double &start_t, const double &des_radius, const double &dist_pt,
                          vector<Eigen::Vector3d> &point_set, vector<Eigen::Vector3d> &start_end_derivative,
                          double &dt, double &seg_duration)
@@ -185,6 +209,8 @@ namespace scan_planner
     // start_t: start time of the trajectory
     // duration: time length of the segment
     // seg_num: discretized the segment into *seg_num* parts
+    // getTrajByDuration：从起始时刻start_t开始，按固定时长duration截取一段轨迹，
+    // 均匀分成seg_num份采样位置点，并附带起、止时刻的速度与加速度作为边界导数。
     void getTrajByDuration(double start_t, double duration, int seg_num,
                            vector<Eigen::Vector3d> &point_set,
                            vector<Eigen::Vector3d> &start_end_derivative, double &dt)
@@ -204,6 +230,8 @@ namespace scan_planner
     }
   };
 
+  // PlanParameters：规划算法全局参数集合（物理限制、容差、控制点间距、规划地平线长度等），
+  // 以及用于性能统计的各阶段耗时记录。
   struct PlanParameters
   {
     /* planning algorithm parameters */
@@ -219,6 +247,8 @@ namespace scan_planner
     double time_adjust_ = 0.0;
   };
 
+  // LocalTrajData：保存当前正在执行的局部B样条轨迹（位置/速度/加速度）以及其
+  // 元信息（轨迹ID、时长、开始时刻、开始位置、全局时间偏移）。
   struct LocalTrajData
   {
     /* info of generated traj */
@@ -230,6 +260,7 @@ namespace scan_planner
     Eigen::Vector3d start_pos_;
     UniformBspline position_traj_, velocity_traj_, acceleration_traj_;
 
+    // reset：将局部轨迹全部字段重置为初始状态。
     void reset()
     {
       traj_id_ = 0;

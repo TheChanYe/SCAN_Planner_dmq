@@ -18,6 +18,8 @@ constexpr double kPi = 3.14159265358979323846;
 
 // =============================================================================
 // Constructor
+// 构造函数：保存配置，并用对应子配置逐个初始化所有子控制器（任务管理器、路线管理器、
+// 起点对齐、路径观测门控、模式管理器、路线跟随器、终点对齐器、安全监督层）。
 // =============================================================================
 
 NavigationCoordinator::NavigationCoordinator(
@@ -39,6 +41,8 @@ NavigationCoordinator::NavigationCoordinator(
 
 // =============================================================================
 // reset
+// 完全重置整个协调器：回到IDLE状态，清空任务、待处理规划动作队列与规划握手上下文，
+// 并重置所有子控制器的内部状态。适用于进程启动初始化或彻底恢复现场。
 // =============================================================================
 
 void NavigationCoordinator::reset()
@@ -60,6 +64,8 @@ void NavigationCoordinator::reset()
 
 // =============================================================================
 // resetNearGoalBlockedTimer
+// 重置“接近终点但被阻挡”计时器。当机器人靠近终点且路线被阻时会启动计时，
+// 超过 obstacle_finish_timeout_sec 则判定为完成任务；本函数用于清除该计时状态。
 // =============================================================================
 
 void NavigationCoordinator::resetNearGoalBlockedTimer() noexcept
@@ -68,6 +74,9 @@ void NavigationCoordinator::resetNearGoalBlockedTimer() noexcept
   near_goal_blocked_timer_active_ = false;
 }
 
+// enqueuePlannerAction：将一个规划器动作加入待发送队列。
+// 规则：NONE类型不入队；若为CANCEL类型，先清空队列中已有的待发动作（取消优先），
+// 再入队，避免旧的SET_ROUTE等动作在取消后仍被发送给规划器。
 void NavigationCoordinator::enqueuePlannerAction(
     const PlannerAction& action)
 {
@@ -86,6 +95,8 @@ void NavigationCoordinator::enqueuePlannerAction(
 
 // =============================================================================
 // takeNextPlannerAction
+// 从待发队列弹出并返回一个规划器动作（先入先出），队列为空时返回默认构造的 PlannerAction
+// （type=NONE）。每个 control cycle 最多取一个动作下发给规划器。
 // =============================================================================
 
 PlannerAction NavigationCoordinator::takeNextPlannerAction()
@@ -105,6 +116,8 @@ PlannerAction NavigationCoordinator::takeNextPlannerAction()
 
 // =============================================================================
 // clearPlanningContext
+// 清除本次规划握手上下文（是否已发送请求、发送时刻、期望的轨迹ID），在规划完成/失败/
+// 进入新任务时调用，避免旧的反馈被误认为当前规划的反馈。
 // =============================================================================
 
 void NavigationCoordinator::clearPlanningContext() noexcept
@@ -116,6 +129,9 @@ void NavigationCoordinator::clearPlanningContext() noexcept
 
 // =============================================================================
 // startPlanningContext
+// 开启一次新的规划握手：仅当动作类型为SET_ROUTE、时间有限且任务sequence非零时才生效，
+// 记录发送时刻与期望的轨迹ID（=任务sequence），供后续 isPlannerFeedbackUsable 校验反馈合法性。
+// 输出：是否成功开启（失败时调用方应进入失败状态）。
 // =============================================================================
 
 bool NavigationCoordinator::startPlanningContext(
@@ -148,6 +164,8 @@ bool NavigationCoordinator::startPlanningContext(
 
 // =============================================================================
 // isPlannerFeedbackUsable
+// 校验规划器反馈是否可信：必须已发送过请求、feedback.valid为真、时间戳与now_sec均有限、
+// 轨迹ID与本次期望的一致且非零、反馈时间不早于发送时刻且不晚于当前时刻（防时间递归异常）。
 // =============================================================================
 
 bool NavigationCoordinator::isPlannerFeedbackUsable(
@@ -191,6 +209,12 @@ bool NavigationCoordinator::isPlannerFeedbackUsable(
 
 // =============================================================================
 // updatePlanningState
+// 在 PLANNING 状态下，根据规划器反馈推进状态机。
+// 步骤：
+//   1. 若反馈可用(isPlannerFeedbackUsable)，根据 feedback.state分支：
+//      READY/EXECUTING → 进入 START_ALIGN 并清除规划上下文；FAILED → 进入失败状态；
+//      其余（UNAVAILABLE/IDLE/PLANNING）继续等待；
+//   2. 若反馈不可用或仍在等待，检查规划超时时长(planning_timeout_sec)，超时则进入失败状态。
 // =============================================================================
 
 void NavigationCoordinator::updatePlanningState(
@@ -249,6 +273,8 @@ void NavigationCoordinator::updatePlanningState(
 
 // =============================================================================
 // enterFailedState
+// 进入 FAILED 状态并清理所有与当前任务相关的中间状态（待发动作、规划握手、起点对齐、
+// 路线、模式管理器、终点对齐器、安全监督层），避免失败后遗留残留状态影响下一个任务。
 // =============================================================================
 
 void NavigationCoordinator::enterFailedState() noexcept
@@ -268,6 +294,8 @@ void NavigationCoordinator::enterFailedState() noexcept
 
 // =============================================================================
 // makeZeroCommand
+// 构造一个全零速度指令（vx=vy=yaw_rate=0，valid=true），并标记来源source与时间戳。
+// now_sec 非有限时回退为0.0。各状态分支在无法产生真实控制量时都会回退到该函数。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::makeZeroCommand(
@@ -290,6 +318,14 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 
 // =============================================================================
 // executeRouteFollow
+// ROUTE_FOLLOW 模式下的执行逻辑：接近终点时递减速度并交接给 GoalController，否则交给 RouteFollower。
+// 步骤：
+//   1. 若当前路线被判定为靠近终点处被阻挡，直接返回零速度（不绕过阻塞状态）；
+//   2. 计算是否near_goal（距终点小于near_goal_switch_dist）与到终点直线距离 goal_distance；
+//   3. near_goal时根据剩余路程占switch_dist的比例线性插值限速（near_goal_max_v→near_goal_min_v）；
+//   4. 若goal_distance小于等于 finish_dist，交给 GoalController 做终点对齐/判完成，完成则进入SUCCEEDED
+//      并完整清理（避免遗留残留局部轨迹/安全状态），未完成则进入GOAL_ALIGN；
+//   5. 否则交由 RouteFollower 按pure pursuit策略跟随路线。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeRouteFollow(
@@ -387,6 +423,8 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
 
 // =============================================================================
 // executeLocalAvoid
+// LOCAL_AVOID 模式下本协调器不产生实际控制量，只返回零速度：实际的局部避障速度由 SCAN
+// 原生闭环控制器产生，并在 Mux 层选择（本类不插手该链路）。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeLocalAvoid(
@@ -409,6 +447,15 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
 
 // =============================================================================
 // executeMode
+// 根据当前导航模式（ROUTE_FOLLOW/LOCAL_AVOID）分发到对应的执行函数，并处理“靠近终点但被阻”
+// 的超时判完成逻辑。
+// 步骤：
+//   1. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
+//   2. 计算到终点距离，判断是否near_goal_blocked（近终点且路线被阻）；
+//   3. 若near_goal_blocked，启动/继续计时，超过obstacle_finish_timeout_sec则判定任务完成
+//      并完整清理，未超时则返回零速度；
+//   4. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
+//   5. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeMode(
@@ -612,6 +659,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
 
 // =============================================================================
 // hasActiveTask
+// 返回当前任务管理器中是否存在一个处于活动状态的任务（已START且未完成/取消）。
 // =============================================================================
 
 bool NavigationCoordinator::hasActiveTask() const noexcept
@@ -621,6 +669,7 @@ bool NavigationCoordinator::hasActiveTask() const noexcept
 
 // =============================================================================
 // route/session views
+// routeManager/taskSession：分别返回内部路线管理器与任务会话的只读引用，供上层/测试读取内部状态使用。
 // =============================================================================
 
 const RouteManager& NavigationCoordinator::routeManager() const noexcept
@@ -1060,6 +1109,7 @@ CoreOutput NavigationCoordinator::update(
 
 // =============================================================================
 // state
+// 返回当前导航状态机状态（NavState）。
 // =============================================================================
 
 NavState NavigationCoordinator::state() const noexcept
@@ -1069,6 +1119,7 @@ NavState NavigationCoordinator::state() const noexcept
 
 // =============================================================================
 // config
+// 返回当前使用的全部配置。
 // =============================================================================
 
 const NavdogConfig& NavigationCoordinator::config() const noexcept

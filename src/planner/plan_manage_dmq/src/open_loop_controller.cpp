@@ -3,6 +3,8 @@
 
 namespace
 {
+// trajectoryCallback：仅用于诊断的B样条轨迹订阅回调，打印轨迹ID、控制点数与
+// 节点数日志，不产生任何控制输出。
 void trajectoryCallback(const scan_planner::BsplineConstPtr& message)
 {
   ROS_INFO("[open_loop_controller_dmq] diagnostic trajectory id=%d "
@@ -13,6 +15,8 @@ void trajectoryCallback(const scan_planner::BsplineConstPtr& message)
 }
 }
 
+// main：open_loop_controller_dmq节点入口。这是一个仅用于兼容性诊断的节点，
+// 只订阅规划轨迹并打印日志，不发布任何里程计或速度指令。
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "open_loop_controller_dmq");

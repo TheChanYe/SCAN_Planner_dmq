@@ -13,6 +13,7 @@ namespace
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
 
+// normalizeAngle：将任意弧度角归一化到 (-pi, pi]，避免转向时绕远路。
 double normalizeAngle(double angle) noexcept
 {
   while (angle > kPi)
@@ -34,10 +35,17 @@ RouteFollower::RouteFollower(
 {
 }
 
-// =============================================================================
-// interpolateRoutePoint
-// =============================================================================
-
+// interpolateRoutePoint：根据目标累积弧长，在任务的折线路线上插值出对应位置与朝向。
+// 步骤：
+//   1. 若路线点数少于2个，无法构成线段，直接返回失败；
+//   2. 若目标弧长<=0，直接返回起点位置/朝向；
+//   3. 沿着路线逐段累加段长，一旦累加长度超过目标弧长，说明目标点落在这一段内，
+//      按比例 ratio 在该段两端点之间线性插值出 x/y；
+//   4. 朝向默认取该段的切线方向 atan2(dy,dx)，若两端点都带显式 yaw，
+//      则改为对两端 yaw 做角度插值（先归一化差值再按比例加回去）；
+//   5. 若遍历完所有段仍未达到目标弧长（目标点超出路线总长），则钳到路线终点。
+// 输入：task - 路线点列；target_arc_length_m - 目标累积弧长（米）
+// 输出：out_x/out_y/out_yaw - 插值结果；返回值表示是否成功。
 bool RouteFollower::interpolateRoutePoint(
     const NavigationTask& task,
     double target_arc_length_m,
@@ -110,6 +118,8 @@ bool RouteFollower::interpolateRoutePoint(
 // isYawAligned
 // =============================================================================
 
+// isYawAligned：判断朝向误差绝对值是否在"仅转向"阈值以内，
+// 只有对齐后才允许同时平移，避免朝向偏差过大时斜向乱走。
 bool RouteFollower::isYawAligned(
     double heading_error) const noexcept
 {
@@ -117,6 +127,16 @@ bool RouteFollower::isYawAligned(
          config_.heading_turn_only_threshold_rad;
 }
 
+// updatePointGoal：单点/极短路线的直达模式（不用前瞻插值）。
+// 步骤：
+//   1. 前置校验：路线为空/机器人无效/进度无效，直接返回 TRACKING_STOP；
+//   2. 以任务最后一个点为目标，计算相对机器人的距离和朝向角 desired_yaw
+//      （距离过近时直接沿用当前机器人朝向，避免除零风险）；
+//   3. 若未对齐：只输出比例角速度（限幅到 ±kp_yaw），不向前走；
+//   4. 若已对齐：根据距离计算目标速度（近距离时额外减速），
+//      同时根据机器人坐标系下的横向偏差 lateral_error 算出 vy，yaw_rate 继续比例修正；
+//   5. 对 vx/vy/yaw_rate 做非有限数兜底、对 vx 做非负且不超过最大速度限幅。
+// 来源标记为 PLANNER，表示这是常规路线跟踪输出。
 VelocityCommand RouteFollower::updatePointGoal(
     const NavigationTask& task,
     const RobotState& robot,
@@ -174,10 +194,23 @@ VelocityCommand RouteFollower::updatePointGoal(
   return cmd;
 }
 
-// =============================================================================
-// update
-// =============================================================================
-
+// update：带前瞻点的路线跟踪主逻辑，每个控制周期调用一次。核心步骤：
+//   1. 前置校验：路线为空/进度无效/弧长非法/机器人无效，直接返回 TRACKING_STOP；
+//   2. 若只有单个点或路线总长度接近零，退化为 updatePointGoal 直达模式；
+//   3. 根据当前实测速度计算动态前瞻距离 dynamic_lookahead：
+//      基础前瞻 + 速度*前瞻时间，并限幅到 max_lookahead_distance_m（跑得越快看得越远）；
+//   4. 用"已走弧长 + 前瞻距离"作为目标弧长，调用 interpolateRoutePoint 求出前瞻点；
+//      若插值失败（点数不足）则返回 TRACKING_STOP；
+//   5. 直接朝向前瞻点位置行驶（而不是用该点所在段的切线方向），
+//      这样可以避免在每个路径拐点处因切线方向突变而停下对齐（轰磨现象）；
+//   6. 将世界坐标系下的误差旋转到机器人自身坐标系（ex_robot/ey_robot）；
+//   7. 若未对齐：只输出比例角速度（限幅），不向前平移；
+//   8. 若已对齐：根据朝向误差大小计算一个减速系数 heading_speed_scale
+//      （误差越接近"仅转向"阈值，速度越低，实现还未完全对齐时提前减速避免过弯），
+//      用它限制前进速度上限，实际前进速度取该上限与比例控制 kp_x*ex_robot 的较小值，
+//      vy 用横向误差比例控制，yaw_rate 继续比例修正；
+//   9. 最终对 vx/vy/yaw_rate 做非有限数及负值兜底、对 vx 限幅到最大速度。
+// 输入：task/robot/progress/max_vx/now_sec；输出：VelocityCommand。
 VelocityCommand RouteFollower::update(
     const NavigationTask& task,
     const RobotState& robot,

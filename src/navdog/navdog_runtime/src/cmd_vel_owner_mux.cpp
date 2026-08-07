@@ -33,6 +33,9 @@ double route_cmd_stamp_sec_{0.0};
 geometry_msgs::Twist latest_scan_cmd_{};
 double scan_cmd_stamp_sec_{0.0};
 
+// CommandOwner：当前允许写入/cmd_vel的指令来源方。
+// ROUTE：由StartAlign/GoalAlign阶段的route_cmd控制；TRACKER：由跟踪器
+// （RouteFollower或SCAN本地避障）控制；NONE：无人拥有，必须硬停车。
 enum class CommandOwner
 {
   NONE,
@@ -40,6 +43,7 @@ enum class CommandOwner
   TRACKER
 };
 
+// MotionClass：用于日志分类的输出运动状态枚举。
 enum class MotionClass
 {
   STOP,
@@ -65,6 +69,7 @@ bool motion_log_initialized_{false};
 
 ros::Publisher cmd_vel_pub_;
 
+// ownerName：将CommandOwner枚举转换为可读字符串，供日志使用。
 const char* ownerName(CommandOwner owner)
 {
   switch (owner)
@@ -76,6 +81,11 @@ const char* ownerName(CommandOwner owner)
   }
 }
 
+// effectiveOwner：根据当前导航状态与模式确定指令权归属于谁：
+// START_ALIGN/GOAL_ALIGN阶段归ROUTE；TRACKING且模式为ROUTE_FOLLOW或
+// LOCAL_AVOID时归TRACKER；TRACKING但模式为NONE时视为过渡期，暂不分配
+// 所有权；其余所有非运动状态（IDLE/PLANNING/PAUSED/FAILED/SUCCEEDED/
+// RECOVERY/EMERGENCY_STOP）均不分配权限。
 CommandOwner effectiveOwner()
 {
   switch (nav_state_)
@@ -103,6 +113,7 @@ CommandOwner effectiveOwner()
   }
 }
 
+// finiteTwist：校验Twist指令的六个分量是否均为有限数。
 bool finiteTwist(const geometry_msgs::Twist& cmd)
 {
   return std::isfinite(cmd.linear.x) &&
@@ -113,6 +124,7 @@ bool finiteTwist(const geometry_msgs::Twist& cmd)
          std::isfinite(cmd.angular.z);
 }
 
+// isFresh：判断指定时间戳相对now_sec是否在有效新鲜期内（非负、不超时）。
 bool isFresh(double stamp_sec, double now_sec, double timeout_sec)
 {
   if (!std::isfinite(stamp_sec) || !std::isfinite(now_sec) ||
@@ -123,11 +135,13 @@ bool isFresh(double stamp_sec, double now_sec, double timeout_sec)
   return age >= 0.0 && age <= timeout_sec;
 }
 
+// zeroCommand：返回默认零速度的Twist。
 geometry_msgs::Twist zeroCommand()
 {
   return geometry_msgs::Twist{};
 }
 
+// limitLinearSpeed：若指令线速度模超过max_speed，按比例缩放至上限并记录日志。
 void limitLinearSpeed(geometry_msgs::Twist& command, double max_speed,
                       const char* mode_name)
 {
@@ -142,6 +156,7 @@ void limitLinearSpeed(geometry_msgs::Twist& command, double max_speed,
       mode_name, speed, max_speed);
 }
 
+// classifyMotion：根据输出指令粗略判断运动状态，仅用于日志分类。
 MotionClass classifyMotion(const geometry_msgs::Twist& cmd)
 {
   if (std::hypot(cmd.linear.x, cmd.linear.y) > 0.02)
@@ -151,6 +166,7 @@ MotionClass classifyMotion(const geometry_msgs::Twist& cmd)
   return MotionClass::STOP;
 }
 
+// motionClassName：将MotionClass枚举转换为可读字符串。
 const char* motionClassName(const MotionClass value)
 {
   switch (value)
@@ -162,6 +178,9 @@ const char* motionClassName(const MotionClass value)
   }
 }
 
+// logOutputCommand：记录最终输出指令日志。运动分类发生变化时打印CMD_OUTPUT详情，
+// 并按固定1Hz节流打印CMD_TRACE完整追踪信息（包含rote/scan指令龄期与SCAN接管
+// 就绪状态）。
 void logOutputCommand(const geometry_msgs::Twist& output,
                       const geometry_msgs::Twist& target,
                       const CommandOwner owner,
@@ -204,6 +223,7 @@ void logOutputCommand(const geometry_msgs::Twist& output,
       route_age, scan_age, scan_takeover_ready ? 1 : 0);
 }
 
+// routeCmdCallback：订阅Route阶段的速度指令，校验有限性后保存最新指令与时间戳。
 void routeCmdCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
 {
   if (!finiteTwist(msg->twist))
@@ -215,6 +235,8 @@ void routeCmdCallback(const geometry_msgs::TwistStamped::ConstPtr& msg)
   route_cmd_stamp_sec_ = msg->header.stamp.toSec();
 }
 
+// scanCmdCallback：订阅SCAN（本地避障/跟踪）的速度指令，校验有限性后保存最新
+// 指令与接收时刻（使用ros::Time::now()而非消息自身时间戳，避免SCAN时间戳不同步）。
 void scanCmdCallback(const geometry_msgs::Twist::ConstPtr& msg)
 {
   if (!finiteTwist(*msg))
@@ -226,6 +248,7 @@ void scanCmdCallback(const geometry_msgs::Twist::ConstPtr& msg)
   scan_cmd_stamp_sec_ = ros::Time::now().toSec();
 }
 
+// stateCallback：订阅导航状态，若状态发生变化则记录变化时刻（供模式同步宽限使用）。
 void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
   const auto previous = nav_state_;
@@ -234,6 +257,8 @@ void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
     nav_state_change_stamp_sec_ = ros::Time::now().toSec();
 }
 
+// modeCallback：订阅导航模式。进入ROUTE_FOLLOW时记录进入时刻；进入LOCAL_AVOID时
+// 记录进入时刻并重置SCAN接管就绪/前进确认标志（要求重新确认）。
 void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
   const auto previous = navigation_mode_;
@@ -252,9 +277,32 @@ void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
   }
 }
 
+// scanTakeoverReadyCallback：订阅Native SCAN接管就绪信号。
 void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& msg)
 { scan_takeover_ready = msg && msg->data; }
 
+// timerCallback：固定频率（默认50Hz）的主输出循环，是全局唯一向/cmd_vel发布的入口。
+// 整体流程：
+// 1. 计算effectiveOwner，并在TRACKING且模式为NONE但刚刚发生状态切换时，
+//    在mode_sync_grace_sec宽限内沿用上一个权归属（避免因state/mode两个
+//    topic到达顺序不一致导致瞬间零速度抖动）；
+// 2. 若检测到权归属变化，从上一帧实际发布给机器人的速度重新初始化限速器
+//    （而不是限速器内部可能已过时的值），并根据权归属变化情况重置SCAN接管
+//    就绪/前进确认标志，打印CMD_OWNER日志；
+// 3. 计算硬停车条件（无人拥有或处于IDLE/PAUSED/SUCCEEDED/FAILED/
+//    EMERGENCY_STOP等非运动状态），若成立则立即重置限速器并发布零速度（不经
+//    过限速处理），直接返回；
+// 4. 否则根据权归属方选择目标指令：
+//    - ROUTE：若route_cmd新鲜则使用，否则告警过时；
+//    - TRACKER：若处于ROUTE_FOLLOW模式，要求SCAN指令必须晚于本次交接/
+//      进入ROUTE_FOLLOW的时刻且仍处于新鲜期才采用；若处于LOCAL_AVOID模式，
+//      需要接管就绪且SCAN指令晚于进入LOCAL_AVOID的时刻且新鲜才采用，
+//      并对首次接管后的负向纵向速度做安全阻断（等待确认前进轨迹）；
+//      若尚未就绪，在短暂交接宽限内沿用上一帧实际输出，超出宽限则输出零速；
+//    - NONE：不处理（保持默认零目标）；
+// 5. 若目标有效且属于TRACKER，根据当前模式对线速度做上限限制；
+// 6. 计算dt并调用限速器推进得到实际输出；
+// 7. 记录日志、发布最终指令，更新last_output_cmd_与时间戳。
 void timerCallback(const ros::TimerEvent&)
 {
   const double now_sec = ros::Time::now().toSec();
@@ -483,6 +531,9 @@ void timerCallback(const ros::TimerEvent&)
 
 }  // namespace
 
+// main：cmd_vel_owner_mux节点入口。从参数服务器加载超时/频率/限速参数，
+// 校验合法性后注册全部订阅者/发布者并创建定时器，最后进入ros::spin()。
+// 本节点是全局唯一允许发布/cmd_vel的节点（多路速度指令的统一出口）。
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "cmd_vel_owner_mux");

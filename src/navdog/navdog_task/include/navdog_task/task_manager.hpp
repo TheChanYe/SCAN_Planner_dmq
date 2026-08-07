@@ -11,6 +11,7 @@ namespace navdog_task
 class TaskManager
 {
 public:
+  /** @brief 构造函数：保存任务配置（默认/最小/最大 max_vx）。 */
   explicit TaskManager(const TaskConfig& config = TaskConfig{});
 
   /** @brief 清空当前会话；不回退 next_sequence_，避免旧异步反馈误关联到新任务。 */

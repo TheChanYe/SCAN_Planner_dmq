@@ -69,6 +69,7 @@ std::uint8_t navigation_mode = 0;
 scan_planner_dmq::RoutePathTrackerConfig route_tracker_config;
 std::unique_ptr<scan_planner_dmq::RoutePathTracker> route_tracker;
 
+// loadRequiredParam：从私有参数服务器读取必需参数，若不存在则打印错误并返回false。
 bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, double &value)
 {
   if (nh.getParam(name, value))
@@ -78,6 +79,9 @@ bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, doubl
   return false;
 }
 
+// loadParams：加载并校验闭环控制器全部参数（前矢时间/比例增益/速度上限/完成距离、
+// 接管锚点容差、路径跟踪器参数）。每个必需参数缺失或非法均记录ok=false，最后对
+// max_vyaw做安全上限截断并输出配置日志。任一项无效则返回false。
 bool loadParams(const ros::NodeHandle &nh)
 {
   bool ok = true;
@@ -265,6 +269,7 @@ bool loadParams(const ros::NodeHandle &nh)
 }
 
 
+// normalizeAngle：将角度归一化到[-pi, pi]区间。
 double normalizeAngle(double angle)
 {
   while (angle > M_PI)
@@ -274,11 +279,13 @@ double normalizeAngle(double angle)
   return angle;
 }
 
+// clamp：将value限制在[min_value, max_value]区间内。
 double clamp(double value, double min_value, double max_value)
 {
   return std::max(min_value, std::min(max_value, value));
 }
 
+// clampNorm：若二维向量value的模超过max_norm，按比例缩放至上限。
 Eigen::Vector2d clampNorm(
     const Eigen::Vector2d &value,
     double max_norm)
@@ -294,6 +301,9 @@ Eigen::Vector2d clampNorm(
   return value / norm * max_norm;
 }
 
+// estimateDesiredYaw：估计当前期望朝向。优先取前矢时间后的轨迹点与当前期望位置
+// 的连线方向；若两者过于接近则回退使用当前时刻的速度方向；若仍接近零则保持
+// 当前里程计朝向不变。
 double estimateDesiredYaw(double t_cur, const Eigen::Vector3d &pos_des)
 {
   const double t_look = std::min(traj_duration, t_cur + time_forward);
@@ -311,6 +321,7 @@ double estimateDesiredYaw(double t_cur, const Eigen::Vector3d &pos_des)
   return std::atan2(dir(1), dir(0));
 }
 
+// publishStop：发布零线速度、仅保留角速度（限幅后）的停车指令，默认角速度为0。
 void publishStop(double vyaw = 0.0)
 {
   geometry_msgs::Twist cmd;
@@ -318,6 +329,8 @@ void publishStop(double vyaw = 0.0)
   cmd_vel_pub.publish(cmd);
 }
 
+// publishExecutionFrozen：发布Go2执行冻结状态信号（告诉SCAN规划端是否暂停
+// 时间推进）。
 void publishExecutionFrozen(bool frozen)
 {
   std_msgs::Bool msg;
@@ -325,6 +338,7 @@ void publishExecutionFrozen(bool frozen)
   execution_frozen_pub.publish(msg);
 }
 
+// publishTakeoverReady：发布接管就绪信号。
 void publishTakeoverReady(bool ready)
 {
   std_msgs::Bool msg;
@@ -332,6 +346,8 @@ void publishTakeoverReady(bool ready)
   takeover_ready_pub.publish(msg);
 }
 
+// resetCallback：接收外部重置信号，清空当前轨迹/执行状态/接管等全部临时状态，
+// 重置路径跟踪器并发布停止指令。
 void resetCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
@@ -356,6 +372,8 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
       "NATIVE_SCAN_CONTROLLER_RESET");
 }
 
+// routePathCallback：接收Native SCAN发布的Route阶段参考路径，转换为点列后
+// 设置给路径跟踪器。路径为空、少于2个点或跟踪器不存在则拒绝。
 void routePathCallback(const nav_msgs::PathConstPtr& msg)
 {
   if (!msg || msg->poses.size() < 2 || !route_tracker)
@@ -386,6 +404,8 @@ void routePathCallback(const nav_msgs::PathConstPtr& msg)
       points.size());
 }
 
+// navigationModeCallback：订阅导航模式。若刚刚进入ROUTE_FOLLOW模式，要求路径
+// 跟踪器下一次重新全路径搜索投影点（避免错误匹配到旧进度）。
 void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
 {
   if (!msg) return;
@@ -399,6 +419,8 @@ void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
   }
 }
 
+// takeoverSyncCallback：接收接管同步信号。清空当前轨迹并进入“等待接管轨迹”
+// 状态，记录同步时刻供后续bsplineCallback判断轨迹时效性，并发布停车。
 void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
@@ -415,6 +437,18 @@ void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
   ROS_INFO("SCAN_TAKEOVER_CONTROLLER_FLUSH");
 }
 
+// bsplineCallback：接收SCAN规划器发布的B样条轨迹消息。
+// 步骤：
+// 1. 校验阶数/控制点数/节点数基本合法性，不合法则拒绝；
+// 2. 若处于等待接管轨迹状态且该轨迹的开始时刻早于同步时刻（超出容差），说明
+//    是接管前预热轨迹的迟到消息，不能接管，直接丢弃；
+// 3. 逐个校验节点与控制点的有限性，不合法则拒绝；
+// 4. 构造位置B样条并求导得到速度/加速度（仅为候选，尚未接受），校验总时长合法；
+// 5. 计算该轨迹已经过去的时长start_age（当前时刻相对轨迹发布时刻的延迟）；
+// 6. 若处于等待接管状态，校验该轨迹在start_age时刻的位置与当前里程计位置的锚点
+//    误差是否在容差内，超出则拒绝该轨迹（防止接管跳变）；
+// 7. 接受轨迹，判断是否为静止轨迹（所有控制点重合，即EmergencyStop编码）；
+// 8. 若之前处于等待接管状态，标记接管成功并发布就绪信号。
 void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
 {
   if (!msg || msg->order < 1 || msg->pos_pts.size() < 4 ||
@@ -516,6 +550,7 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
   ROS_DEBUG("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
 }
 
+// odomCallback：订阅里程计，更新当前位置与朝向。
 void odomCallback(const nav_msgs::OdometryConstPtr &msg)
 {
   odom_pos(0) = msg->pose.pose.position.x;
@@ -525,6 +560,21 @@ void odomCallback(const nav_msgs::OdometryConstPtr &msg)
   have_odom = true;
 }
 
+// cmdCallback：固定频率（默认100Hz）的主控制循环，根据当前导航模式分支处理：
+// 1. 无里程计时：不冻结且发布停车；
+// 2. ROUTE_FOLLOW模式：冻结SCAN规划时间推进，交由RoutePathTracker计算纯几何跟踪
+//    速度并发布（vy固定为0）；若距径无效/未就绪则发布停车；
+// 3. 非LOCAL_AVOID模式或尚未收到轨迹：不冻结且发布停车；
+// 4. LOCAL_AVOID且为静止轨迹（EmergencyStop）：不对该轨迹做位置反馈跟踪（防止
+//    里程计漂移后被拉回旧停止点），直接发布停车；
+// 5. LOCAL_AVOID且为正常B样条轨迹：
+//    a. 计算dt并容错归零；
+//    b. 先在旧执行时刻t_eval采样位置/速度并估计期望朝向与朝向角速度指令；
+//    c. 推进执行时刻exec_time（不超过轨迹总时长），在新时刻重新采样位置/速度；
+//    d. 合成世界系目标速度：前馈速度+位置误差比例项，按模限幅；
+//    e. 旋转到机体系得到vx/vy并限幅；
+//    f. 若已到达轨迹末尾且位置误差小于完成距离，强制输出零指令；
+//    g. 发布日志与最终指令。
 void cmdCallback(const ros::TimerEvent &)
 {
   if (!have_odom)
@@ -673,6 +723,10 @@ void cmdCallback(const ros::TimerEvent &)
 }
 } // namespace
 
+// main：closed_loop_controller_dmq节点入口。加载参数失败则退出；创建路径
+// 跟踪器实例；注册全部订阅/发布者（B样条、里程计、重置、接管同步、Route参考
+// 路径、导航模式）与发布者（速度指令、执行冻结、接管就绪）；创建100Hz控制定时器；
+// 最后进入ros::spin()。
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "closed_loop_controller_dmq");

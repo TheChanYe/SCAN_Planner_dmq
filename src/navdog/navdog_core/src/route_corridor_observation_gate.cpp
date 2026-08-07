@@ -8,6 +8,7 @@ namespace navdog
 
 // =============================================================================
 // Constructor
+// 构造函数：保存门控配置。
 // =============================================================================
 
 RouteCorridorObservationGate::RouteCorridorObservationGate(
@@ -18,6 +19,7 @@ RouteCorridorObservationGate::RouteCorridorObservationGate(
 
 // =============================================================================
 // isConfigValid
+// 校验配置本身合法性：地图超时阈值必须为正数，最大进度滞后距离必须为非负有限数。
 // =============================================================================
 
 bool RouteCorridorObservationGate::isConfigValid() const noexcept
@@ -39,6 +41,7 @@ bool RouteCorridorObservationGate::isConfigValid() const noexcept
 
 // =============================================================================
 // isProgressValid
+// 校验路线进度合法性：valid标志为真、弧长为非负有限数、任务sequence非零、时间戳有限。
 // =============================================================================
 
 bool RouteCorridorObservationGate::isProgressValid(
@@ -70,6 +73,9 @@ bool RouteCorridorObservationGate::isProgressValid(
 
 // =============================================================================
 // isObservationNumericValid
+// 校验走廊观测中所有时间戳/分辨率/采样步长/高度/已检查距离/评估起始弧长等字段
+// 是否为合理有限数，并根据 blocked 标志分派校验阻塞距离字段：
+// 阻塞时必须非负有限，畅通时必须为正无穷（不能用std::isinf判断，因为负无穷也会命中）。
 // =============================================================================
 
 bool RouteCorridorObservationGate::isObservationNumericValid(
@@ -152,6 +158,12 @@ bool RouteCorridorObservationGate::isObservationNumericValid(
 
 // =============================================================================
 // evaluate
+// 依次执行11步合法性检查（任一不通过则直接返回对应失败原因）：
+//   1.now_sec有限；2.门控配置合法；3.进度本身合法；4.观测.valid为真；
+//   5.观测来源为 SCAN_INFLATED_GRID_3D；6.观测与当前进度的任务sequence匹配；
+//   7.观测数值字段合法；8.地图时间戳不超前且未超时（带浮点误差容差）；
+//   9.进度弧长与观测评估起始弧长的偏差在允许范围内（既不能超前也不能滞后过多）；
+//   10.不能超出地图范围；11.全部通过后根据blocked标志输出CLEAR或BLOCKED并携带详情。
 // =============================================================================
 
 RouteCorridorObservationOutput

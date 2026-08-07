@@ -42,11 +42,13 @@ std::string body_pose_topic = "/quad_0/body_pose";
 ros::Time last_cmd_time;
 ros::Time last_sim_time;
 
+// clamp：将value限制在[min_value, max_value]区间内。
 double clamp(double value, double min_value, double max_value)
 {
   return std::max(min_value, std::min(max_value, value));
 }
 
+// normalizeAngle：将角度归一化到[-pi, pi]区间。
 double normalizeAngle(double angle)
 {
   while (angle > M_PI)
@@ -56,6 +58,8 @@ double normalizeAngle(double angle)
   return angle;
 }
 
+// loadParamWithFallback：优先从私有命名空间参数private_name读取，若不存在则回退到
+// 全局fallback_name参数，若仍不存在则使用default_value（兼容旧版全局参数命名）。
 void loadParamWithFallback(const ros::NodeHandle &nh, const std::string &private_name,
                            const std::string &fallback_name, double &value, double default_value)
 {
@@ -66,6 +70,8 @@ void loadParamWithFallback(const ros::NodeHandle &nh, const std::string &private
   value = default_value;
 }
 
+// cmdCallback：订阅/cmd_vel，对各轴速度做上限剪切后保存为当前指令并记录接收时刻
+// （供超时检测使用）。
 void cmdCallback(const geometry_msgs::TwistConstPtr &msg)
 {
   vx_cmd = clamp(msg->linear.x, -max_vx, max_vx);
@@ -74,6 +80,7 @@ void cmdCallback(const geometry_msgs::TwistConstPtr &msg)
   last_cmd_time = ros::Time::now();
 }
 
+// publishOdom：发布当前仿真位姿为Odometry消息，若开启publish_tf则同时广播TF变换。
 void publishOdom(const ros::Time &stamp)
 {
   geometry_msgs::Quaternion q = tf::createQuaternionMsgFromYaw(yaw);
@@ -105,6 +112,10 @@ void publishOdom(const ros::Time &stamp)
   tf_broadcaster->sendTransform(tf_msg);
 }
 
+// simCallback：固定频率的运动学仿真推进。步骤：1.计算dt并对异常值（负数或过大）
+// 做容错归零；2.若距上次收到指令超过超时时长则强制将目标速度清零（模拟指令丢失安全
+// 停车）；3.将机体系线速度旋转到世界系；4.欧拉积分更新位置与朝向并归一化；
+// 5.发布里程计/TF。
 void simCallback(const ros::TimerEvent &)
 {
   const ros::Time now = ros::Time::now();
@@ -136,6 +147,9 @@ void simCallback(const ros::TimerEvent &)
 }
 } // namespace
 
+// main：go2_kinematic_sim_dmq节点入口。从参数服务器加载初始位姿与速度限制（带
+// 旧命名回退），校验并截断max_vyaw到安全上限，创建里程计发布者/指令订阅者与
+// 仿真定时器，最后进入ros::spin()。
 int main(int argc, char **argv)
 {
   ros::init(argc, argv, "go2_kinematic_sim_dmq");

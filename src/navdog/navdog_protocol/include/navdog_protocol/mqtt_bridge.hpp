@@ -14,18 +14,18 @@ namespace navdog_protocol
 
 struct MqttBridgeConfig
 {
-  bool enabled{true};
-  std::string host{"127.0.0.1"};
-  int port{1883};
-  int keepalive_sec{30};
-  std::string client_id{"navdog_runtime"};
-  int qos{1};
-  std::string task_topic{"robot/global_planning/info"};
-  std::string pause_topic{"robot/local_planning/pause_resume"};
-  std::string status_topic{"robot/local_planning/ctrl"};
-  double default_route_z{0.3};
-  double default_max_vx{0.4};
-  std::size_t max_queue_size{32};
+  bool enabled{true};                    // 是否启用MQTT桥接
+  std::string host{"127.0.0.1"};         // MQTT Broker地址
+  int port{1883};                        // MQTT Broker端口
+  int keepalive_sec{30};                 // 心跳保活间隔（秒）
+  std::string client_id{"navdog_runtime"};  // MQTT客户端ID
+  int qos{1};                            // 订阅/发布使用的QoS等级
+  std::string task_topic{"robot/global_planning/info"};   // 任务下发topic
+  std::string pause_topic{"robot/local_planning/pause_resume"};  // 暂停/恢复topic
+  std::string status_topic{"robot/local_planning/ctrl"};  // 状态上报topic
+  double default_route_z{0.3};           // 路点未带z坐标时的默认高度
+  double default_max_vx{0.4};            // 任务未带速度字段时的默认最大速度
+  std::size_t max_queue_size{32};        // 事件队列最大长度，超出后丢弃最旧事件
 };
 
 class MqttBridge
@@ -50,35 +50,42 @@ public:
   void completeActiveTask();
   /** @brief 原样发布既有状态协议 payload，不解释其 JSON 业务含义。 */
   void publishStatus(const std::string& payload);
+  /** @brief 获取并清零协议错误计数（供上层健康监控上报）。 */
   int consumeProtocolError();
+  /** @brief 当前是否处于充电保留模式。 */
   bool chargingReserved() const;
 
 private:
   /** @brief 网络线程连接回调：只订阅既有 topic 并记录连接结果。 */
   static void onConnect(struct mosquitto*, void*, int);
+  /** @brief 网络线程断开连接回调：记录断开原因。 */
   static void onDisconnect(struct mosquitto*, void*, int);
+  /** @brief 网络线程收到消息回调：根据topic分发到对应解码逻辑并入队。 */
   static void onMessage(struct mosquitto*, void*, const struct mosquitto_message*);
   /** @brief 暂停/恢复事件入队；任务启停使用 enqueueTask 保证协议锁。 */
   void enqueue(const navdog_task::NavigationEvent& event);
   /**
    * @brief 实体狗协议的活动任务锁：ctrl=0 或导航正常到达时解锁。
+   * 输入输出：event - 待入队的START_TASK事件；charging - 是否为充电保留；
+   *       active_sequence - 当前活动任务序号（入队成功时更新）。
    * 返回 false 表示当前任务执行期间的重复路线已被协议层忽略。
    */
   bool enqueueTask(navdog_task::NavigationEvent& event, bool charging,
                    std::uint64_t& active_sequence);
+  /** @brief 已持锁前提下将事件推入队列，超过max_queue_size时丢弃最旧事件。 */
   void pushEventLocked(const navdog_task::NavigationEvent& event);
 
-  MqttBridgeConfig config_{};
-  struct mosquitto* client_{nullptr};
-  mutable std::mutex mutex_{};
-  std::deque<navdog_task::NavigationEvent> events_{};
-  std::uint64_t next_sequence_{1};
-  std::uint64_t active_sequence_{0};
-  int protocol_errors_{0};
-  bool started_{false};
-  bool charging_reserved_{false};
-  bool route_locked_{false};
-  std::string resolved_client_id_;
+  MqttBridgeConfig config_{};                 // 桥接配置
+  struct mosquitto* client_{nullptr};         // Mosquitto客户端实例
+  mutable std::mutex mutex_{};                // 保护事件队列/序号/错误计数/充电标记的互斥锁
+  std::deque<navdog_task::NavigationEvent> events_{};  // 待消费的事件队列
+  std::uint64_t next_sequence_{1};            // 下一个内部任务序号
+  std::uint64_t active_sequence_{0};          // 当前活动任务的序号（0表示无）
+  int protocol_errors_{0};                    // 累计协议解析错误次数
+  bool started_{false};                       // 是否已成功启动
+  bool charging_reserved_{false};             // 是否处于充电保留模式
+  bool route_locked_{false};                  // 路线是否处于锁定状态（防止重复接受）
+  std::string resolved_client_id_;            // 实际解析后使用的客户端ID
 };
 
 }  // namespace navdog_protocol

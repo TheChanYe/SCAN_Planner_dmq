@@ -13,6 +13,7 @@
 #include <queue>
 #include <ros/ros.h>
 #include <tuple>
+#include <unordered_set>
 #include <visualization_msgs/Marker.h>
 
 #include <pcl/point_cloud.h>
@@ -80,6 +81,23 @@ struct MappingParameters {
       min_occupancy_log_;                   // logit of occupancy probability
   double min_ray_length_, max_ray_length_;  // range of doing raycasting
 
+  // Hard cap on how many projected points get a full origin-to-point free
+  // -space raycast walk within a single raycastProcess() call. Dense real
+  // lidar scans in cluttered indoor scenes can carry tens of thousands of
+  // unique occupied voxels even after cloudCallback()'s per-voxel dedup
+  // (see MappingData::cloud_voxel_seen_), and the walk cost scales with
+  // both ray count and path length, not just endpoint count -- it can
+  // exceed the occ_timer_ period by 2-3x (see SCAN_OCC_UPDATE_SLOW) and
+  // starve every other callback on the shared ros::spin() thread (FSM
+  // timer, odom, SCAN takeover sync). Every point still gets its own
+  // occupancy *hit* mark regardless of this cap (see raycastProcess()), so
+  // obstacle detection is never weakened; only free-space *miss* carving
+  // for points beyond the cap is deferred to a later cycle via
+  // MappingData::raycast_walk_cursor_, which round-robins across cycles so
+  // the whole frame still gets fully carved within a few cycles instead of
+  // permanently skipping the same region. <= 0 disables the cap.
+  int max_raycast_walk_points_{15000};
+
   /* visualization and computation time display */
   double vis_height_, ground_height_;
   bool show_occ_time_;
@@ -140,6 +158,14 @@ struct MappingData {
   char raycast_num_;
   queue<Eigen::Vector3i> cache_voxel_;
 
+  // Round-robin start index into proj_points_ for the bounded raycast walk
+  // budget (see MappingParameters::max_raycast_walk_points_). Advances by
+  // the walk budget each cycle (wrapping on proj_points_cnt) so that when
+  // a frame has more unique points than the budget allows, different
+  // slices get the expensive free-space walk on successive cycles instead
+  // of the same tail always being skipped.
+  int raycast_walk_cursor_{0};
+
   // range of updating grid
 
   Eigen::Vector3i local_bound_min_, local_bound_max_;
@@ -152,6 +178,18 @@ struct MappingData {
   // Timestamp of the last real occupancy update (raycast).
   // Remains 0.0 until the first successful raycast.
   double last_occupancy_update_stamp_sec_{0.0};
+
+  // Per-callback dedup set used by cloudCallback() to collapse dense lidar
+  // points that land in the same occupancy voxel down to a single
+  // representative point before they reach raycastProcess(). Real lidar
+  // frames on close obstacles can carry 50k-60k points that hit only a
+  // few thousand unique voxels; without this, the per-point cost in
+  // raycastProcess() (endpoint accounting done before its own
+  // flag_rayend_ dedup) scaled with raw point count instead of unique
+  // voxel count and could exceed the occ_timer_ budget (see
+  // SCAN_OCC_UPDATE_SLOW). Cleared and reused every callback to avoid
+  // per-frame allocation.
+  std::unordered_set<Eigen::Vector3i, matrix_hash<Eigen::Vector3i>> cloud_voxel_seen_;
 
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
