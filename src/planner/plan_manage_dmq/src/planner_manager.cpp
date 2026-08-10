@@ -141,8 +141,18 @@ namespace scan_planner
         double dist = (start_pt - local_target_pt).norm();
         double time = pow(pp_.max_vel_, 2) / pp_.max_acc_ > dist ? sqrt(dist / pp_.max_acc_) : (dist - pow(pp_.max_vel_, 2) / pp_.max_acc_) / pp_.max_vel_ + 2 * pp_.max_vel_ / pp_.max_acc_;
 
-        if (!flag_randomPolyTraj)
+        const bool stair_route_constraint_active =
+            grid_map_ && grid_map_->stairUpActive();
+        const bool use_random_lateral_initialization =
+            flag_randomPolyTraj && !stair_route_constraint_active;
+        if (!use_random_lateral_initialization)
         {
+          if (flag_randomPolyTraj && stair_route_constraint_active)
+          {
+            ROS_INFO_THROTTLE(2.0,
+                "SCAN_STAIR_ROUTE_ALIGNED_INIT "
+                "random_lateral_suppressed=1");
+          }
           gl_traj = PolynomialTraj::one_segment_traj_gen(start_pt, start_vel, start_acc, local_target_pt, local_target_vel, Eigen::Vector3d::Zero(), time);
         }
         else

@@ -83,22 +83,21 @@ struct MappingParameters {
       min_occupancy_log_;                   // logit of occupancy probability
   double min_ray_length_, max_ray_length_;  // range of doing raycasting
 
-  // Hard cap on how many projected points get a full origin-to-point free
-  // -space raycast walk within a single raycastProcess() call. Dense real
+  // Hard cap on how many projected points are integrated by one
+  // raycastProcess() call. Dense real
   // lidar scans in cluttered indoor scenes can carry tens of thousands of
   // unique occupied voxels even after cloudCallback()'s per-voxel dedup
   // (see MappingData::cloud_voxel_seen_), and the walk cost scales with
   // both ray count and path length, not just endpoint count -- it can
   // exceed the occ_timer_ period by 2-3x (see SCAN_OCC_UPDATE_SLOW) and
   // starve every other callback on the shared ros::spin() thread (FSM
-  // timer, odom, SCAN takeover sync). Every point still gets its own
-  // occupancy *hit* mark regardless of this cap (see raycastProcess()), so
-  // obstacle detection is never weakened; only free-space *miss* carving
-  // for points beyond the cap is deferred to a later cycle via
-  // MappingData::raycast_walk_cursor_, which round-robins across cycles so
-  // the whole frame still gets fully carved within a few cycles instead of
-  // permanently skipping the same region. <= 0 disables the cap.
-  int max_raycast_walk_points_{15000};
+  // timer, odom, SCAN takeover sync). When capped, points are selected
+  // evenly across the ordered lidar frame and each selected point performs
+  // one complete endpoint-hit/free-space-miss transaction. This avoids the
+  // old asymmetric update that wrote every hit but skipped many clearing
+  // rays, which accumulated stale occupied voxels while the robot moved.
+  // <= 0 disables the cap.
+  int max_raycast_points_{15000};
 
   /* visualization and computation time display */
   double vis_height_, ground_height_;
@@ -159,14 +158,6 @@ struct MappingData {
   vector<char> flag_traverse_, flag_rayend_;
   char raycast_num_;
   queue<Eigen::Vector3i> cache_voxel_;
-
-  // Round-robin start index into proj_points_ for the bounded raycast walk
-  // budget (see MappingParameters::max_raycast_walk_points_). Advances by
-  // the walk budget each cycle (wrapping on proj_points_cnt) so that when
-  // a frame has more unique points than the budget allows, different
-  // slices get the expensive free-space walk on successive cycles instead
-  // of the same tail always being skipped.
-  int raycast_walk_cursor_{0};
 
   // range of updating grid
 

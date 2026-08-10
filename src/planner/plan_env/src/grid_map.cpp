@@ -44,7 +44,10 @@ void GridMap::initMap(ros::NodeHandle &nh)
   node_.param("grid_map/p_max", mp_.p_max_, -1.0);
   node_.param("grid_map/p_occ", mp_.p_occ_, -1.0);
   node_.param("grid_map/max_ray_length", mp_.max_ray_length_, -0.1);
-  node_.param("grid_map/max_raycast_walk_points", mp_.max_raycast_walk_points_, 15000);
+  // Keep the deployed ROS parameter name for configuration compatibility;
+  // internally the cap now applies to the complete endpoint+walk update.
+  node_.param("grid_map/max_raycast_walk_points",
+              mp_.max_raycast_points_, 15000);
 
   node_.param("grid_map/vis_height", mp_.vis_height_, 0.3);
   node_.param("grid_map/show_occ_time", mp_.show_occ_time_, false);
@@ -448,7 +451,6 @@ void GridMap::resetBuffer()
   md_.has_cloud_ = false;
   md_.has_first_depth_ = false;
   md_.proj_points_cnt = 0;
-  md_.raycast_walk_cursor_ = 0;
   md_.last_occupancy_update_stamp_sec_ = 0.0;
   md_.cloud_voxel_seen_.clear();
   md_.local_bound_min_ = mp_.map_bound_min_idx_;
@@ -595,27 +597,28 @@ void GridMap::raycastProcess()
   Eigen::Vector3d half = Eigen::Vector3d(0.5, 0.5, 0.5);
   Eigen::Vector3d ray_pt, pt_w;
 
-  // Bounded walk budget: see MappingParameters::max_raycast_walk_points_.
-  // Every point still gets its endpoint hit/miss marked below regardless
-  // of this budget; only the expensive origin-to-point free-space walk is
-  // rationed and round-robined across cycles when a frame has more unique
-  // points than the budget allows.
-  const int walk_budget =
-      (mp_.max_raycast_walk_points_ > 0 &&
-       mp_.max_raycast_walk_points_ < md_.proj_points_cnt)
-          ? mp_.max_raycast_walk_points_
+  // Bounded complete-update budget: see
+  // MappingParameters::max_raycast_points_. Select evenly across the
+  // ordered lidar frame so angular coverage is retained. Endpoint and free
+  // space updates always use the same selected point set; integrating hits
+  // without their clearing rays leaves persistent ghost obstacles.
+  const int selected_point_count =
+      (mp_.max_raycast_points_ > 0 &&
+       mp_.max_raycast_points_ < md_.proj_points_cnt)
+          ? mp_.max_raycast_points_
           : md_.proj_points_cnt;
-  const bool walk_capped = walk_budget < md_.proj_points_cnt;
-  int walk_start = 0;
-  if (walk_capped)
-  {
-    walk_start = md_.raycast_walk_cursor_ % md_.proj_points_cnt;
-    md_.raycast_walk_cursor_ = (walk_start + walk_budget) % md_.proj_points_cnt;
-  }
-  int skipped_walk_count = 0;
+  const bool point_set_capped =
+      selected_point_count < md_.proj_points_cnt;
 
-  for (int i = 0; i < md_.proj_points_cnt; ++i)
+  for (int selected_index = 0;
+       selected_index < selected_point_count;
+       ++selected_index)
   {
+    const int i = point_set_capped
+        ? static_cast<int>(
+              static_cast<long long>(selected_index) *
+              md_.proj_points_cnt / selected_point_count)
+        : selected_index;
     pt_w = md_.proj_points_[i];
 
     // set flag for projected point
@@ -668,17 +671,6 @@ void GridMap::raycastProcess()
       }
     }
 
-    if (walk_capped)
-    {
-      int rel = i - walk_start;
-      if (rel < 0) rel += md_.proj_points_cnt;
-      if (rel >= walk_budget)
-      {
-        ++skipped_walk_count;
-        continue;
-      }
-    }
-
     raycaster.setInput(pt_w / mp_.resolution_, md_.ray_pos_ / mp_.resolution_);
 
     while (raycaster.step(ray_pt))
@@ -702,11 +694,13 @@ void GridMap::raycastProcess()
     }
   }
 
-  if (skipped_walk_count > 0)
+  if (point_set_capped)
   {
     ROS_WARN_THROTTLE(2.0,
-        "SCAN_OCC_RAYCAST_BUDGET_CAPPED skipped=%d cap=%d total=%d",
-        skipped_walk_count, walk_budget, md_.proj_points_cnt);
+        "SCAN_OCC_RAYCAST_BUDGET_CAPPED skipped=%d cap=%d total=%d "
+        "complete_updates=1",
+        md_.proj_points_cnt - selected_point_count,
+        selected_point_count, md_.proj_points_cnt);
   }
 
   min_x = min(min_x, md_.ray_pos_(0));

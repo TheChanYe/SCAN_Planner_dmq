@@ -129,13 +129,15 @@ grid_map:
   obstacles_inflation_z_down: 0.40
   # During an approved ascending route, occupancy up to this height above the
   # interpolated route is treated as stair support. Taller obstacles still block.
-  stair_support_clearance_m: 0.20
+  stair_support_clearance_m: 0.25
   p_hit: 0.85
   p_miss: 0.30
   p_min: 0.12
   p_max: 0.98
   p_occ: 0.80
   max_ray_length: 5.0
+  # Maximum complete endpoint-and-free-space ray updates per lidar frame.
+  max_raycast_walk_points: 15000
   vis_height: 0.30
 
 optimization:
