@@ -89,6 +89,11 @@ if(CATKIN_ENABLE_TESTING)
     )
   endif()
 
+  catkin_add_gtest(test_safety_supervisor test/test_safety_supervisor.cpp)
+  if(TARGET test_safety_supervisor)
+    target_link_libraries(test_safety_supervisor navdog_core)
+  endif()
+
   # test_navigation_control disabled: uses TrajectoryFollower which was removed
 endif()
 

@@ -32,10 +32,11 @@ public:
   // Context：调用 apply() 时需要的安全评估上下文：
   //   robot          - 机器人当前位姿状态（含时间戳，用于时效性检查）
   //   obstacles      - 障碍物概况（最近障碍物距离等）
-  //   corridor       - 路线走廊评估结果（当前 apply 未直接使用，保留给上层参考）
+  //   corridor       - 三维路线走廊评估结果（楼梯期间用于前向安全距离）
   //   trajectory     - 当前局部轨迹（用于轨迹身份校验）
   //   map_stamp_sec  - 占据地图最后更新时间戳
   //   map_valid      - 地图是否有效
+  //   prefer_route_corridor_front - 是否以三维路线走廊替代水平前向射线
   struct Context
   {
     RobotState robot{};
@@ -44,6 +45,7 @@ public:
     LocalTrajectory trajectory{};
     double map_stamp_sec{0.0};
     bool map_valid{false};
+    bool prefer_route_corridor_front{false};
   };
 
   // apply：安全监督主入口，每个控制周期对上游控制器输出的原始指令进行安全审查。

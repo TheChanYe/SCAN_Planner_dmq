@@ -388,9 +388,18 @@ VelocityCommand SafetySupervisor::apply(
   const double effective_max_vx =
       std::max(0.0, std::min(max_vx, limit_config_.max_vx));
 
+  ObstacleSummary effective_obstacles = context.obstacles;
+  if (context.prefer_route_corridor_front && context.corridor.valid &&
+      !context.corridor.out_of_map)
+  {
+    effective_obstacles.front_min = context.corridor.blocked
+        ? context.corridor.first_blocked_distance_ahead_m
+        : std::numeric_limits<double>::infinity();
+  }
+
   // Front obstacle slowdown.
   const double front_limit =
-      computeFrontSpeedLimit(context.obstacles);
+      computeFrontSpeedLimit(effective_obstacles);
 
   if (std::isfinite(front_limit) && front_limit < 1.0)
   {
@@ -422,9 +431,9 @@ VelocityCommand SafetySupervisor::apply(
   // be allowed to rotate, move laterally, or reverse along a
   // collision-checked LOCAL_AVOID trajectory.
   const bool front_emergency_stop =
-      context.obstacles.valid &&
-      std::isfinite(context.obstacles.front_min) &&
-      context.obstacles.front_min <=
+      effective_obstacles.valid &&
+      std::isfinite(effective_obstacles.front_min) &&
+      effective_obstacles.front_min <=
           safety_config_.emergency_stop;
 
   const bool local_escape_active =

@@ -110,3 +110,30 @@ TEST(RouteManager, GoalAndOutOfRangeInterpolationUseLastPoint)
   EXPECT_DOUBLE_EQ(2.0, point.x);
   EXPECT_FALSE(manager.forwardTarget(0.0, -1.0, point));
 }
+
+TEST(RouteManager, ElevationAssessmentDetectsOnlySignificantAscent)
+{
+  const auto assess = [](const std::vector<double>& z_values) {
+    navdog::RouteManager manager;
+    std::vector<navdog_task::RoutePoint> points;
+    for (std::size_t i = 0; i < z_values.size(); ++i)
+    {
+      navdog_task::RoutePoint point;
+      point.x = static_cast<double>(i) * 0.5;
+      point.z = z_values[i];
+      points.push_back(point);
+    }
+    EXPECT_TRUE(manager.acceptRoute(1, points));
+    navdog::RouteProgress progress;
+    progress.valid = true;
+    progress.task_sequence = 1;
+    progress.arc_length_m = 0.0;
+    progress.total_length_m = points.back().x;
+    return manager.assessElevation(progress, navdog::StairUpConfig{});
+  };
+
+  EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.30}).ascending);
+  EXPECT_FALSE(assess({0.30, 0.31, 0.29, 0.32}).ascending);
+  EXPECT_TRUE(assess({0.30, 0.30, 0.45, 0.60, 0.75}).ascending);
+  EXPECT_FALSE(assess({0.75, 0.60, 0.45, 0.30}).ascending);
+}

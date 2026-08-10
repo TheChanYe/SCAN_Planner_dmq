@@ -4,6 +4,7 @@
 #include <Eigen/Eigen>
 #include <Eigen/StdVector>
 #include <algorithm>
+#include <atomic>
 #include <cv_bridge/cv_bridge.h>
 #include <cmath>
 #include <geometry_msgs/PoseStamped.h>
@@ -60,6 +61,7 @@ struct MappingParameters {
   Eigen::Vector3d local_update_range_;
   double resolution_, resolution_inv_;
   double obstacles_inflation_z_up, obstacles_inflation_z_down;
+  double stair_support_clearance_m_{0.20};
   double double_cylinder_radius_, double_cylinder_offset_;
   bool map_sliding_en_;
   double map_sliding_thresh_;
@@ -217,6 +219,13 @@ public:
   inline int getOccupancy(Eigen::Vector3d pos);
   inline int getOccupancy(Eigen::Vector3i id);
   inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw);
+  inline int getPlanningOccupancy(Eigen::Vector3d pos, double yaw);
+  void setStairUpActive(bool active) noexcept {
+    stair_up_active_.store(active, std::memory_order_relaxed);
+  }
+  bool stairUpActive() const noexcept {
+    return stair_up_active_.load(std::memory_order_relaxed);
+  }
 
   inline void boundIndex(Eigen::Vector3i& id);
   inline bool isUnknown(const Eigen::Vector3i& id);
@@ -257,6 +266,7 @@ public:
 private:
   MappingParameters mp_;
   MappingData md_;
+  std::atomic<bool> stair_up_active_{false};
 
   // get depth image and sensor pose
   void depthPoseCallback(const sensor_msgs::ImageConstPtr& img,
@@ -428,6 +438,25 @@ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
   if (front_occ != 0) return front_occ;
 
   return getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
+}
+
+// Planning occupancy keeps the normal inflated-body query everywhere except
+// while Core has latched an ascending reference route.  In that case an
+// occupied result is re-checked above the configured support allowance. This
+// removes stair treads/risers close to the expected route surface while walls
+// or boxes extending above that allowance remain occupied. The allowance
+// covers the height discontinuity between a linearly interpolated route and a
+// physical stair tread and is capped by the configured dog height.
+// Unknown/out-of-map results remain conservative.
+inline int GridMap::getPlanningOccupancy(Eigen::Vector3d pos, double yaw) {
+  const int normal_occupancy = getInflateOccupancy(pos, yaw);
+  if (!stair_up_active_.load(std::memory_order_relaxed) ||
+      normal_occupancy <= 0)
+    return normal_occupancy;
+
+  pos.z() += std::max(0.0, mp_.obstacles_inflation_z_up) +
+      mp_.stair_support_clearance_m_;
+  return getInflateOccupancy(pos, yaw);
 }
 
 inline int GridMap::getInflateOccupancyFromBuffer(Eigen::Vector3d pos, const std::vector<char>& buffer) {

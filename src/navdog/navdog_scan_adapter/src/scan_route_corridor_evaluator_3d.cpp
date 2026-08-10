@@ -84,7 +84,6 @@ ScanRouteCorridorEvaluator3D::evaluate(
       progress.arc_length_m;
   assessment.map_resolution_m = resolution;
   assessment.sample_step_m = sample_step;
-  assessment.query_z_m = robot.z;
   assessment.map_stamp_sec = grid_->mapStampSec();
   assessment.evaluation_stamp_sec = now_sec;
   assessment.first_blocked_distance_ahead_m =
@@ -131,11 +130,21 @@ ScanRouteCorridorEvaluator3D::evaluate(
   // 当前路段起点
   double cur_x = progress.projected_x;
   double cur_y = progress.projected_y;
+  double cur_z = robot.z;
+  if (task.points.size() > 1 &&
+      progress.segment_index + 1 < task.points.size())
+  {
+    const navdog::RoutePoint& a = task.points[progress.segment_index];
+    const navdog::RoutePoint& b = task.points[progress.segment_index + 1];
+    const double ratio = std::max(0.0, std::min(1.0, progress.segment_ratio));
+    cur_z = a.z + ratio * (b.z - a.z);
+  }
+  assessment.query_z_m = cur_z;
 
   // 辅助lambda：对单个中心点沿垂直于行进方向的法线方向展开采样（走廊宽度方向）。
   // 返回true表示继续评估，返回false表示已命中终止评估（障碍/超图/无效）。
   auto queryPoint = [&](
-      double px, double py,
+      double px, double py, double pz,
       double seg_yaw,
       double dist_from_start) -> bool
   {
@@ -149,7 +158,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
       const InflatedGridQueryResult result = grid_->query(
           px + lateral * normal_x,
           py + lateral * normal_y,
-          robot.z,
+          pz,
           seg_yaw);
       if (result == InflatedGridQueryResult::OCCUPIED)
       {
@@ -183,12 +192,13 @@ ScanRouteCorridorEvaluator3D::evaluate(
   // 采样点：起点、中间步进点、终点（受budget截断）。
   // 返回true表示继续，返回false表示已停止。
   auto processSegment = [&](
-      double sx, double sy,
-      double ex, double ey,
+      double sx, double sy, double sz,
+      double ex, double ey, double ez,
       double budget) -> bool
   {
     const double dx = ex - sx;
     const double dy = ey - sy;
+    const double dz = ez - sz;
     const double seg_len = std::hypot(dx, dy);
 
     if (seg_len < kEpsilon)
@@ -199,7 +209,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
     // --- 采样起点 ---
     {
-      if (!queryPoint(sx, sy, seg_yaw, cumulative_distance))
+      if (!queryPoint(sx, sy, sz, seg_yaw, cumulative_distance))
         return false;
     }
 
@@ -218,9 +228,10 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
         const double px = sx + t * dx;
         const double py = sy + t * dy;
+        const double pz = sz + t * dz;
         const double dist = cumulative_distance + t * seg_len;
 
-        if (!queryPoint(px, py, seg_yaw, dist))
+        if (!queryPoint(px, py, pz, seg_yaw, dist))
           return false;
       }
     }
@@ -230,9 +241,10 @@ ScanRouteCorridorEvaluator3D::evaluate(
       const double t = usable_len / seg_len;
       const double px = sx + t * dx;
       const double py = sy + t * dy;
+      const double pz = sz + t * dz;
       const double dist = cumulative_distance + usable_len;
 
-      if (!queryPoint(px, py, seg_yaw, dist))
+      if (!queryPoint(px, py, pz, seg_yaw, dist))
         return false;
     }
 
@@ -263,7 +275,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
         std::min(robot_to_target, check_distance);
 
     // 采样起点（机器人当前位置）
-    if (!queryPoint(robot.x, robot.y, seg_yaw, 0.0))
+    if (!queryPoint(robot.x, robot.y, robot.z, seg_yaw, 0.0))
     {
       return assessment;
     }
@@ -282,9 +294,10 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
         const double px = robot.x + t * dx;
         const double py = robot.y + t * dy;
+        const double pz = robot.z + t * (target.z - robot.z);
         const double dist = t * robot_to_target;
 
-        if (!queryPoint(px, py, seg_yaw, dist))
+        if (!queryPoint(px, py, pz, seg_yaw, dist))
         {
           return assessment;
         }
@@ -296,9 +309,10 @@ ScanRouteCorridorEvaluator3D::evaluate(
       const double t = usable_len / robot_to_target;
       const double px = robot.x + t * dx;
       const double py = robot.y + t * dy;
+      const double pz = robot.z + t * (target.z - robot.z);
       const double dist = usable_len;
 
-      if (!queryPoint(px, py, seg_yaw, dist))
+      if (!queryPoint(px, py, pz, seg_yaw, dist))
       {
         return assessment;
       }
@@ -319,8 +333,8 @@ ScanRouteCorridorEvaluator3D::evaluate(
         task.points[progress.segment_index + 1];
 
     if (!processSegment(
-            cur_x, cur_y,
-            next_pt.x, next_pt.y,
+            cur_x, cur_y, cur_z,
+            next_pt.x, next_pt.y, next_pt.z,
             remaining_budget))
     {
       return assessment;
@@ -330,6 +344,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
 
     cur_x = next_pt.x;
     cur_y = next_pt.y;
+    cur_z = next_pt.z;
   }
 
   // 处理剩余路段
@@ -341,8 +356,8 @@ ScanRouteCorridorEvaluator3D::evaluate(
     const navdog::RoutePoint& seg_end = task.points[i];
 
     if (!processSegment(
-            seg_start.x, seg_start.y,
-            seg_end.x, seg_end.y,
+            seg_start.x, seg_start.y, seg_start.z,
+            seg_end.x, seg_end.y, seg_end.z,
             remaining_budget))
     {
       return assessment;
@@ -351,6 +366,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
     remaining_budget = check_distance - cumulative_distance;
     cur_x = seg_end.x;
     cur_y = seg_end.y;
+    cur_z = seg_end.z;
   }
 
   // 所有路段均处理完毕且未发现障碍物

@@ -36,6 +36,10 @@ public:
   /** @brief 查询从给定弧长向前指定米数的跟随目标点（不改变当前进度），用于 pure pursuit 前瞻。 */
   bool forwardTarget(double from_arc_length_m, double forward_distance_m,
       navdog_task::RoutePoint& output) const noexcept;
+  /** @brief 按XY弧长采样前方路线高度，判断是否存在达到阈值的正向抬升。 */
+  RouteElevationAssessment assessElevation(
+      const RouteProgress& progress,
+      const StairUpConfig& config) const noexcept;
   /** @brief 返回路线终点指针，无路线时为nullptr。 */
   const navdog_task::RoutePoint* goal() const noexcept;
   /** @brief 返回当前路线点集的只读引用。 */

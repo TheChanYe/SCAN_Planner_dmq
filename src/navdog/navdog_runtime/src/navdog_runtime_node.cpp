@@ -152,6 +152,8 @@ bool NavdogRuntimeNode::initialize()
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
+  stair_up_active_publisher_ =
+      nh_.advertise<std_msgs::Bool>("/navdog/stair_up_active", 1, true);
   final_cmd_publisher_ = nh_.advertise<geometry_msgs::TwistStamped>(
       io.final_cmd_topic, 1);
   control_timer_ = nh_.createTimer(ros::Duration(1.0 / io.control_rate_hz),
@@ -167,6 +169,13 @@ bool NavdogRuntimeNode::initialize()
       nm.exit_left_clearance_m, nm.exit_right_clearance_m);
   ROS_INFO("SCAN_RECOVERY_CONFIG takeover_timeout=%.2f max_attempts=%d",
       scan_takeover_timeout_sec_, scan_recovery_max_attempts_);
+  const auto& stair = application_config_.core.stair_up;
+  ROS_INFO("STAIR_UP_CONFIG enabled=%d lookahead=%.2f sample_step=%.2f "
+           "trigger_rise=%.2f flat_tolerance=%.2f exit_margin=%.2f "
+           "exit_confirm=%.2f",
+      stair.enabled ? 1 : 0, stair.lookahead_distance_m,
+      stair.sample_step_m, stair.trigger_rise_m, stair.flat_tolerance_m,
+      stair.exit_progress_margin_m, stair.exit_confirm_sec);
 
   return true;
 }
@@ -449,6 +458,32 @@ void NavdogRuntimeNode::handleScanRecovery(
 void NavdogRuntimeNode::logNavigationChanges(
     const navdog::CoreOutput& output, const navdog::CoreInput& input)
 {
+  const bool stair_activated = !last_logged_stair_up_active_ &&
+      output.navigation_mode.stair_up_active;
+  if (stair_activated)
+  {
+    const auto& elevation = output.route_elevation;
+    ROS_INFO("STAIR_UP_TRIGGER rise=%.3f current_z=%.3f forward_z=%.3f "
+             "robot_z=%.3f arc=%.3f hold_until=%.3f mode_transition=%d",
+        elevation.rise_m, elevation.current_z, elevation.max_forward_z,
+        input.robot.z, output.route_progress.arc_length_m,
+        output.navigation_mode.stair_hold_until_arc_m,
+        output.navigation_mode.transitioned ? 1 : 0);
+  }
+  if (last_logged_stair_up_active_ &&
+      !output.navigation_mode.stair_up_active)
+  {
+    ROS_INFO("STAIR_UP_EXIT arc=%.3f hold_until=%.3f",
+        output.route_progress.arc_length_m,
+        last_logged_stair_hold_until_arc_m_);
+  }
+  last_logged_stair_up_active_ = output.navigation_mode.stair_up_active;
+  if (output.navigation_mode.stair_up_active)
+  {
+    last_logged_stair_hold_until_arc_m_ =
+        output.navigation_mode.stair_hold_until_arc_m;
+  }
+
   if (!log_state_initialized_ || output.state != last_logged_state_)
   {
     const auto& progress = output.route_progress;
@@ -684,6 +719,9 @@ void NavdogRuntimeNode::publishOutput(
   std_msgs::UInt8 mode;
   mode.data = static_cast<std::uint8_t>(output.navigation_mode.mode);
   mode_publisher_.publish(mode);
+  std_msgs::Bool stair_up_active;
+  stair_up_active.data = output.navigation_mode.stair_up_active;
+  stair_up_active_publisher_.publish(stair_up_active);
 }
 
 // publishRoute：将当前导航任务的完整路线作为Path发布（供可视化/监控使用）。

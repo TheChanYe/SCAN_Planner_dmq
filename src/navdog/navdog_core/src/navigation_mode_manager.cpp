@@ -1,5 +1,6 @@
 #include "navdog_core/navigation_mode_manager.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace navdog
@@ -11,8 +12,10 @@ constexpr double kTimeEpsilonSec = 1e-9;
 }
 
 NavigationModeManager::NavigationModeManager(
-    const NavigationModeConfig& config)
-    : config_(config)
+    const NavigationModeConfig& config,
+    const StairUpConfig& stair_config)
+    : config_(config),
+      stair_config_(stair_config)
 {
 }
 
@@ -49,6 +52,22 @@ bool NavigationModeManager::isConfigValid() const noexcept
     return false;
   if (config_.exit_right_clearance_m < 0.0)
     return false;
+  if (!std::isfinite(stair_config_.lookahead_distance_m) ||
+      stair_config_.lookahead_distance_m <= 0.0 ||
+      !std::isfinite(stair_config_.sample_step_m) ||
+      stair_config_.sample_step_m <= 0.0 ||
+      !std::isfinite(stair_config_.trigger_rise_m) ||
+      stair_config_.trigger_rise_m <= 0.0 ||
+      !std::isfinite(stair_config_.flat_tolerance_m) ||
+      stair_config_.flat_tolerance_m < 0.0 ||
+      stair_config_.flat_tolerance_m >= stair_config_.trigger_rise_m ||
+      !std::isfinite(stair_config_.exit_progress_margin_m) ||
+      stair_config_.exit_progress_margin_m < 0.0 ||
+      !std::isfinite(stair_config_.exit_confirm_sec) ||
+      stair_config_.exit_confirm_sec < 0.0)
+  {
+    return false;
+  }
   return true;
 }
 
@@ -189,6 +208,19 @@ NavigationModeOutput NavigationModeManager::update(
     const ObstacleSummary& obstacles,
     double now_sec)
 {
+  return update(task, robot, progress, RouteElevationAssessment{},
+      corridor, obstacles, now_sec);
+}
+
+NavigationModeOutput NavigationModeManager::update(
+    const NavigationTask& task,
+    const RobotState& robot,
+    const RouteProgress& progress,
+    const RouteElevationAssessment& route_elevation,
+    const RouteCorridorObservationOutput& corridor,
+    const ObstacleSummary& obstacles,
+    double now_sec)
+{
   NavigationModeOutput output{};
   status_.transitioned = false;
 
@@ -237,6 +269,30 @@ NavigationModeOutput NavigationModeManager::update(
     return output;
   }
 
+  const bool route_ascending = stair_config_.enabled &&
+      route_elevation.valid && route_elevation.ascending;
+  const bool stair_activated_this_update = route_ascending &&
+      status_.avoidance_allowed && !status_.stair_up_active;
+  if (route_ascending && status_.avoidance_allowed)
+  {
+    status_.stair_hold_until_arc_m = std::max(
+        status_.stair_hold_until_arc_m,
+        route_elevation.checked_until_arc_m);
+    // A normal corridor block may enter LOCAL_AVOID before the rising route
+    // reaches the elevation lookahead.  Keep the mode transition single-owned,
+    // but allow the stair constraint to latch when ascent is confirmed later.
+    status_.stair_up_active = true;
+    if (status_.mode == NavigationMode::ROUTE_FOLLOW)
+    {
+      transitionTo(NavigationMode::LOCAL_AVOID,
+          NavigationModeReason::ROUTE_ASCENDING, progress, now_sec);
+    }
+    else if (stair_activated_this_update)
+    {
+      status_.reason = NavigationModeReason::ROUTE_ASCENDING;
+    }
+  }
+
   const bool is_clear =
       corridor.result == RouteCorridorObservationResult::CLEAR;
   const bool is_blocked =
@@ -254,7 +310,8 @@ NavigationModeOutput NavigationModeManager::update(
       status_.corridor_available = false;
       status_.route_blocked = false;
       status_.route_blocked_near = false;
-      status_.reason = NavigationModeReason::WAITING_FOR_CORRIDOR;
+      if (!status_.transitioned)
+        status_.reason = NavigationModeReason::WAITING_FOR_CORRIDOR;
       output.result = NavigationModeUpdateResult::WAITING_FOR_CORRIDOR;
     }
     status_.stamp_sec = now_sec;
@@ -370,10 +427,19 @@ NavigationModeOutput NavigationModeManager::update(
     //   2. Route corridor CLEAR
     //   3. Directional obstacle clearance satisfied (from ObstacleSummary)
     //   4. All of the above held continuously for exit_clear_confirm_sec
+    const bool stair_route_flat = !status_.stair_up_active ||
+        (route_elevation.valid && !route_elevation.ascending &&
+         route_elevation.rise_m <= stair_config_.flat_tolerance_m +
+             kTimeEpsilonSec);
+    const bool stair_progress_satisfied = !status_.stair_up_active ||
+        progress.arc_length_m + stair_config_.exit_progress_margin_m +
+            kTimeEpsilonSec >= status_.stair_hold_until_arc_m;
     const bool all_exit_conditions =
         minimum_hold_satisfied &&
         corridor_clear &&
-        clearance_satisfied;
+        clearance_satisfied &&
+        stair_route_flat &&
+        stair_progress_satisfied;
 
     if (all_exit_conditions)
     {
@@ -384,13 +450,18 @@ NavigationModeOutput NavigationModeManager::update(
       }
 
       const double clear_held = now_sec - clear_candidate_start_sec_;
-      if (clear_held >= config_.exit_clear_confirm_sec)
+      const double exit_confirm_sec = status_.stair_up_active
+          ? stair_config_.exit_confirm_sec
+          : config_.exit_clear_confirm_sec;
+      if (clear_held >= exit_confirm_sec)
       {
         clear_candidate_active_ = false;
         clear_candidate_start_sec_ = 0.0;
 
         transitionTo(NavigationMode::ROUTE_FOLLOW,
             NavigationModeReason::ROUTE_CLEAR, progress, now_sec);
+        status_.stair_up_active = false;
+        status_.stair_hold_until_arc_m = 0.0;
       }
     }
     else
@@ -400,7 +471,7 @@ NavigationModeOutput NavigationModeManager::update(
       clear_candidate_start_sec_ = 0.0;
     }
 
-    if (!status_.transitioned)
+    if (!status_.transitioned && !stair_activated_this_update)
       status_.reason = NavigationModeReason::LOCAL_AVOID_ACTIVE;
   }
   else

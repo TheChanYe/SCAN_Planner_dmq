@@ -61,7 +61,8 @@ public:
   // 最小停留时间等），默认使用 NavigationModeConfig 默认值。
   explicit NavigationModeManager(
       const NavigationModeConfig& config =
-          NavigationModeConfig{});
+          NavigationModeConfig{},
+      const StairUpConfig& stair_config = StairUpConfig{});
 
   // reset：将状态机完全重置到初始状态（清空当前模式、任务序号、所有确认计时器），
   // 在任务取消/重新开始导航时调用。
@@ -80,6 +81,15 @@ public:
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
+      const RouteCorridorObservationOutput& corridor,
+      const ObstacleSummary& obstacles,
+      double now_sec);
+
+  NavigationModeOutput update(
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      const RouteElevationAssessment& route_elevation,
       const RouteCorridorObservationOutput& corridor,
       const ObstacleSummary& obstacles,
       double now_sec);
@@ -124,6 +134,7 @@ private:
       double now_sec);
 
   NavigationModeConfig config_{};        // 模式切换配置参数
+  StairUpConfig stair_config_{};
   NavigationModeStatus status_{};        // 当前完整模式状态
 
   std::uint64_t active_task_sequence_{0}; // 当前正在跟踪的任务序号

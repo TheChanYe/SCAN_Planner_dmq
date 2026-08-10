@@ -114,6 +114,7 @@ private:
   ros::Publisher native_scan_takeover_sync_publisher_;    // 接管同步信息发布者
   ros::Publisher state_publisher_;                        // 导航状态发布者
   ros::Publisher mode_publisher_;                         // 导航模式发布者
+  ros::Publisher stair_up_active_publisher_;              // Native SCAN楼梯约束发布者
   ros::Publisher final_cmd_publisher_;                    // 最终速度指令发布者
   ros::Timer control_timer_;                              // 固定频率控制循环定时器
 
@@ -136,6 +137,8 @@ private:
   navdog::NavigationMode last_logged_mode_{navdog::NavigationMode::NONE};  // 上次记录日志的导航模式
   bool log_state_initialized_{false};             // 状态日志是否已初始化
   bool log_mode_initialized_{false};              // 模式日志是否已初始化
+  bool last_logged_stair_up_active_{false};
+  double last_logged_stair_hold_until_arc_m_{0.0};
   int last_logged_motion_class_{-1};              // 上次记录的运动分类
   std::size_t last_logged_segment_index_{0};      // 上次记录的路线段索引
   bool log_progress_initialized_{false};          // 进度日志是否已初始化

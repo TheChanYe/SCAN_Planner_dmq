@@ -127,6 +127,9 @@ grid_map:
   self_filter_margin_z: 0.02
   obstacles_inflation_z_up: 0.10
   obstacles_inflation_z_down: 0.40
+  # During an approved ascending route, occupancy up to this height above the
+  # interpolated route is treated as stair support. Taller obstacles still block.
+  stair_support_clearance_m: 0.20
   p_hit: 0.85
   p_miss: 0.30
   p_min: 0.12
@@ -153,6 +156,17 @@ navigation_mode:
   exit_front_clearance_m: 2.50
   exit_left_clearance_m: 0.60
   exit_right_clearance_m: 0.60
+
+stair_up:
+  enabled: true
+  # Keep elevation detection ahead of the 2.0m ordinary-block entry range so
+  # the route prior wins before the first stair riser is classified as a wall.
+  lookahead_distance_m: 2.20
+  sample_step_m: 0.10
+  trigger_rise_m: 0.10
+  flat_tolerance_m: 0.03
+  exit_progress_margin_m: 0.15
+  exit_confirm_sec: 0.50
 
 scan_recovery:
   takeover_timeout_sec: 1.50

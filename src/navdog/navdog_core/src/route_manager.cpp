@@ -140,6 +140,52 @@ bool RouteManager::forwardTarget(double from, double distance,
   return pointAtArcLength(from + distance, output);
 }
 
+RouteElevationAssessment RouteManager::assessElevation(
+    const RouteProgress& progress,
+    const StairUpConfig& config) const noexcept
+{
+  RouteElevationAssessment assessment{};
+  if (!config.enabled || !hasRoute() || !progress.valid ||
+      progress.task_sequence != task_view_.sequence ||
+      !std::isfinite(config.lookahead_distance_m) ||
+      config.lookahead_distance_m <= 0.0 ||
+      !std::isfinite(config.sample_step_m) || config.sample_step_m <= 0.0 ||
+      !std::isfinite(config.trigger_rise_m) || config.trigger_rise_m <= 0.0)
+  {
+    return assessment;
+  }
+
+  navdog_task::RoutePoint current{};
+  if (!pointAtArcLength(progress.arc_length_m, current))
+    return assessment;
+
+  const double checked_until = std::min(
+      progress.total_length_m,
+      progress.arc_length_m + config.lookahead_distance_m);
+  double max_forward_z = current.z;
+  for (double arc = progress.arc_length_m + config.sample_step_m;
+       arc < checked_until; arc += config.sample_step_m)
+  {
+    navdog_task::RoutePoint sample{};
+    if (!pointAtArcLength(arc, sample))
+      return RouteElevationAssessment{};
+    max_forward_z = std::max(max_forward_z, sample.z);
+  }
+
+  navdog_task::RoutePoint final_sample{};
+  if (!pointAtArcLength(checked_until, final_sample))
+    return assessment;
+  max_forward_z = std::max(max_forward_z, final_sample.z);
+
+  assessment.valid = true;
+  assessment.current_z = current.z;
+  assessment.max_forward_z = max_forward_z;
+  assessment.rise_m = max_forward_z - current.z;
+  assessment.checked_until_arc_m = checked_until;
+  assessment.ascending = assessment.rise_m + 1e-9 >= config.trigger_rise_m;
+  return assessment;
+}
+
 // goal：返回路线终点指针，无路线时为nullptr。
 const navdog_task::RoutePoint* RouteManager::goal() const noexcept
 { return hasRoute() ? &task_view_.points.back() : nullptr; }

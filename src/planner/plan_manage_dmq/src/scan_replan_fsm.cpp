@@ -1,5 +1,6 @@
 
 #include <plan_manage_dmq/scan_replan_fsm.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -141,6 +142,18 @@ namespace scan_planner
     visualization_.reset(new PlanningVisualization(nh));
     planner_manager_.reset(new SCANPlannerManager);
     planner_manager_->initPlanModules(nh, visualization_);
+
+    // Stair state is a tiny, atomic planning constraint. Give it an isolated
+    // callback queue so long GridMap/A*/B-spline callbacks on the main
+    // ros::spin() thread cannot delay a Core state edge for several seconds.
+    stair_state_node_ = ros::NodeHandle(nh);
+    stair_state_node_.setCallbackQueue(&stair_state_callback_queue_);
+    stair_up_active_sub_ = stair_state_node_.subscribe(
+        "/navdog/stair_up_active", 1,
+        &SCANReplanFSM::stairUpActiveCallback, this);
+    stair_state_spinner_.reset(
+        new ros::AsyncSpinner(1, &stair_state_callback_queue_));
+    stair_state_spinner_->start();
 
     /* callback */
     exec_timer_ = nh.createTimer(ros::Duration(0.01), &SCANReplanFSM::execFSMCallback, this);
@@ -410,12 +423,19 @@ namespace scan_planner
     const double duration = global_data.global_duration_;
     if (!map || duration < 1e-3)
       return true;
+    if (!map->hasInflatedObservation())
+    {
+      // Global polynomial construction may run immediately after a task reset.
+      // Do not truncate its endpoint against the intentionally cleared map;
+      // local planning remains gated until a fresh sensor update arrives.
+      return true;
+    }
 
     constexpr double sample_dt = 0.05;
     const int sample_num = std::max(1, static_cast<int>(std::ceil(duration / sample_dt)));
     const Eigen::Vector3d final_pt = global_data.global_traj_.evaluate(duration);
     const Eigen::Vector3d final_prev = global_data.global_traj_.evaluate(duration * (sample_num - 1) / sample_num);
-    const int final_occ = map->getInflateOccupancy(final_pt, estimateYawFromSegment(final_prev, final_pt));
+    const int final_occ = map->getPlanningOccupancy(final_pt, estimateYawFromSegment(final_prev, final_pt));
     if (final_occ <= 0)
       return true;
 
@@ -426,7 +446,7 @@ namespace scan_planner
       const Eigen::Vector3d pt = global_data.global_traj_.evaluate(t);
       const Eigen::Vector3d prev_pt = global_data.global_traj_.evaluate(prev_t);
 
-      if (map->getInflateOccupancy(pt, estimateYawFromSegment(prev_pt, pt)) == 0)
+      if (map->getPlanningOccupancy(pt, estimateYawFromSegment(prev_pt, pt)) == 0)
       {
         const Eigen::Vector3d raw_end = end_pt_;
         end_pt_ = pt;
@@ -456,7 +476,7 @@ namespace scan_planner
       return false;
 
     const double yaw = getOdomYaw();
-    if (map->getInflateOccupancy(start_pt, yaw) == 0)
+    if (map->getPlanningOccupancy(start_pt, yaw) == 0)
       return true;
 
     const Eigen::Vector2d retreat_dir(-std::cos(yaw), -std::sin(yaw));
@@ -470,7 +490,7 @@ namespace scan_planner
       candidate(0) += retreat_dir(0) * d;
       candidate(1) += retreat_dir(1) * d;
 
-      if (map->getInflateOccupancy(candidate, yaw) == 0)
+      if (map->getPlanningOccupancy(candidate, yaw) == 0)
       {
         ROS_WARN("SCAN_START_ESCAPE origin=(%.2f,%.2f) escaped=(%.2f,%.2f) retreat=%.2f",
             start_pt(0), start_pt(1), candidate(0), candidate(1), d);
@@ -484,8 +504,8 @@ namespace scan_planner
 
   // pathCallback：REFERENCE_PATH模式下接收外部（如MQTT桥接）下发的参考路径msg并
   // 重新启动一次完整规划会话。步骤：1.校验非空；2.逐点清洗：剔除非有限点、
-  // 与里程计当前位置或上一保留点过于接近的重复点（避免零长度段），Z高度统一
-  // 用里程计当前高度（平面导航）；3.若清洗后无可用点则报错返回；4.调用
+  // 与里程计当前位置或上一保留点三维距离过近的重复点（避免零长度段）；
+  // 3.若清洗后无可用点则报错返回；4.调用
   // planGlobalTrajByWaypoints重新规划全局轨迹；5.成功则强制清零全部重规划失败
   // 计数、应急停止标志、重试时间戳等一切旧会话状态（避免旧状态污染新任务），
   // 并重置局部轨迹数据后强制进入GEN_NEW_TRAJ重新规划；失败则报错。
@@ -507,9 +527,9 @@ namespace scan_planner
       Eigen::Vector3d wp;
       wp(0) = pose_stamped.pose.position.x;
       wp(1) = pose_stamped.pose.position.y;
-      // Reference-path navigation is planar. Keep every waypoint on the
-      // robot's current odometry height; do not add body height a second time.
-      wp(2) = odom_pos_(2);
+      // Reference path keeps world-frame XYZ. Z is required by terrain/stair
+      // trajectories and must not be replaced with the current odometry Z.
+      wp(2) = pose_stamped.pose.position.z;
       if (!wp.allFinite())
       {
         ++removed_point_count;
@@ -517,10 +537,10 @@ namespace scan_planner
       }
       const bool duplicates_start =
           waypoints.empty() &&
-          (wp - odom_pos_).head<2>().norm() < kDuplicatePointDistanceM;
+          (wp - odom_pos_).norm() < kDuplicatePointDistanceM;
       const bool duplicates_previous =
           !waypoints.empty() &&
-          (wp - waypoints.back()).head<2>().norm() <
+          (wp - waypoints.back()).norm() <
               kDuplicatePointDistanceM;
       if (duplicates_start || duplicates_previous)
       {
@@ -540,6 +560,16 @@ namespace scan_planner
     trigger_ = true;
     ROS_INFO("SCAN_PATH_SANITIZED received=%zu kept=%zu removed=%zu",
              msg->poses.size(), waypoints.size(), removed_point_count);
+    double z_min = waypoints.front().z();
+    double z_max = z_min;
+    for (const auto& waypoint : waypoints)
+    {
+      z_min = std::min(z_min, waypoint.z());
+      z_max = std::max(z_max, waypoint.z());
+    }
+    ROS_INFO("SCAN_3D_PATH points=%zu z_start=%.3f z_end=%.3f z_range=%.3f",
+             waypoints.size(), waypoints.front().z(), waypoints.back().z(),
+             z_max - z_min);
     bool success = planGlobalTrajByWaypoints(waypoints);
 
     if (success)
@@ -583,6 +613,13 @@ namespace scan_planner
     trigger_ = false;
     have_target_ = false;
     have_new_target_ = false;
+    stair_up_active_.store(false, std::memory_order_relaxed);
+    if (planner_manager_ && planner_manager_->grid_map_)
+    {
+      planner_manager_->grid_map_->setStairUpActive(false);
+      planner_manager_->grid_map_->resetBuffer();
+      waiting_for_fresh_map_ = true;
+    }
 
     active_waypoints_.clear();
     current_wp_ = 0;
@@ -626,7 +663,7 @@ namespace scan_planner
     planner_manager_->local_data_.reset();
     planner_manager_->global_data_.reset();
 
-    ROS_WARN("SCAN_FSM_RESET state=WAIT_TARGET");
+    ROS_WARN("SCAN_FSM_RESET state=WAIT_TARGET map_cleared=1");
   }
 
   // odometryCallback：接收机体位姿（body_pose）并更新里程计位置/速度/姿态。
@@ -666,6 +703,21 @@ namespace scan_planner
   void SCANReplanFSM::go2ExecutionFrozenCallback(const std_msgs::BoolConstPtr &msg)
   {
     go2_execution_frozen_ = msg->data;
+  }
+
+  void SCANReplanFSM::stairUpActiveCallback(
+      const std_msgs::BoolConstPtr &msg)
+  {
+    if (!msg)
+      return;
+
+    const bool previous = stair_up_active_.exchange(
+        msg->data, std::memory_order_relaxed);
+    if (previous == msg->data)
+      return;
+    if (planner_manager_ && planner_manager_->grid_map_)
+      planner_manager_->grid_map_->setStairUpActive(msg->data);
+    ROS_INFO("SCAN_STAIR_CONSTRAINT active=%d", msg->data ? 1 : 0);
   }
 
   // takeoverSyncCallback：接收Native SCAN接管同步信号（从手动/其他控制模式
@@ -949,6 +1001,20 @@ namespace scan_planner
 
     case GEN_NEW_TRAJ:
     {
+      auto map = planner_manager_ ? planner_manager_->grid_map_ : nullptr;
+      if (!map || !map->hasInflatedObservation())
+      {
+        ROS_INFO_THROTTLE(1.0,
+            "SCAN_WAIT_FRESH_MAP state=GEN_NEW_TRAJ");
+        break;
+      }
+      if (waiting_for_fresh_map_)
+      {
+        waiting_for_fresh_map_ = false;
+        ROS_INFO("SCAN_FRESH_MAP_READY stamp=%.3f",
+            map->getLastOccupancyUpdateStampSec());
+      }
+
       // Rate-limit retries when no target is available.
       if (!next_target_retry_time_.isZero() &&
           ros::Time::now() < next_target_retry_time_)
@@ -1364,7 +1430,7 @@ namespace scan_planner
       const Eigen::Vector3d next = info.position_traj_.evaluateDeBoorT(
           std::min(sample_t + kValidationStepSec, info.duration_));
       if (!pos.allFinite() || !next.allFinite() ||
-          planner_manager_->grid_map_->getInflateOccupancy(
+          planner_manager_->grid_map_->getPlanningOccupancy(
               pos, estimateYawFromSegment(pos, next)) != 0)
       {
         collision_time_sec = sample_t;
@@ -1445,7 +1511,7 @@ namespace scan_planner
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t);
       Eigen::Vector3d pos_next = info->position_traj_.evaluateDeBoorT(std::min(t + time_step, info->duration_));
-      if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
+      if (map->getPlanningOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
       {
         const double collision_time_ahead = t - t_cur;
 
@@ -1890,7 +1956,7 @@ namespace scan_planner
       if (!std::isfinite(yaw))
         return false;
 
-      return map->getInflateOccupancy(point, yaw) == 0;
+      return map->getPlanningOccupancy(point, yaw) == 0;
     };
 
     // --- Phase 2: find the farthest free route sample ---------------------

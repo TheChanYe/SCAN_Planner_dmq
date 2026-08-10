@@ -159,6 +159,21 @@ struct NavigationModeConfig
 };
 
 // =============================================================================
+// 5.7ba StairUpConfig
+// =============================================================================
+
+struct StairUpConfig
+{
+  bool enabled{true};
+  double lookahead_distance_m{1.50};
+  double sample_step_m{0.10};
+  double trigger_rise_m{0.10};
+  double flat_tolerance_m{0.03};
+  double exit_progress_margin_m{0.15};
+  double exit_confirm_sec{0.50};
+};
+
+// =============================================================================
 // 5.7c RouteFollowerConfig
 // =============================================================================
 
@@ -274,6 +289,7 @@ struct NavdogConfig
   SafetyConfig safety{};
   LimitConfig limits{};
   NavigationModeConfig navigation_mode{};
+  StairUpConfig stair_up{};
   RouteFollowerConfig route_follower{};
   TrajectoryFollowerConfig trajectory_follower{};
   LocalAvoidTargetConfig local_avoid_target{};

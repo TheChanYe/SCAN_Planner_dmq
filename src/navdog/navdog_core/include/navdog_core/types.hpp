@@ -189,6 +189,16 @@ struct RouteProgress
   bool valid{false};
 };
 
+struct RouteElevationAssessment
+{
+  bool valid{false};
+  bool ascending{false};
+  double current_z{0.0};
+  double max_forward_z{0.0};
+  double rise_m{0.0};
+  double checked_until_arc_m{0.0};
+};
+
 // =============================================================================
 // 4.9 机器人状态
 // =============================================================================
@@ -270,7 +280,7 @@ struct RouteCorridorAssessment
   // 实际路线采样间隔，预期约为 resolution / 2。
   double sample_step_m{0.0};
 
-  // 本次使用的身体中心查询高度。
+  // 本次评估起点使用的世界系路线查询高度。
   double query_z_m{0.0};
 
   std::size_t samples_checked{0};
@@ -389,6 +399,8 @@ enum class NavigationModeReason : std::uint8_t
   BLOCK_IMMEDIATE, // 障碍物距离小于immediate_enter_distance_m，无需确认直接进入SCAN。
   BLOCK_CONFIRMED, // 障碍物位于enter_blocked_distance_m内，并连续保持enter_confirm_sec。
 
+  ROUTE_ASCENDING,
+
   ROUTE_ONLY_BLOCKED, 
 
   LOCAL_AVOID_ACTIVE,
@@ -421,6 +433,7 @@ inline const char* navigationModeReasonName(NavigationModeReason value) noexcept
     case NavigationModeReason::ROUTE_CLEAR: return "ROUTE_CLEAR";
     case NavigationModeReason::BLOCK_IMMEDIATE: return "BLOCK_IMMEDIATE";
     case NavigationModeReason::BLOCK_CONFIRMED: return "BLOCK_CONFIRMED";
+    case NavigationModeReason::ROUTE_ASCENDING: return "ROUTE_ASCENDING";
     case NavigationModeReason::ROUTE_ONLY_BLOCKED: return "ROUTE_ONLY_BLOCKED";
     case NavigationModeReason::LOCAL_AVOID_ACTIVE: return "LOCAL_AVOID_ACTIVE";
     case NavigationModeReason::WAITING_FOR_CORRIDOR: return "WAITING_FOR_CORRIDOR";
@@ -464,6 +477,9 @@ struct NavigationModeStatus
 
   // 当前任务是否允许进入 LOCAL_AVOID。
   bool avoidance_allowed{false};
+
+  bool stair_up_active{false};
+  double stair_hold_until_arc_m{0.0};
 
   // 当前模式进入时间。
   double mode_enter_stamp_sec{0.0};
@@ -645,6 +661,7 @@ struct CoreOutput
   PlannerAction planner_action{};
   std::uint64_t task_sequence{0};
   RouteProgress route_progress{};
+  RouteElevationAssessment route_elevation{};
   RouteCorridorAssessment route_corridor{};
   NavigationModeStatus navigation_mode{};
 };

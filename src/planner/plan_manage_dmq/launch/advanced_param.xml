@@ -92,6 +92,7 @@
     <param name="grid_map/body_height" value="0.30" type="double"/>
     <param name="grid_map/obstacles_inflation_z_up" value="0.1" />
     <param name="grid_map/obstacles_inflation_z_down" value="0.4" />
+    <param name="grid_map/stair_support_clearance_m" value="0.20" />
 
     <!-- depth camera intrinsics -->
     <param name="grid_map/cx" value="$(arg cx)"/>

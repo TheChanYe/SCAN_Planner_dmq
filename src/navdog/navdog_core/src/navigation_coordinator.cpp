@@ -32,7 +32,7 @@ NavigationCoordinator::NavigationCoordinator(
       start_align_controller_(config.start_align),
       route_corridor_observation_gate_(
           config.route_corridor_observation),
-      navigation_mode_manager_(config.navigation_mode),
+      navigation_mode_manager_(config.navigation_mode, config.stair_up),
       route_follower_(config.route_follower),
       goal_controller_(config.goal_controller),
       safety_supervisor_(config.safety, config.limits)
@@ -407,6 +407,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
       // Full cleanup: do not leave a stale local trajectory / safety state
       // after the task is successfully completed.
       resetNearGoalBlockedTimer();
+      navigation_mode_manager_.reset();
       safety_supervisor_.reset();
     }
     else
@@ -501,6 +502,7 @@ VelocityCommand NavigationCoordinator::executeMode(
       state_ = NavState::SUCCEEDED;
       task_manager_.complete(task_manager_.session().sequence);
       resetNearGoalBlockedTimer();
+      navigation_mode_manager_.reset();
       safety_supervisor_.reset();
     }
 
@@ -895,6 +897,8 @@ CoreOutput NavigationCoordinator::update(
             {
               output.route_progress =
                   progress_output.progress;
+              output.route_elevation = route_manager_.assessElevation(
+                  progress_output.progress, config_.stair_up);
 
               RouteCorridorObservationOutput obs_output =
                   route_corridor_observation_gate_.evaluate(
@@ -936,6 +940,7 @@ CoreOutput NavigationCoordinator::update(
                       task_metadata,
                       input.robot,
                       progress_output.progress,
+                      output.route_elevation,
                       obs_output,
                       input.obstacles,
                       now_sec);
@@ -1047,6 +1052,7 @@ CoreOutput NavigationCoordinator::update(
           state_ = NavState::SUCCEEDED;
           task_manager_.complete(task_manager_.session().sequence);
           resetNearGoalBlockedTimer();
+          navigation_mode_manager_.reset();
           safety_supervisor_.reset();
         }
         break;
@@ -1086,6 +1092,9 @@ CoreOutput NavigationCoordinator::update(
     safety_context.obstacles = input.obstacles;
     safety_context.corridor = output.route_corridor.valid
         ? output.route_corridor : input.route_corridor_observation;
+    safety_context.prefer_route_corridor_front =
+        output.route_elevation.ascending ||
+        output.navigation_mode.stair_up_active;
     safety_context.map_valid = safety_context.corridor.valid;
     safety_context.map_stamp_sec = safety_context.corridor.map_stamp_sec;
     if (state_ == NavState::START_ALIGN && !safety_context.map_valid)

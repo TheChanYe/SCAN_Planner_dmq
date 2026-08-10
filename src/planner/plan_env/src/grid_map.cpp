@@ -20,6 +20,8 @@ void GridMap::initMap(ros::NodeHandle &nh)
   
   node_.param("grid_map/obstacles_inflation_z_up", mp_.obstacles_inflation_z_up, -1.0);
   node_.param("grid_map/obstacles_inflation_z_down", mp_.obstacles_inflation_z_down, -1.0);
+  node_.param("grid_map/stair_support_clearance_m",
+              mp_.stair_support_clearance_m_, 0.20);
   node_.param("grid_map/double_cylinder_radius", mp_.double_cylinder_radius_, -1.0);
   node_.param("grid_map/double_cylinder_offset", mp_.double_cylinder_offset_, 0.0);
   node_.param("grid_map/map_sliding_en", mp_.map_sliding_en_, true);
@@ -66,6 +68,14 @@ void GridMap::initMap(ros::NodeHandle &nh)
   mp_.body_length_ = std::max(0.0, mp_.body_length_);
   mp_.body_width_ = std::max(0.0, mp_.body_width_);
   mp_.body_height_ = std::max(0.0, mp_.body_height_);
+  if (!std::isfinite(mp_.stair_support_clearance_m_) ||
+      mp_.stair_support_clearance_m_ < 0.0)
+  {
+    ROS_WARN("Invalid grid_map/stair_support_clearance_m; use 0.20m");
+    mp_.stair_support_clearance_m_ = 0.20;
+  }
+  mp_.stair_support_clearance_m_ = std::min(
+      mp_.stair_support_clearance_m_, mp_.body_height_);
   mp_.self_filter_margin_xy_ =
       std::max(0.0, mp_.self_filter_margin_xy_);
   mp_.self_filter_margin_z_ =
@@ -126,6 +136,11 @@ void GridMap::initMap(ros::NodeHandle &nh)
   md_.occupancy_buffer_inflate_ = vector<char>(buffer_size, 0);
   md_.occupancy_buffer_inflate_cnt_ = vector<int>(buffer_size, 0);
   rebuildInflationOffsets();
+
+  ROS_INFO("SCAN_STAIR_COLLISION_MODEL support_clearance=%.3f "
+           "body_height=%.3f z_up=%.3f",
+      mp_.stair_support_clearance_m_, mp_.body_height_,
+      mp_.obstacles_inflation_z_up);
 
   md_.count_hit_and_miss_ = vector<short>(buffer_size, 0);
   md_.count_hit_ = vector<short>(buffer_size, 0);
@@ -425,6 +440,17 @@ void GridMap::updateSlidingMap(const Eigen::Vector3d& center)
 void GridMap::resetBuffer()
 {
   resetAllMapData();
+  // A task reset must not reuse a pending cloud or advertise the cleared
+  // buffer as a valid observation. The next real sensor update establishes a
+  // new map epoch before SCAN is allowed to plan again.
+  md_.occ_need_update_ = false;
+  md_.use_cloud_update_ = false;
+  md_.has_cloud_ = false;
+  md_.has_first_depth_ = false;
+  md_.proj_points_cnt = 0;
+  md_.raycast_walk_cursor_ = 0;
+  md_.last_occupancy_update_stamp_sec_ = 0.0;
+  md_.cloud_voxel_seen_.clear();
   md_.local_bound_min_ = mp_.map_bound_min_idx_;
   md_.local_bound_max_ = mp_.map_bound_max_idx_;
 }

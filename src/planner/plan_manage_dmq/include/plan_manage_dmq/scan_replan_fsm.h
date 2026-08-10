@@ -3,12 +3,16 @@
 
 #include <Eigen/Eigen>
 #include <algorithm>
+#include <atomic>
 #include <geometry_msgs/PoseStamped.h>
 #include <iostream>
+#include <memory>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/Imu.h>
 #include <ros/ros.h>
+#include <ros/callback_queue.h>
+#include <ros/spinner.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
 #include <vector>
@@ -71,6 +75,8 @@ namespace scan_planner
 
     /* planning data */
     bool trigger_, have_target_, have_odom_, have_new_target_;
+    std::atomic<bool> stair_up_active_{false};
+    bool waiting_for_fresh_map_{false};
     bool rviz_height_ready_;
     bool go2_execution_frozen_;
     bool enable_fail_safe_, need_hover_stop_;
@@ -121,8 +127,11 @@ namespace scan_planner
 
     /* ROS utils */
     ros::NodeHandle node_;
+    ros::NodeHandle stair_state_node_;
+    ros::CallbackQueue stair_state_callback_queue_;
+    std::unique_ptr<ros::AsyncSpinner> stair_state_spinner_;
     ros::Timer exec_timer_, safety_timer_;
-    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_;
+    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_, stair_up_active_sub_;
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
 
     enum class ReplanResult
@@ -209,6 +218,8 @@ namespace scan_planner
     void resetCallback(const std_msgs::EmptyConstPtr &msg);
     // takeoverSyncCallback：接收接管同步信号，标记待处理接管。
     void takeoverSyncCallback(const std_msgs::EmptyConstPtr &msg);
+    // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，只切换规划占用约束。
+    void stairUpActiveCallback(const std_msgs::BoolConstPtr &msg);
 
     // checkCollision：对当前局部轨迹做碰撞检测。
     bool checkCollision();

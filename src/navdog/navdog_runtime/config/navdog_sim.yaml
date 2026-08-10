@@ -77,6 +77,14 @@ navigation_mode:
   exit_front_clearance_m: 2.50
   exit_left_clearance_m: 0.60
   exit_right_clearance_m: 0.60
+stair_up:
+  enabled: true
+  lookahead_distance_m: 1.50
+  sample_step_m: 0.10
+  trigger_rise_m: 0.10
+  flat_tolerance_m: 0.03
+  exit_progress_margin_m: 0.15
+  exit_confirm_sec: 0.50
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8

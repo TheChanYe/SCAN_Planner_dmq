@@ -63,6 +63,19 @@ ObstacleSummary obstacles(double front = 3.0, double left = 2.0,
   return value;
 }
 
+RouteElevationAssessment elevation(bool ascending, double rise,
+                                    double checked_until)
+{
+  RouteElevationAssessment value{};
+  value.valid = true;
+  value.ascending = ascending;
+  value.current_z = 0.30;
+  value.max_forward_z = 0.30 + rise;
+  value.rise_m = rise;
+  value.checked_until_arc_m = checked_until;
+  return value;
+}
+
 TEST(NavigationModeManagerTest, DefaultStateIsNone)
 {
   NavigationModeManager manager;
@@ -326,6 +339,82 @@ TEST(NavigationModeManagerTest, CandidateTimerResets)
   const auto output = manager.update(
       task(), robot(), progress(), corridor(true, 1.5), obstacles(), 1.09);
   EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
+}
+
+TEST(NavigationModeManagerTest, RouteAscentEntersAvoidImmediatelyWithPriority)
+{
+  NavigationModeManager manager;
+  const auto output = manager.update(task(), robot(), progress(),
+      elevation(true, 0.15, 1.5), corridor(true, 0.2), obstacles(), 1.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
+  EXPECT_TRUE(output.status.stair_up_active);
+  EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 1.5);
+}
+
+TEST(NavigationModeManagerTest, RouteAscentLatchesAfterOrdinaryAvoidEntry)
+{
+  NavigationModeConfig mode_config;
+  mode_config.enter_confirm_sec = 0.0;
+  NavigationModeManager manager(mode_config, StairUpConfig{});
+
+  auto output = manager.update(task(), robot(), progress(),
+      elevation(false, 0.0, 1.5), corridor(true, 1.0), obstacles(), 1.0);
+  ASSERT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  ASSERT_EQ(output.status.reason, NavigationModeReason::BLOCK_CONFIRMED);
+  ASSERT_FALSE(output.status.stair_up_active);
+
+  output = manager.update(task(), robot(), progress(),
+      elevation(true, 0.15, 2.0), corridor(true, 0.5), obstacles(), 1.1);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_FALSE(output.status.transitioned);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
+  EXPECT_TRUE(output.status.stair_up_active);
+  EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 2.0);
+  EXPECT_EQ(output.status.avoidance_cycle_count, 1u);
+}
+
+TEST(NavigationModeManagerTest, StairAvoidStaysLatchedBeforeTop)
+{
+  NavigationModeConfig mode_config;
+  mode_config.min_local_avoid_hold_sec = 0.0;
+  StairUpConfig stair_config;
+  stair_config.exit_confirm_sec = 0.5;
+  NavigationModeManager manager(mode_config, stair_config);
+  RouteProgress p = progress();
+  manager.update(task(), robot(), p, elevation(true, 0.15, 1.5),
+      corridor(false), obstacles(), 1.0);
+
+  p.arc_length_m = 0.5;
+  manager.update(task(), robot(), p, elevation(true, 0.15, 2.0),
+      corridor(false), obstacles(), 1.5);
+  EXPECT_DOUBLE_EQ(manager.status().stair_hold_until_arc_m, 2.0);
+
+  p.arc_length_m = 1.0;
+  auto output = manager.update(task(), robot(), p,
+      elevation(false, 0.0, 2.5), corridor(false), obstacles(), 2.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_TRUE(output.status.stair_up_active);
+}
+
+TEST(NavigationModeManagerTest, StairAvoidExitsOnFlatTopAfterConfirmation)
+{
+  NavigationModeConfig mode_config;
+  mode_config.min_local_avoid_hold_sec = 0.0;
+  StairUpConfig stair_config;
+  stair_config.exit_confirm_sec = 0.5;
+  NavigationModeManager manager(mode_config, stair_config);
+  RouteProgress p = progress();
+  manager.update(task(), robot(), p, elevation(true, 0.15, 1.5),
+      corridor(false), obstacles(), 1.0);
+
+  p.arc_length_m = 1.35;
+  manager.update(task(), robot(), p, elevation(false, 0.02, 2.85),
+      corridor(false), obstacles(), 2.0);
+  const auto output = manager.update(task(), robot(), p,
+      elevation(false, 0.02, 2.85), corridor(false), obstacles(), 2.5);
+  EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
+  EXPECT_FALSE(output.status.stair_up_active);
 }
 
 }  // namespace
