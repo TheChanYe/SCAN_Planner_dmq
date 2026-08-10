@@ -69,6 +69,16 @@ std::uint8_t navigation_mode = 0;
 scan_planner_dmq::RoutePathTrackerConfig route_tracker_config;
 std::unique_ptr<scan_planner_dmq::RoutePathTracker> route_tracker;
 
+// Mode transition linear blending state.  When the navigation mode
+// changes (ROUTE_FOLLOW <-> LOCAL_AVOID), the controller linearly
+// ramps from the last published velocity to the new mode's velocity
+// over mode_transition_duration_sec to avoid abrupt velocity jumps.
+double mode_transition_duration_sec = 0.5;
+bool mode_transition_active = false;
+ros::Time mode_transition_start_time;
+geometry_msgs::Twist pre_transition_cmd;
+geometry_msgs::Twist last_published_cmd;
+
 // loadRequiredParam：从私有参数服务器读取必需参数，若不存在则打印错误并返回false。
 bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, double &value)
 {
@@ -127,6 +137,7 @@ bool loadParams(const ros::NodeHandle &nh)
       "finish_dist",
       finish_dist);
   nh.param("takeover_anchor_tolerance", takeover_anchor_tolerance, 0.25);
+  nh.param("mode_transition_duration_sec", mode_transition_duration_sec, 0.5);
   nh.param("route_tracking/lookahead_distance_m",
       route_tracker_config.lookahead_distance_m,
       route_tracker_config.lookahead_distance_m);
@@ -321,12 +332,45 @@ double estimateDesiredYaw(double t_cur, const Eigen::Vector3d &pos_des)
   return std::atan2(dir(1), dir(0));
 }
 
+// publishBlended：在模式切换过渡期对速度指令做线性混合后发布。
+// 当 mode_transition_active 时，在 mode_transition_duration_sec 内将
+// pre_transition_cmd 线性渐变到当前 cmd，避免模式切换时速度跳变。
+void publishBlended(const geometry_msgs::Twist& cmd)
+{
+  geometry_msgs::Twist final_cmd = cmd;
+  if (mode_transition_active)
+  {
+    const double elapsed =
+        (ros::Time::now() - mode_transition_start_time).toSec();
+    const double alpha =
+        std::min(1.0, elapsed / mode_transition_duration_sec);
+    if (alpha >= 1.0)
+    {
+      mode_transition_active = false;
+    }
+    else
+    {
+      final_cmd.linear.x =
+          pre_transition_cmd.linear.x * (1.0 - alpha) +
+          cmd.linear.x * alpha;
+      final_cmd.linear.y =
+          pre_transition_cmd.linear.y * (1.0 - alpha) +
+          cmd.linear.y * alpha;
+      final_cmd.angular.z =
+          pre_transition_cmd.angular.z * (1.0 - alpha) +
+          cmd.angular.z * alpha;
+    }
+  }
+  cmd_vel_pub.publish(final_cmd);
+  last_published_cmd = final_cmd;
+}
+
 // publishStop：发布零线速度、仅保留角速度（限幅后）的停车指令，默认角速度为0。
 void publishStop(double vyaw = 0.0)
 {
   geometry_msgs::Twist cmd;
   cmd.angular.z = clamp(vyaw, -max_vyaw, max_vyaw);
-  cmd_vel_pub.publish(cmd);
+  publishBlended(cmd);
 }
 
 // publishExecutionFrozen：发布Go2执行冻结状态信号（告诉SCAN规划端是否暂停
@@ -364,6 +408,7 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   waiting_takeover_trajectory = false;
   takeover_sync_time = ros::Time();
   publishTakeoverReady(false);
+  mode_transition_active = false;
   publishStop();
   if (route_tracker) route_tracker->reset();
 
@@ -410,7 +455,19 @@ void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
 {
   if (!msg) return;
   const std::uint8_t previous_mode = navigation_mode;
-  navigation_mode = msg->data;
+  const std::uint8_t new_mode = msg->data;
+  if (new_mode != previous_mode && previous_mode != 0)
+  {
+    // Start linear blending: ramp from the last published velocity
+    // to the new mode's velocity over mode_transition_duration_sec.
+    mode_transition_active = true;
+    mode_transition_start_time = ros::Time::now();
+    pre_transition_cmd = last_published_cmd;
+    ROS_INFO("[closed_loop_controller_dmq] MODE_TRANSITION %d->%d blend_sec=%.3f",
+        static_cast<int>(previous_mode), static_cast<int>(new_mode),
+        mode_transition_duration_sec);
+  }
+  navigation_mode = new_mode;
   if (navigation_mode == kModeRouteFollow &&
       previous_mode != kModeRouteFollow && route_tracker)
   {
@@ -606,7 +663,7 @@ void cmdCallback(const ros::TimerEvent &)
     cmd.linear.x = route_output.vx;
     cmd.linear.y = 0.0;
     cmd.angular.z = route_output.yaw_rate;
-    cmd_vel_pub.publish(cmd);
+    publishBlended(cmd);
     ROS_DEBUG_THROTTLE(1.0,
         "ROUTE_TRACK_CONTROL progress=%.3f remaining=%.3f "
         "target=(%.3f,%.3f) cmd=(%.3f,0.000,%.3f)",
@@ -719,7 +776,7 @@ void cmdCallback(const ros::TimerEvent &)
     exec_time,
     traj_duration);
 
-  cmd_vel_pub.publish(cmd);
+  publishBlended(cmd);
 }
 } // namespace
 

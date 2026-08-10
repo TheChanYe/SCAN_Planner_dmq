@@ -442,6 +442,46 @@ namespace scan_planner
     return false;
   }
 
+  // escapeInflatedStart：GEN_NEW_TRAJ每次重试都固定用里程计当前位置作为起点，
+  // 若机体真实位置贴近障碍以致该点本身被判定为膨胀障碍，则地图与机体位置在
+  // 重试之间都不会变化，导致每次都在同一个卡死点上重复失败（对应日志中的
+  // "the robot is in an inflated obstacle."/"Ran out of pool"）。这里沿机体
+  // 当前朝向的反方向（来向，通常是刚驶来的安全区）以地图分辨率为步长逐步
+  // 回退搜索，找到最近的空闲点后仅作为本次规划的虚拟起点使用——不修改里程计
+  // 记录的真实机体位置，机体后续会沿新轨迹自然重新贴合真实位置。
+  bool SCANReplanFSM::escapeInflatedStart(Eigen::Vector3d &start_pt) const
+  {
+    auto map = planner_manager_->grid_map_;
+    if (!map)
+      return false;
+
+    const double yaw = getOdomYaw();
+    if (map->getInflateOccupancy(start_pt, yaw) == 0)
+      return true;
+
+    const Eigen::Vector2d retreat_dir(-std::cos(yaw), -std::sin(yaw));
+    const double step = std::max(1e-3, map->getResolution());
+    const double max_retreat =
+        self_double_cylinder_radius_ + self_double_cylinder_offset_ + 0.5;
+
+    for (double d = step; d <= max_retreat; d += step)
+    {
+      Eigen::Vector3d candidate = start_pt;
+      candidate(0) += retreat_dir(0) * d;
+      candidate(1) += retreat_dir(1) * d;
+
+      if (map->getInflateOccupancy(candidate, yaw) == 0)
+      {
+        ROS_WARN("SCAN_START_ESCAPE origin=(%.2f,%.2f) escaped=(%.2f,%.2f) retreat=%.2f",
+            start_pt(0), start_pt(1), candidate(0), candidate(1), d);
+        start_pt = candidate;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   // pathCallback：REFERENCE_PATH模式下接收外部（如MQTT桥接）下发的参考路径msg并
   // 重新启动一次完整规划会话。步骤：1.校验非空；2.逐点清洗：剔除非有限点、
   // 与里程计当前位置或上一保留点过于接近的重复点（避免零长度段），Z高度统一
@@ -927,6 +967,14 @@ namespace scan_planner
       start_vel_ = odom_vel_;
       start_acc_.setZero();
 
+      // If the robot's true position is itself classified as an inflated
+      // obstacle (body stopped too close to something), odom_pos_ and the
+      // map stay identical across retries, so every attempt below would
+      // fail on the exact same dead point. Retreat the *planning* start
+      // point only (see escapeInflatedStart) so the optimizer has a
+      // reachable point to plan from; the real robot pose is untouched.
+      escapeInflatedStart(start_pt_);
+
       // Use independent attempt counter — NOT timesOfConsecutiveStateCalls().
       const int attempt = initial_plan_attempt_count_;
 
@@ -1019,9 +1067,15 @@ namespace scan_planner
       const bool retry_ready = last_nominal_replan_attempt_time_.isZero() ||
           (time_now - last_nominal_replan_attempt_time_).toSec() >= replan_retry_interval_sec_;
 
-      // Normal rolling replanning never leaves EXEC_TRAJ: a failed candidate
-      // leaves the currently safe B-spline active and is retried shortly.
-      if ((periodic_due || trajectory_ending) && retry_ready &&
+      // Waypoint mode (navi_mode=2) uses pure path tracking: the initial
+      // B-spline is executed to completion without rolling replanning.
+      // A fresh trajectory is generated from odom only when the current
+      // one expires (see TRAJECTORY_EXPIRED below).  Safety replanning
+      // via checkCollisionCallback remains fully active.
+      // All other modes (manual target, reference path) keep the original
+      // rolling replanning behaviour.
+      if (!isWaypointSequenceMode() &&
+          (periodic_due || trajectory_ending) && retry_ready &&
           (end_pt_ - odom_pos_).norm() > no_replan_thresh_ &&
           !planning_in_progress_)
       {

@@ -168,6 +168,10 @@ namespace scan_planner
     bool isWaypointSequenceMode() const;
     // adjustGlobalTargetIfOccupied：若全局目标点被地图占据，尝试将其调整到附近空闲位置。
     bool adjustGlobalTargetIfOccupied();
+    // escapeInflatedStart：当拟定起点被地图判定为膨胀障碍时（机体贴近障碍导致），
+    // 沿机体当前朝向的反方向（来向，通常是安全区）逐步回退搜索最近的空闲点，
+    // 作为本次规划的替代起点，避免每次重试都用同一个卡死点导致永久失败。
+    bool escapeInflatedStart(Eigen::Vector3d &start_pt) const;
     // getLocalTarget：从全局轨迹上按规划地平线长度（受target_distance_cap_m限制）截取局部
     // 目标位置与速度。
     bool getLocalTarget(double target_distance_cap_m);
