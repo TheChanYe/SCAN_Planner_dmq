@@ -65,7 +65,7 @@ turn_voice:
   min_yaw_rate: 0.25
   max_linear_speed: 0.20
   cooldown_sec: 5.0
-  message: "前方转弯请注意"
+  message: "正在转弯请注意"
 
 limits:
   max_vx: 0.50

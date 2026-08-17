@@ -620,13 +620,16 @@ TaskHandleResult NavigationCoordinator::handleEvent(
     case TaskHandleResult::MAX_VX_UPDATED: // 速度更新
       if (state_ == NavState::PLANNING ||
           state_ == NavState::START_ALIGN ||
-          state_ == NavState::TRACKING)
+          state_ == NavState::TRACKING ||
+          state_ == NavState::GOAL_ALIGN ||
+          state_ == NavState::RECOVERY ||
+          state_ == NavState::PAUSED)
       {
-        { PlannerAction action{};
-          action.type = PlannerActionType::UPDATE_SPEED_LIMIT;
-          action.task.sequence = task_output.session.sequence;
-          action.max_vx = task_output.session.max_vx;
-          enqueuePlannerAction(action); }
+        PlannerAction action{};
+        action.type = PlannerActionType::UPDATE_SPEED_LIMIT;
+        action.task.sequence = task_output.session.sequence;
+        action.max_vx = task_output.session.max_vx;
+        enqueuePlannerAction(action);
       }
       break;
 
