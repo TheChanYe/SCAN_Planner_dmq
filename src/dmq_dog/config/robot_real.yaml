@@ -136,8 +136,14 @@ grid_map:
   p_max: 0.98
   p_occ: 0.80
   max_ray_length: 5.0
+  # Dense real scans previously took 80-170ms on a 50ms timer and starved
+  # SCAN reset/path/takeover callbacks. Fuse at 10Hz and keep only fresh data.
+  occupancy_update_interval_sec: 0.10
+  # Full occupancy visualization scans the entire voxel map; 5Hz is enough
+  # for diagnostics without competing with planning control callbacks.
+  visualization_update_interval_sec: 0.20
   # Maximum complete endpoint-and-free-space ray updates per lidar frame.
-  max_raycast_walk_points: 15000
+  max_raycast_walk_points: 8000
   vis_height: 0.30
 
 optimization:
@@ -151,7 +157,9 @@ route_corridor:
 
 navigation_mode:
   enter_blocked_distance_m: 2.0
-  enter_confirm_sec: 0.04
+  # Avoid handing a newly started task to SCAN on one or two noisy corridor
+  # samples. Obstacles inside immediate_enter_distance_m still switch at once.
+  enter_confirm_sec: 0.15
   immediate_enter_distance_m: 0.45
   min_local_avoid_hold_sec: 1.0
   exit_clear_confirm_sec: 0.50

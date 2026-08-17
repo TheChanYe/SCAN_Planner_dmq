@@ -48,6 +48,22 @@ void GridMap::initMap(ros::NodeHandle &nh)
   // internally the cap now applies to the complete endpoint+walk update.
   node_.param("grid_map/max_raycast_walk_points",
               mp_.max_raycast_points_, 15000);
+  node_.param("grid_map/occupancy_update_interval_sec",
+              mp_.occupancy_update_interval_sec_, 0.05);
+  node_.param("grid_map/visualization_update_interval_sec",
+              mp_.visualization_update_interval_sec_, 0.05);
+  if (!std::isfinite(mp_.occupancy_update_interval_sec_) ||
+      mp_.occupancy_update_interval_sec_ < 0.01)
+  {
+    ROS_WARN("Invalid grid_map/occupancy_update_interval_sec; use 0.05s");
+    mp_.occupancy_update_interval_sec_ = 0.05;
+  }
+  if (!std::isfinite(mp_.visualization_update_interval_sec_) ||
+      mp_.visualization_update_interval_sec_ < 0.05)
+  {
+    ROS_WARN("Invalid grid_map/visualization_update_interval_sec; use 0.05s");
+    mp_.visualization_update_interval_sec_ = 0.05;
+  }
 
   node_.param("grid_map/vis_height", mp_.vis_height_, 0.3);
   node_.param("grid_map/show_occ_time", mp_.show_occ_time_, false);
@@ -170,17 +186,29 @@ void GridMap::initMap(ros::NodeHandle &nh)
   }
   else if (mp_.sensor_type_ == "lidar")
   {
+    // GridMap only needs the newest sensor state. Queuing old large clouds
+    // while raycasting is slower than their arrival rate can starve the FSM,
+    // reset, path and takeover callbacks on the shared single-threaded queue.
     lidar_pose_sub_ =
-        node_.subscribe<nav_msgs::Odometry>("/grid_map/sensor_pose", 50, &GridMap::sensorPoseCallback, this);
+        node_.subscribe<nav_msgs::Odometry>("/grid_map/sensor_pose", 1, &GridMap::sensorPoseCallback, this);
     cloud_sub_ =
-        node_.subscribe<sensor_msgs::PointCloud2>("/grid_map/cloud", 10, &GridMap::cloudCallback, this);
+        node_.subscribe<sensor_msgs::PointCloud2>("/grid_map/cloud", 1, &GridMap::cloudCallback, this);
   }
 
   sliding_map_frame_sub_ =
-      node_.subscribe<nav_msgs::Odometry>("/grid_map/body_pose", 50, &GridMap::slidingMapFrameCallback, this);
+      node_.subscribe<nav_msgs::Odometry>("/grid_map/body_pose", 1, &GridMap::slidingMapFrameCallback, this);
 
-  occ_timer_ = node_.createTimer(ros::Duration(0.05), &GridMap::updateOccupancyCallback, this);
-  vis_timer_ = node_.createTimer(ros::Duration(0.05), &GridMap::visCallback, this);
+  occ_timer_ = node_.createTimer(
+      ros::Duration(mp_.occupancy_update_interval_sec_),
+      &GridMap::updateOccupancyCallback, this);
+  vis_timer_ = node_.createTimer(
+      ros::Duration(mp_.visualization_update_interval_sec_),
+      &GridMap::visCallback, this);
+
+  ROS_INFO("SCAN_OCC_CONFIG interval_sec=%.3f visualization_sec=%.3f "
+           "raycast_cap=%d sensor_queue=1",
+      mp_.occupancy_update_interval_sec_,
+      mp_.visualization_update_interval_sec_, mp_.max_raycast_points_);
 
   map_pub_ = node_.advertise<sensor_msgs::PointCloud2>("/grid_map/occupancy", 10);
   map_inf_pub_ = node_.advertise<sensor_msgs::PointCloud2>("/grid_map/occupancy_inflate", 10);
@@ -822,13 +850,15 @@ void GridMap::updateOccupancyCallback(const ros::TimerEvent & /*event*/)
   // upper bound on ray length or point count; an unexpectedly slow or
   // stuck call here blocks every other callback (odom, reset,
   // takeover_sync, FSM timer) indefinitely with no crash or exit, which
-  // looks identical to a dead process from the outside. Logged whenever a
-  // single update noticeably exceeds the 50ms timer period so a future
-  // silent-stop incident can be correlated with this call.
-  if (raycast_ms > 80.0)
+  // looks identical to a dead process from the outside. Log whenever one
+  // update exceeds its configured timer budget so a future silent-stop
+  // incident can be correlated with this call.
+  const double update_budget_ms =
+      mp_.occupancy_update_interval_sec_ * 1000.0;
+  if (raycast_ms > update_budget_ms)
   {
-    ROS_WARN("SCAN_OCC_UPDATE_SLOW elapsed_ms=%.1f proj_points=%d",
-        raycast_ms, md_.proj_points_cnt);
+    ROS_WARN("SCAN_OCC_UPDATE_SLOW elapsed_ms=%.1f budget_ms=%.1f proj_points=%d",
+        raycast_ms, update_budget_ms, md_.proj_points_cnt);
   }
   // t3 = ros::Time::now();
 

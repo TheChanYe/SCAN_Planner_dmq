@@ -98,6 +98,13 @@ struct MappingParameters {
   // rays, which accumulated stale occupied voxels while the robot moved.
   // <= 0 disables the cap.
   int max_raycast_points_{15000};
+  // Occupancy fusion period. Real lidar fusion must be configured no faster
+  // than one update can finish, otherwise stale point clouds monopolize the
+  // single SCAN callback queue and delay reset/path/takeover processing.
+  double occupancy_update_interval_sec_{0.05};
+  // Full-map publications are diagnostic only and may scan millions of
+  // voxels. Keep their rate independently configurable from map fusion.
+  double visualization_update_interval_sec_{0.05};
 
   /* visualization and computation time display */
   double vis_height_, ground_height_;

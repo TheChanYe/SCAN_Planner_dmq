@@ -114,8 +114,13 @@
     <param name="grid_map/p_max" value="0.98"/>
     <param name="grid_map/p_occ" value="0.80"/>
     <param name="grid_map/max_ray_length" value="5.0"/>
+    <!-- Occupancy fusion stays on SCAN's single callback queue so planner/map
+         access remains serialized. The real-device YAML may use a slower
+         period when dense lidar frames cannot finish inside 50ms. -->
+    <param name="grid_map/occupancy_update_interval_sec" value="0.05"/>
+    <param name="grid_map/visualization_update_interval_sec" value="0.05"/>
     <!-- Hard cap on how many projected lidar points are integrated per
-         occupancy update cycle (occ_timer_, 50ms period).
+         occupancy update cycle.
          Dense indoor scans can carry tens of thousands of unique occupied
          voxels even after per-voxel dedup, and the walk cost can exceed the
          timer period by 2-3x, starving the FSM/odom/SCAN-takeover callbacks
