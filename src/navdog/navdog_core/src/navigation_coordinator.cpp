@@ -59,6 +59,7 @@ void NavigationCoordinator::reset()
   safety_supervisor_.reset();
 
   last_mode_ = NavigationMode::NONE;
+  obstacle_finished_ = false;
   state_before_pause_ = NavState::IDLE;
 }
 
@@ -290,6 +291,7 @@ void NavigationCoordinator::enterFailedState() noexcept
   navigation_mode_manager_.reset();
   goal_controller_.reset();
   safety_supervisor_.reset();
+  obstacle_finished_ = false;
 }
 
 // =============================================================================
@@ -402,6 +404,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
     if (result.finished)
     {
       state_ = NavState::SUCCEEDED;
+      obstacle_finished_ = false;
       task_manager_.complete(task_manager_.session().sequence);
 
       // Full cleanup: do not leave a stale local trajectory / safety state
@@ -500,6 +503,7 @@ VelocityCommand NavigationCoordinator::executeMode(
         config_.goal_controller.obstacle_finish_timeout_sec)
     {
       state_ = NavState::SUCCEEDED;
+      obstacle_finished_ = true;
       task_manager_.complete(task_manager_.session().sequence);
       resetNearGoalBlockedTimer();
       navigation_mode_manager_.reset();
@@ -581,6 +585,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
       }
       clearPlanningContext(); // 清除规划上下文
       resetNearGoalBlockedTimer(); // 重置接近目标阻塞计时器
+      obstacle_finished_ = false;
       start_align_controller_.reset();
       navigation_mode_manager_.reset();
       goal_controller_.reset();
@@ -600,6 +605,7 @@ TaskHandleResult NavigationCoordinator::handleEvent(
     case TaskHandleResult::CANCELLED: // 任务取消
       clearPlanningContext();
       resetNearGoalBlockedTimer();
+      obstacle_finished_ = false;
       start_align_controller_.reset();
       route_manager_.reset();
       navigation_mode_manager_.reset();
@@ -1050,6 +1056,7 @@ CoreOutput NavigationCoordinator::update(
         else if (result.finished)
         {
           state_ = NavState::SUCCEEDED;
+          obstacle_finished_ = false;
           task_manager_.complete(task_manager_.session().sequence);
           resetNearGoalBlockedTimer();
           navigation_mode_manager_.reset();
@@ -1112,6 +1119,7 @@ CoreOutput NavigationCoordinator::update(
   output.task_sequence =
       task_manager_.session().sequence;
   output.final_cmd = final_cmd;
+  output.obstacle_finished = obstacle_finished_;
 
   return output;
 }

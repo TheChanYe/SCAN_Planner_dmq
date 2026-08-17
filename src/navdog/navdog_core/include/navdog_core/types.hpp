@@ -664,6 +664,7 @@ struct CoreOutput
   RouteElevationAssessment route_elevation{};
   RouteCorridorAssessment route_corridor{};
   NavigationModeStatus navigation_mode{};
+  bool obstacle_finished{false};
 };
 
 }  // namespace navdog

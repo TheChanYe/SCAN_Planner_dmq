@@ -41,6 +41,8 @@ public:
   // statusForOutput：根据核心输出与协议错误标志推导上报的status/error码。
   static void statusForOutput(const navdog::CoreOutput& output,
       bool protocol_error, int& status, int& error);
+  static void statusForOutput(const navdog::CoreOutput& output,
+      bool dynamic_obstacle_stop, bool map_error, int& status, int& error);
   // toTwist：将核心层的VelocityCommand转换为geometry_msgs::Twist。
   static geometry_msgs::Twist toTwist(const navdog::VelocityCommand& command);
   // feedbackForAction：将规划器动作转换为反馈给NavigationCoordinator的PlannerFeedback。
@@ -54,6 +56,7 @@ private:
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
   // scanTakeoverReadyCallback：接收SCAN接管就绪信号，更新scan_takeover_ready_标志。
   void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& message);
+  void finalCmdFeedbackCallback(const geometry_msgs::TwistStamped::ConstPtr& message);
   /**
    * @brief 固定 50 Hz 控制顺序：事件、输入快照、SCAN 观察、Core、SCAN 副作用、发布。
    * Runtime 不在此处重新判断 Route/SCAN 切换条件。
@@ -78,6 +81,10 @@ private:
   void publishOutput(const navdog::CoreOutput& output, double now_sec);
   // publishMqttStatus：根据核心输出编码并发布MQTT状态上报。
   void publishMqttStatus(const navdog::CoreOutput& output);
+  void publishProtocolState(const navdog::CoreOutput& output);
+  void updateDynamicObstacleStop(const navdog::CoreOutput& output,
+      bool map_error, double now_sec);
+  bool shouldPublishTurnVoice(const navdog::CoreOutput& output) const;
   // publishTakeoverSync：发布与Native SCAN接管同步相关的信息。
   void publishTakeoverSync(const navdog::CoreInput& input,
       const navdog::CoreOutput& output);
@@ -108,6 +115,7 @@ private:
 
   ros::Subscriber odom_subscriber_;                       // 里程计订阅者
   ros::Subscriber scan_takeover_ready_subscriber_;        // SCAN接管就绪信号订阅者
+  ros::Subscriber final_cmd_feedback_subscriber_;          // Mux最终速度反馈订阅者
   ros::Publisher route_publisher_;                        // 路线发布者
   ros::Publisher native_scan_path_publisher_;             // Native SCAN参考路径发布者
   ros::Publisher native_scan_reset_publisher_;            // Native SCAN重置信号发布者
@@ -115,6 +123,9 @@ private:
   ros::Publisher state_publisher_;                        // 导航状态发布者
   ros::Publisher mode_publisher_;                         // 导航模式发布者
   ros::Publisher stair_up_active_publisher_;              // Native SCAN楼梯约束发布者
+  ros::Publisher external_stop_publisher_;                 // 外部动态障碍停车请求
+  ros::Publisher protocol_status_publisher_;               // 内部协议状态码
+  ros::Publisher protocol_error_publisher_;                // 内部协议错误码
   ros::Publisher final_cmd_publisher_;                    // 最终速度指令发布者
   ros::Timer control_timer_;                              // 固定频率控制循环定时器
 
@@ -123,6 +134,21 @@ private:
   navdog::RouteProgress last_route_progress_{};   // 上一次的路线进度
   navdog::PlannerFeedback pending_planner_feedback_{};  // 待提交给协调器的规划器反馈
   ros::Time last_status_publish_{};               // 上一次状态发布时刻
+  geometry_msgs::TwistStamped latest_final_cmd_feedback_{};
+  bool latest_final_cmd_feedback_valid_{false};
+  bool latest_map_error_{false};
+
+  enum class DynamicObstacleState
+  {
+    CLEAR,
+    STOPPING,
+    WAIT_CLEAR
+  };
+  DynamicObstacleState dynamic_obstacle_state_{DynamicObstacleState::CLEAR};
+  navdog_protocol::ExternalObstacleInfo latest_external_obstacle_{};
+  ros::Time latest_external_obstacle_stamp_{};
+  ros::Time dynamic_obstacle_stop_until_{};
+  ros::Time last_turn_voice_publish_{};
 
   bool pending_native_scan_path_{false};          // 是否待发布Native SCAN参考路径
   bool pending_takeover_sync_{false};             // 是否待发布接管同步信息

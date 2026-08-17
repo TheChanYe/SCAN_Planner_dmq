@@ -267,31 +267,51 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   ros::NodeHandle nh("~");
   nh.setParam("mqtt/task_topic", std::string("custom/task"));
   nh.setParam("mqtt/pause_topic", std::string("custom/pause"));
+  nh.setParam("mqtt/obstacle_topic", std::string("custom/obstacle"));
   nh.setParam("mqtt/status_topic", std::string("custom/status"));
+  nh.setParam("mqtt/voice_topic", std::string("custom/voice"));
   nh.setParam("mqtt/max_queue_size", 64);
   nh.setParam("mqtt/qos", 2);
   nh.setParam("mqtt/port", 8883);
   nh.setParam("mqtt/keepalive_sec", 60);
+  nh.setParam("final_cmd_feedback_topic", std::string("/custom/final_feedback"));
+  nh.setParam("external_stop_topic", std::string("/custom/external_stop"));
+  nh.setParam("protocol_status_topic", std::string("/custom/protocol_status"));
+  nh.setParam("protocol_error_topic", std::string("/custom/protocol_error"));
+  nh.setParam("dynamic_obstacle/enabled", true);
+  nh.setParam("dynamic_obstacle/stop_distance_m", 0.9);
+  nh.setParam("dynamic_obstacle/hold_sec", 4.0);
+  nh.setParam("dynamic_obstacle/timeout_sec", 0.8);
+  nh.setParam("turn_voice/enabled", true);
+  nh.setParam("turn_voice/min_yaw_rate", 0.3);
+  nh.setParam("turn_voice/max_linear_speed", 0.25);
+  nh.setParam("turn_voice/cooldown_sec", 6.0);
+  nh.setParam("turn_voice/message", std::string("turn"));
 
-  std::string task_topic, pause_topic, status_topic;
-  int qos, port, keepalive;
-  int max_queue_size;
+  const auto app = Ros1ConfigLoader::load(nh);
 
-  nh.param<std::string>("mqtt/task_topic", task_topic, "default");
-  nh.param<std::string>("mqtt/pause_topic", pause_topic, "default");
-  nh.param<std::string>("mqtt/status_topic", status_topic, "default");
-  nh.param("mqtt/max_queue_size", max_queue_size, 0);
-  nh.param("mqtt/qos", qos, -1);
-  nh.param("mqtt/port", port, -1);
-  nh.param("mqtt/keepalive_sec", keepalive, -1);
-
-  EXPECT_EQ(task_topic, "custom/task");
-  EXPECT_EQ(pause_topic, "custom/pause");
-  EXPECT_EQ(status_topic, "custom/status");
-  EXPECT_EQ(max_queue_size, 64);
-  EXPECT_EQ(qos, 2);
-  EXPECT_EQ(port, 8883);
-  EXPECT_EQ(keepalive, 60);
+  EXPECT_EQ(app.mqtt.task_topic, "custom/task");
+  EXPECT_EQ(app.mqtt.pause_topic, "custom/pause");
+  EXPECT_EQ(app.mqtt.obstacle_topic, "custom/obstacle");
+  EXPECT_EQ(app.mqtt.status_topic, "custom/status");
+  EXPECT_EQ(app.mqtt.voice_topic, "custom/voice");
+  EXPECT_EQ(app.mqtt.max_queue_size, 64u);
+  EXPECT_EQ(app.mqtt.qos, 2);
+  EXPECT_EQ(app.mqtt.port, 8883);
+  EXPECT_EQ(app.mqtt.keepalive_sec, 60);
+  EXPECT_EQ(app.runtime_io.final_cmd_feedback_topic, "/custom/final_feedback");
+  EXPECT_EQ(app.runtime_io.external_stop_topic, "/custom/external_stop");
+  EXPECT_EQ(app.runtime_io.protocol_status_topic, "/custom/protocol_status");
+  EXPECT_EQ(app.runtime_io.protocol_error_topic, "/custom/protocol_error");
+  EXPECT_TRUE(app.dynamic_obstacle.enabled);
+  EXPECT_DOUBLE_EQ(app.dynamic_obstacle.stop_distance_m, 0.9);
+  EXPECT_DOUBLE_EQ(app.dynamic_obstacle.hold_sec, 4.0);
+  EXPECT_DOUBLE_EQ(app.dynamic_obstacle.timeout_sec, 0.8);
+  EXPECT_TRUE(app.turn_voice.enabled);
+  EXPECT_DOUBLE_EQ(app.turn_voice.min_yaw_rate, 0.3);
+  EXPECT_DOUBLE_EQ(app.turn_voice.max_linear_speed, 0.25);
+  EXPECT_DOUBLE_EQ(app.turn_voice.cooldown_sec, 6.0);
+  EXPECT_EQ(app.turn_voice.message, "turn");
 }
 
 // =============================================================================

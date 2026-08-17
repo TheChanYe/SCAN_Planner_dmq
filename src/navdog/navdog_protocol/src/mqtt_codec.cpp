@@ -44,10 +44,12 @@ bool finiteJson(const Json::Value& value, double& output)
  */
 bool MqttCodec::parseTaskMessage(const std::string& payload,
     double default_route_z, double default_max_vx, std::uint64_t sequence,
-    navdog_task::NavigationEvent& event, bool& charging_reserve)
+    navdog_task::NavigationEvent& event, bool& charging_reserve,
+    NavigationMessageMeta* meta)
 {
   event = navdog_task::NavigationEvent{};
   charging_reserve = false;
+  if (meta) *meta = NavigationMessageMeta{};
   Json::Value root;
   Json::CharReaderBuilder builder;
   std::string errors;
@@ -67,7 +69,7 @@ bool MqttCodec::parseTaskMessage(const std::string& payload,
     charging_reserve = ctrl == 3;
     return true;
   }
-  if (ctrl != 1 || sequence == 0) return false;
+  if ((ctrl != 1 && ctrl != 2) || sequence == 0) return false;
   const Json::Value& data = root["navigation_data"];
   const Json::Value& points = data["points"];
   // 检查数据是否为对象，points是否为数组且不为空
@@ -76,8 +78,24 @@ bool MqttCodec::parseTaskMessage(const std::string& payload,
   if (!data.isObject() || !points.isArray() || points.empty()) return false;
   event.type = navdog_task::NavigationEventType::START_TASK;
   event.task.sequence = sequence;
-  event.task.mode = navdog_task::TaskMode::NORMAL_AVOID;
+  event.task.mode = ctrl == 2 ? navdog_task::TaskMode::ROUTE_ONLY
+                              : navdog_task::TaskMode::NORMAL_AVOID;
   event.task.max_vx = default_max_vx;
+  if (meta)
+  {
+    const Json::Value& id = data["id"];
+    if (id.isUInt() && id.asUInt() <= 65535u)
+    {
+      meta->id = static_cast<std::uint16_t>(id.asUInt());
+      meta->has_id = true;
+    }
+    const Json::Value& map_name = data["map_name"];
+    if (map_name.isString())
+    {
+      meta->map_name = map_name.asString();
+      meta->has_map_name = true;
+    }
+  }
   if (data.isMember("max_vx") && !finiteJson(data["max_vx"], event.task.max_vx))
     return false;
   if (!(event.task.max_vx > 0.0)) return false; // 最大速度必须大于0
@@ -119,6 +137,34 @@ bool MqttCodec::parsePauseMessage(const std::string& payload,
                            : navdog_task::NavigationEventType::RESUME;
   return true;
 }
+
+bool MqttCodec::parseObstacleMessage(const std::string& payload,
+    ExternalObstacleInfo& obstacle)
+{
+  obstacle = ExternalObstacleInfo{};
+  Json::Value root;
+  Json::CharReaderBuilder builder;
+  std::string errors;
+  std::istringstream stream(payload);
+  if (!Json::parseFromStream(builder, stream, &root, &errors) ||
+      !root.isObject() || !root["status"].isInt() || !root["error"].isInt())
+    return false;
+
+  const int status = root["status"].asInt();
+  const int error = root["error"].asInt();
+  if (status < 0 || status > 255 || error < 0 || error > 255)
+    return false;
+
+  double distance = std::numeric_limits<double>::infinity();
+  if (root.isMember("distance") && !finiteJson(root["distance"], distance))
+    return false;
+
+  obstacle.status = static_cast<std::uint8_t>(status);
+  obstacle.error = static_cast<std::uint8_t>(error);
+  obstacle.distance = distance;
+  obstacle.valid = true;
+  return true;
+}
 /**
  * @brief encodeStatus
  * 编码状态消息为JSON字符串。
@@ -126,11 +172,26 @@ bool MqttCodec::parsePauseMessage(const std::string& payload,
  * @param error 错误码
  * @return JSON字符串
  */
-std::string MqttCodec::encodeStatus(int status, int error)
+std::string MqttCodec::encodeStatus(int status, int error,
+    double vx, double vy, double yaw_rate)
 {
   Json::Value root;
   root["status"] = status;
   root["error"] = error;
+  Json::Value velocity;
+  velocity["vx"] = std::isfinite(vx) ? vx : 0.0;
+  velocity["vy"] = std::isfinite(vy) ? vy : 0.0;
+  velocity["yaw_rate"] = std::isfinite(yaw_rate) ? yaw_rate : 0.0;
+  root["velocity"] = velocity;
+  Json::StreamWriterBuilder writer;
+  writer["indentation"] = "";
+  return Json::writeString(writer, root);
+}
+
+std::string MqttCodec::encodeVoiceMessage(const std::string& message)
+{
+  Json::Value root;
+  root["message"] = message;
   Json::StreamWriterBuilder writer;
   writer["indentation"] = "";
   return Json::writeString(writer, root);

@@ -23,6 +23,10 @@ struct ApplicationConfig
   {
     std::string odom_topic{"/quad_0/body_pose"};          // 采用的里程计topic
     std::string final_cmd_topic{"/navdog/route_cmd"};     // 最终输出速度指令topic
+    std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
+    std::string external_stop_topic{"/navdog/external_stop"};
+    std::string protocol_status_topic{"/navdog/protocol_status"};
+    std::string protocol_error_topic{"/navdog/protocol_error"};
     bool odom_twist_in_world_frame{true};                  // 里程计速度是否为世界系
     double control_rate_hz{50.0};                          // 控制循环频率(Hz)
     double status_rate_hz{10.0};                           // 状态上报频率(Hz)
@@ -35,6 +39,23 @@ struct ApplicationConfig
     double command_timeout_sec{0.30};   // 输入指令新鲜度超时时长(秒)，超时则输出零速度
     double publish_rate_hz{50.0};       // 最终速度指令发布频率(Hz)
   } final_output;
+
+  struct DynamicObstacleConfig
+  {
+    bool enabled{false};
+    double stop_distance_m{1.0};
+    double hold_sec{5.0};
+    double timeout_sec{1.0};
+  } dynamic_obstacle;
+
+  struct TurnVoiceConfig
+  {
+    bool enabled{false};
+    double min_yaw_rate{0.25};
+    double max_linear_speed{0.20};
+    double cooldown_sec{5.0};
+    std::string message{"前方转弯请注意"};
+  } turn_voice;
 };
 
 }  // namespace navdog_runtime

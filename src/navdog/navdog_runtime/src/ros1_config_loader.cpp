@@ -88,6 +88,10 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   app.runtime_io.status_rate_hz = c.runtime.status_rate_hz;
   LOAD("odom_topic", app.runtime_io.odom_topic);
   LOAD("final_cmd_topic", app.runtime_io.final_cmd_topic);
+  LOAD("final_cmd_feedback_topic", app.runtime_io.final_cmd_feedback_topic);
+  LOAD("external_stop_topic", app.runtime_io.external_stop_topic);
+  LOAD("protocol_status_topic", app.runtime_io.protocol_status_topic);
+  LOAD("protocol_error_topic", app.runtime_io.protocol_error_topic);
   LOAD("odom_twist_in_world_frame", app.runtime_io.odom_twist_in_world_frame);
   LOAD("publish_mqtt_status", app.runtime_io.publish_mqtt_status);
   LOAD("final_output/command_timeout_sec", app.final_output.command_timeout_sec);
@@ -101,12 +105,23 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("mqtt/qos", app.mqtt.qos);
   LOAD("mqtt/task_topic", app.mqtt.task_topic);
   LOAD("mqtt/pause_topic", app.mqtt.pause_topic);
+  LOAD("mqtt/obstacle_topic", app.mqtt.obstacle_topic);
   LOAD("mqtt/status_topic", app.mqtt.status_topic);
+  LOAD("mqtt/voice_topic", app.mqtt.voice_topic);
   int queue_size = static_cast<int>(app.mqtt.max_queue_size);
   LOAD("mqtt/max_queue_size", queue_size);
   if (queue_size > 0) app.mqtt.max_queue_size = static_cast<std::size_t>(queue_size);
   LOAD("default_route_z", app.mqtt.default_route_z);
   LOAD("default_max_vx", app.mqtt.default_max_vx);
+  LOAD("dynamic_obstacle/enabled", app.dynamic_obstacle.enabled);
+  LOAD("dynamic_obstacle/stop_distance_m", app.dynamic_obstacle.stop_distance_m);
+  LOAD("dynamic_obstacle/hold_sec", app.dynamic_obstacle.hold_sec);
+  LOAD("dynamic_obstacle/timeout_sec", app.dynamic_obstacle.timeout_sec);
+  LOAD("turn_voice/enabled", app.turn_voice.enabled);
+  LOAD("turn_voice/min_yaw_rate", app.turn_voice.min_yaw_rate);
+  LOAD("turn_voice/max_linear_speed", app.turn_voice.max_linear_speed);
+  LOAD("turn_voice/cooldown_sec", app.turn_voice.cooldown_sec);
+  LOAD("turn_voice/message", app.turn_voice.message);
 #undef LOAD
 
   c.goal_controller.near_goal_turn_only_rad =

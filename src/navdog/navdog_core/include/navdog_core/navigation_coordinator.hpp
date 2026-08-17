@@ -160,6 +160,7 @@ private:
   NavigationMode last_mode_{NavigationMode::NONE};  // 上一周期的导航模式，用于检测模式切换
   double near_goal_blocked_since_sec_{0.0};   // “靠近终点但被阻挡”开始计时的时刻
   bool near_goal_blocked_timer_active_{false};  // 该计时器是否处于计时中
+  bool obstacle_finished_{false};             // 最近一次成功是否由近终点障碍超时触发
   NavState state_before_pause_{NavState::IDLE};  // 暂停前的状态，用于恢复时回退
 };
 

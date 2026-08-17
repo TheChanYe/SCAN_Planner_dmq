@@ -11,7 +11,9 @@ mqtt:
   dog_status_topic: "robot/dog/status"
   task_topic: "robot/global_planning/info"
   pause_topic: "robot/local_planning/pause_resume"
+  obstacle_topic: "robot/obstacle/info"
   status_topic: "robot/local_planning/ctrl"
+  voice_topic: "robot/voice/play"
   max_queue_size: 32
 
 topics:
@@ -26,6 +28,8 @@ topics:
   lidar_pose: "/dmq_dog/lidar_pose"
   nav_state: "/navdog/state"
   nav_mode: "/navdog/navigation_mode"
+  protocol_status: "/navdog/protocol_status"
+  protocol_error: "/navdog/protocol_error"
 
 publish_rate_hz: 10.0
 cmd_vel_timeout_sec: 0.30
@@ -33,6 +37,7 @@ odom_timeout_sec: 0.50
 lidar_timeout_sec: 0.50
 use_watchdog_error: true
 
+# var 8eafcf56e345744a9c27652c127e8e45cf00f2bd (上个版本的提交值)
 # Navigation runtime. MQTT status publishing is disabled here because the
 # dmq_bridge publishes the complete error/status/velocity payload.
 control_rate_hz: 50.0
@@ -41,8 +46,25 @@ publish_mqtt_status: false
 odom_topic: "/dmq_dog/navigation_odom"
 odom_twist_in_world_frame: true
 final_cmd_topic: "/navdog/route_cmd"
+final_cmd_feedback_topic: "/navdog/final_cmd_feedback"
+external_stop_topic: "/navdog/external_stop"
+protocol_status_topic: "/navdog/protocol_status"
+protocol_error_topic: "/navdog/protocol_error"
 default_route_z: 0.30
 default_max_vx: 0.40
+
+dynamic_obstacle:
+  enabled: true
+  stop_distance_m: 1.0
+  hold_sec: 5.0
+  timeout_sec: 1.0
+
+turn_voice:
+  enabled: true
+  min_yaw_rate: 0.25
+  max_linear_speed: 0.20
+  cooldown_sec: 5.0
+  message: "前方转弯请注意"
 
 limits:
   max_vx: 0.50

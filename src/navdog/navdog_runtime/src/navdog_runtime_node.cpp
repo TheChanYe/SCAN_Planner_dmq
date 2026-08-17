@@ -5,6 +5,7 @@
 #include <plan_env/grid_map.h>
 #include <tf/transform_datatypes.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -43,6 +44,15 @@ const char* motionClassName(const MotionClass value)
     case MotionClass::STOP:
     default: return "STOP";
   }
+}
+
+bool navigationActive(const navdog::NavState state)
+{
+  return state == navdog::NavState::PLANNING ||
+      state == navdog::NavState::START_ALIGN ||
+      state == navdog::NavState::TRACKING ||
+      state == navdog::NavState::GOAL_ALIGN ||
+      state == navdog::NavState::RECOVERY;
 }
 
 }  // namespace
@@ -140,6 +150,10 @@ bool NavdogRuntimeNode::initialize()
   scan_takeover_ready_subscriber_ = nh_.subscribe(
       "/native_scan/takeover_ready", 10,
       &NavdogRuntimeNode::scanTakeoverReadyCallback, this);
+  final_cmd_feedback_subscriber_ = nh_.subscribe(
+      io.final_cmd_feedback_topic, 10,
+      &NavdogRuntimeNode::finalCmdFeedbackCallback, this,
+      ros::TransportHints().tcpNoDelay());
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
   native_scan_path_publisher_ =
@@ -154,6 +168,12 @@ bool NavdogRuntimeNode::initialize()
       nh_.advertise<std_msgs::UInt8>("/navdog/navigation_mode", 1);
   stair_up_active_publisher_ =
       nh_.advertise<std_msgs::Bool>("/navdog/stair_up_active", 1, true);
+  external_stop_publisher_ =
+      nh_.advertise<std_msgs::Bool>(io.external_stop_topic, 1, true);
+  protocol_status_publisher_ =
+      nh_.advertise<std_msgs::UInt8>(io.protocol_status_topic, 1, true);
+  protocol_error_publisher_ =
+      nh_.advertise<std_msgs::UInt8>(io.protocol_error_topic, 1, true);
   final_cmd_publisher_ = nh_.advertise<geometry_msgs::TwistStamped>(
       io.final_cmd_topic, 1);
   control_timer_ = nh_.createTimer(ros::Duration(1.0 / io.control_rate_hz),
@@ -186,6 +206,20 @@ void NavdogRuntimeNode::scanTakeoverReadyCallback(
     const std_msgs::Bool::ConstPtr& msg)
 {
   scan_takeover_ready_ = msg && msg->data;
+}
+
+void NavdogRuntimeNode::finalCmdFeedbackCallback(
+    const geometry_msgs::TwistStamped::ConstPtr& msg)
+{
+  if (!msg || !std::isfinite(msg->twist.linear.x) ||
+      !std::isfinite(msg->twist.linear.y) ||
+      !std::isfinite(msg->twist.angular.z))
+  {
+    ROS_WARN_THROTTLE(1.0, "FINAL_CMD_FEEDBACK_INVALID");
+    return;
+  }
+  latest_final_cmd_feedback_ = *msg;
+  latest_final_cmd_feedback_valid_ = true;
 }
 
 // odomCallback：ROS里程计回调，将Odometry消息转换为世界系下的RobotState。
@@ -341,6 +375,12 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   pending_planner_feedback_ = navdog::PlannerFeedback{};
 
   const navdog::CoreOutput output = coordinator_->update(input, now_sec);
+  latest_map_error_ = (output.state == navdog::NavState::START_ALIGN ||
+      output.state == navdog::NavState::TRACKING ||
+      output.state == navdog::NavState::GOAL_ALIGN) &&
+      !input.obstacles.valid &&
+      (!output.route_corridor.valid ||
+       !std::isfinite(output.route_corridor.map_stamp_sec));
   logNavigationChanges(output, input);
   checkHeadingStall(output, input, now_sec);
   if (output.navigation_mode.transitioned)
@@ -369,6 +409,8 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   processPlannerAction(output.planner_action, now_sec);
   if (output.route_progress.valid) last_route_progress_ = output.route_progress;
   publishOutput(output, now_sec);
+  updateDynamicObstacleStop(output, latest_map_error_, now_sec);
+  publishProtocolState(output);
   // Publish the terminal state first so the mux hard-stops before native
   // SCAN is reset.  The edge detector prevents a 50 Hz reset loop.
   handleTerminalTransition(output);
@@ -885,6 +927,113 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
       static_cast<unsigned long>(first_remaining_index));
 }
 
+void NavdogRuntimeNode::updateDynamicObstacleStop(
+    const navdog::CoreOutput& output, bool, double now_sec)
+{
+  bool updated = false;
+  navdog_protocol::ExternalObstacleInfo obstacle{};
+  while (mqtt_ && mqtt_->latestObstacle(obstacle))
+  {
+    latest_external_obstacle_ = obstacle;
+    latest_external_obstacle_stamp_.fromSec(now_sec);
+    updated = true;
+  }
+
+  const auto& config = application_config_.dynamic_obstacle;
+  const bool enabled = config.enabled &&
+      std::isfinite(config.stop_distance_m) &&
+      std::isfinite(config.hold_sec) &&
+      std::isfinite(config.timeout_sec) &&
+      config.stop_distance_m > 0.0 &&
+      config.hold_sec >= 0.0 &&
+      config.timeout_sec > 0.0;
+
+  const bool obstacle_fresh = !latest_external_obstacle_stamp_.isZero() &&
+      (ros::Time::now() - latest_external_obstacle_stamp_).toSec() <=
+          config.timeout_sec;
+  const bool dynamic_close = enabled && navigationActive(output.state) &&
+      obstacle_fresh && latest_external_obstacle_.valid &&
+      latest_external_obstacle_.error == 0 &&
+      latest_external_obstacle_.status == 2 &&
+      std::isfinite(latest_external_obstacle_.distance) &&
+      latest_external_obstacle_.distance <= config.stop_distance_m;
+  const bool dynamic_clear = !obstacle_fresh ||
+      !latest_external_obstacle_.valid ||
+      latest_external_obstacle_.error != 0 ||
+      latest_external_obstacle_.status != 2 ||
+      (std::isfinite(latest_external_obstacle_.distance) &&
+       latest_external_obstacle_.distance > config.stop_distance_m);
+
+  switch (dynamic_obstacle_state_)
+  {
+    case DynamicObstacleState::CLEAR:
+      if (dynamic_close)
+      {
+        dynamic_obstacle_state_ = DynamicObstacleState::STOPPING;
+        dynamic_obstacle_stop_until_.fromSec(now_sec + config.hold_sec);
+        ROS_WARN("DYNAMIC_OBSTACLE_STOP status=%u distance=%.3f hold=%.3f",
+            static_cast<unsigned>(latest_external_obstacle_.status),
+            latest_external_obstacle_.distance, config.hold_sec);
+      }
+      break;
+
+    case DynamicObstacleState::STOPPING:
+      if (!navigationActive(output.state))
+      {
+        dynamic_obstacle_state_ = DynamicObstacleState::CLEAR;
+        dynamic_obstacle_stop_until_ = ros::Time{};
+      }
+      else if (!dynamic_obstacle_stop_until_.isZero() &&
+          now_sec >= dynamic_obstacle_stop_until_.toSec())
+      {
+        dynamic_obstacle_state_ = DynamicObstacleState::WAIT_CLEAR;
+        ROS_INFO("DYNAMIC_OBSTACLE_HOLD_DONE action=WAIT_CLEAR");
+      }
+      break;
+
+    case DynamicObstacleState::WAIT_CLEAR:
+      if (!navigationActive(output.state) || dynamic_clear)
+      {
+        dynamic_obstacle_state_ = DynamicObstacleState::CLEAR;
+        dynamic_obstacle_stop_until_ = ros::Time{};
+        ROS_INFO("DYNAMIC_OBSTACLE_CLEAR updated=%d", updated ? 1 : 0);
+      }
+      break;
+  }
+
+  std_msgs::Bool stop;
+  stop.data = dynamic_obstacle_state_ == DynamicObstacleState::STOPPING;
+  external_stop_publisher_.publish(stop);
+}
+
+bool NavdogRuntimeNode::shouldPublishTurnVoice(
+    const navdog::CoreOutput& output) const
+{
+  const auto& config = application_config_.turn_voice;
+  if (!config.enabled || !mqtt_ || !latest_final_cmd_feedback_valid_ ||
+      !navigationActive(output.state) ||
+      output.state == navdog::NavState::PAUSED ||
+      output.state == navdog::NavState::SUCCEEDED)
+    return false;
+
+  if (!std::isfinite(config.min_yaw_rate) ||
+      !std::isfinite(config.max_linear_speed) ||
+      !std::isfinite(config.cooldown_sec) ||
+      config.min_yaw_rate < 0.0 || config.max_linear_speed < 0.0 ||
+      config.cooldown_sec < 0.0)
+    return false;
+
+  const auto& twist = latest_final_cmd_feedback_.twist;
+  const bool turning =
+      std::fabs(twist.angular.z) >= config.min_yaw_rate &&
+      std::hypot(twist.linear.x, twist.linear.y) <= config.max_linear_speed;
+  if (!turning) return false;
+
+  return last_turn_voice_publish_.isZero() ||
+      (ros::Time::now() - last_turn_voice_publish_).toSec() >=
+          config.cooldown_sec;
+}
+
 // statusForOutput：根据核心输出状态与协议错误标志推导上报的status/error码：
 // 失败/紧急停止时status=0且error=2；暂停时status=5；
 // 规划/对齐/跟踪/恢复中等中间过程状态status=1；其余默认status=0，
@@ -892,16 +1041,28 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
 void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,
     bool protocol_error, int& status, int& error)
 {
+  (void)protocol_error;
+  statusForOutput(output, false, false, status, error);
+}
+
+void NavdogRuntimeNode::statusForOutput(const navdog::CoreOutput& output,
+    bool dynamic_obstacle_stop, bool map_error, int& status, int& error)
+{
   status = 0;
-  error = protocol_error ? 1 : 0;
+  error = map_error ? 1 : 0;
+  if (dynamic_obstacle_stop)
+  { status = 2; error = 0; return; }
   if (output.state == navdog::NavState::FAILED ||
       output.state == navdog::NavState::EMERGENCY_STOP)
   { status = 0; error = 2; return; }
   if (output.state == navdog::NavState::PAUSED) status = 5;
-  else if (output.state == navdog::NavState::PLANNING ||
-           output.state == navdog::NavState::START_ALIGN ||
+  else if (output.state == navdog::NavState::PLANNING) status = 1;
+  else if (output.state == navdog::NavState::SUCCEEDED)
+    status = output.obstacle_finished ? 6 : 4;
+  else if (output.state == navdog::NavState::START_ALIGN ||
            output.state == navdog::NavState::TRACKING ||
-           output.state == navdog::NavState::RECOVERY) status = 1;
+           output.state == navdog::NavState::GOAL_ALIGN ||
+           output.state == navdog::NavState::RECOVERY) status = 3;
 }
 
 // publishMqttStatus：根据核心输出与MQTT协议错误计数编码并发布MQTT状态上报，
@@ -911,8 +1072,56 @@ void NavdogRuntimeNode::publishMqttStatus(const navdog::CoreOutput& output)
   if (!mqtt_) return;
   int status = 0;
   int error = 0;
-  statusForOutput(output, mqtt_->consumeProtocolError() > 0, status, error);
-  mqtt_->publishStatus(navdog_protocol::MqttCodec::encodeStatus(status, error));
+  const int protocol_errors = mqtt_->consumeProtocolError();
+  if (protocol_errors > 0)
+    ROS_WARN_THROTTLE(2.0,
+        "MQTT_PROTOCOL_ERRORS count=%d action=LOG_ONLY", protocol_errors);
+  statusForOutput(output,
+      dynamic_obstacle_state_ == DynamicObstacleState::STOPPING,
+      latest_map_error_, status, error);
+  const auto& cmd = latest_final_cmd_feedback_;
+  const double vx = latest_final_cmd_feedback_valid_ ? cmd.twist.linear.x : 0.0;
+  const double vy = latest_final_cmd_feedback_valid_ ? cmd.twist.linear.y : 0.0;
+  const double yaw_rate =
+      latest_final_cmd_feedback_valid_ ? cmd.twist.angular.z : 0.0;
+  mqtt_->publishStatus(
+      navdog_protocol::MqttCodec::encodeStatus(status, error, vx, vy, yaw_rate));
+  if (shouldPublishTurnVoice(output))
+  {
+    mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
+        application_config_.turn_voice.message));
+    last_turn_voice_publish_ = ros::Time::now();
+    ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
+        navdog::navStateName(output.state),
+        navdog::navigationModeName(output.navigation_mode.mode),
+        vx, yaw_rate);
+  }
+}
+
+void NavdogRuntimeNode::publishProtocolState(const navdog::CoreOutput& output)
+{
+  int status = 0;
+  int error = 0;
+  statusForOutput(output,
+      dynamic_obstacle_state_ == DynamicObstacleState::STOPPING,
+      latest_map_error_, status, error);
+  std_msgs::UInt8 status_msg;
+  std_msgs::UInt8 error_msg;
+  status_msg.data = static_cast<std::uint8_t>(std::max(0, std::min(255, status)));
+  error_msg.data = static_cast<std::uint8_t>(std::max(0, std::min(255, error)));
+  protocol_status_publisher_.publish(status_msg);
+  protocol_error_publisher_.publish(error_msg);
+  if (shouldPublishTurnVoice(output))
+  {
+    mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
+        application_config_.turn_voice.message));
+    last_turn_voice_publish_ = ros::Time::now();
+    const auto& twist = latest_final_cmd_feedback_.twist;
+    ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
+        navdog::navStateName(output.state),
+        navdog::navigationModeName(output.navigation_mode.mode),
+        twist.linear.x, twist.angular.z);
+  }
 }
 
 }  // namespace navdog_runtime

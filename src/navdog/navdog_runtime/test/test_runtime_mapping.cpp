@@ -42,7 +42,7 @@ TEST(RuntimeStatusTest, TrackingMapsToStatus1)
 {
   navdog::CoreOutput output{}; output.state = navdog::NavState::TRACKING;
   int status, error; NavdogRuntimeNode::statusForOutput(output, false, status, error);
-  EXPECT_EQ(status, 1); EXPECT_EQ(error, 0);
+  EXPECT_EQ(status, 3); EXPECT_EQ(error, 0);
 }
 
 TEST(RuntimeStatusTest, PausedMapsToStatus5)
@@ -138,14 +138,14 @@ TEST(RuntimeNodeTest, OnlyFinalCmdIsPublished)
 TEST(RuntimeStatusTest, SafetyStopInTrackingDoesNotReportError2)
 {
   // SAFETY_STOP from coordinator during TRACKING (e.g. obstacle stop)
-  // should be status=1 (running), error=0, not status=0 error=2.
+  // should be status=3 (running), error=0, not status=0 error=2.
   navdog::CoreOutput output{};
   output.state = navdog::NavState::TRACKING;
   output.final_cmd.source = navdog::CommandSource::SAFETY_STOP;
   output.final_cmd.valid = true;
   int status = -1, error = -1;
   NavdogRuntimeNode::statusForOutput(output, false, status, error);
-  EXPECT_EQ(status, 1);
+  EXPECT_EQ(status, 3);
   EXPECT_EQ(error, 0);
 }
 
@@ -176,7 +176,38 @@ TEST(RuntimeStatusTest, ProtocolErrorSetsError1)
   output.state = navdog::NavState::TRACKING;
   int status, error;
   NavdogRuntimeNode::statusForOutput(output, true, status, error);
-  EXPECT_EQ(status, 1);
+  EXPECT_EQ(status, 3);
+  EXPECT_EQ(error, 0);
+}
+
+TEST(RuntimeStatusTest, DynamicObstacleStopMapsToStatus2)
+{
+  navdog::CoreOutput output{};
+  output.state = navdog::NavState::TRACKING;
+  int status, error;
+  NavdogRuntimeNode::statusForOutput(output, true, false, status, error);
+  EXPECT_EQ(status, 2);
+  EXPECT_EQ(error, 0);
+}
+
+TEST(RuntimeStatusTest, ObstacleFinishedSucceededMapsToStatus6)
+{
+  navdog::CoreOutput output{};
+  output.state = navdog::NavState::SUCCEEDED;
+  output.obstacle_finished = true;
+  int status, error;
+  NavdogRuntimeNode::statusForOutput(output, false, false, status, error);
+  EXPECT_EQ(status, 6);
+  EXPECT_EQ(error, 0);
+}
+
+TEST(RuntimeStatusTest, MapErrorUsesError1)
+{
+  navdog::CoreOutput output{};
+  output.state = navdog::NavState::TRACKING;
+  int status, error;
+  NavdogRuntimeNode::statusForOutput(output, false, true, status, error);
+  EXPECT_EQ(status, 3);
   EXPECT_EQ(error, 1);
 }
 

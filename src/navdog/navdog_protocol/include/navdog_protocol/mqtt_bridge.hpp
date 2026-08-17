@@ -1,5 +1,6 @@
 #pragma once
 
+#include <navdog_protocol/mqtt_codec.hpp>
 #include <navdog_task/task_types.hpp>
 #include <mosquitto.h>
 
@@ -22,7 +23,9 @@ struct MqttBridgeConfig
   int qos{1};                            // 订阅/发布使用的QoS等级
   std::string task_topic{"robot/global_planning/info"};   // 任务下发topic
   std::string pause_topic{"robot/local_planning/pause_resume"};  // 暂停/恢复topic
+  std::string obstacle_topic{"robot/obstacle/info"};      // 外部障碍输入topic
   std::string status_topic{"robot/local_planning/ctrl"};  // 状态上报topic
+  std::string voice_topic{"robot/voice/play"};            // 转弯语音播放topic
   double default_route_z{0.3};           // 路点未带z坐标时的默认高度
   double default_max_vx{0.4};            // 任务未带速度字段时的默认最大速度
   std::size_t max_queue_size{32};        // 事件队列最大长度，超出后丢弃最旧事件
@@ -50,6 +53,10 @@ public:
   void completeActiveTask();
   /** @brief 原样发布既有状态协议 payload，不解释其 JSON 业务含义。 */
   void publishStatus(const std::string& payload);
+  /** @brief 原样发布语音提示 payload。 */
+  void publishVoice(const std::string& payload);
+  /** @brief 获取最新外部障碍信息；仅当收到新报文后返回 true。 */
+  bool latestObstacle(ExternalObstacleInfo& obstacle);
   /** @brief 获取并清零协议错误计数（供上层健康监控上报）。 */
   int consumeProtocolError();
   /** @brief 当前是否处于充电保留模式。 */
@@ -82,6 +89,8 @@ private:
   std::uint64_t next_sequence_{1};            // 下一个内部任务序号
   std::uint64_t active_sequence_{0};          // 当前活动任务的序号（0表示无）
   int protocol_errors_{0};                    // 累计协议解析错误次数
+  ExternalObstacleInfo latest_obstacle_{};     // 最新外部障碍输入
+  bool obstacle_updated_{false};               // latestObstacle是否有新值可取
   bool started_{false};                       // 是否已成功启动
   bool charging_reserved_{false};             // 是否处于充电保留模式
   bool route_locked_{false};                  // 路线是否处于锁定状态（防止重复接受）

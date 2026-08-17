@@ -101,6 +101,10 @@ public:
         &DmqBridgeNode::navStateCallback, this);
     nav_mode_sub_ = nh_.subscribe(nav_mode_topic_, 10,
         &DmqBridgeNode::navModeCallback, this);
+    protocol_status_sub_ = nh_.subscribe(protocol_status_topic_, 10,
+        &DmqBridgeNode::protocolStatusCallback, this);
+    protocol_error_sub_ = nh_.subscribe(protocol_error_topic_, 10,
+        &DmqBridgeNode::protocolErrorCallback, this);
     lidar_scan_sub_ = nh_.subscribe(lidar_scan_topic_, 10,
         &DmqBridgeNode::lidarScanCallback, this, ros::TransportHints().tcpNoDelay());
     lidar_cloud_sub_ = nh_.subscribe(lidar_cloud_topic_, 10,
@@ -173,6 +177,10 @@ private:
     pnh_.param("topics/lidar_pose", lidar_pose_topic_, lidar_pose_topic_);
     pnh_.param("topics/nav_state", nav_state_topic_, nav_state_topic_);
     pnh_.param("topics/nav_mode", nav_mode_topic_, nav_mode_topic_);
+    pnh_.param("topics/protocol_status", protocol_status_topic_,
+               protocol_status_topic_);
+    pnh_.param("topics/protocol_error", protocol_error_topic_,
+               protocol_error_topic_);
 
     pnh_.param("publish_rate_hz", publish_rate_hz_, publish_rate_hz_);
     pnh_.param("cmd_vel_timeout_sec", cmd_vel_timeout_sec_, cmd_vel_timeout_sec_);
@@ -301,10 +309,27 @@ private:
     latest_nav_mode_ = msg->data;
   }
 
+  void protocolStatusCallback(const std_msgs::UInt8::ConstPtr& msg)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_protocol_status_ = msg->data;
+    protocol_status_valid_ = true;
+  }
+
+  void protocolErrorCallback(const std_msgs::UInt8::ConstPtr& msg)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_protocol_error_ = msg->data;
+    protocol_error_valid_ = true;
+  }
+
   // protocolState：将内部 NAV_STATE 枚举映射为真机 MQTT 协议约定的 status/error 编号。
   // 若尚未收到过导航状态，保持 status/error 不变。未知状态则回退为 status=0, error=1。
   void protocolState(int& status, int& error) const
   {
+    if (protocol_status_valid_) status = latest_protocol_status_;
+    if (protocol_error_valid_) error = latest_protocol_error_;
+    if (protocol_status_valid_ || protocol_error_valid_) return;
     if (!nav_state_valid_) return;
     switch (latest_nav_state_)
     {
@@ -313,7 +338,7 @@ private:
       case 2: case 3: status = 3; break;          // START_ALIGN / TRACKING
       case 4: status = 5; break;                  // PAUSED
       case 5: status = 3; break;                  // RECOVERY
-      case 6: status = 6; break;                  // GOAL_ALIGN
+      case 6: status = 3; break;                  // GOAL_ALIGN
       case 7: status = 4; break;                  // SUCCEEDED
       case 8: status = 2; error = 2; break;       // EMERGENCY_STOP
       case 9: status = 0; error = 2; break;       // FAILED
@@ -644,6 +669,8 @@ private:
   ros::Subscriber ros_odom_sub_;
   ros::Subscriber nav_state_sub_;
   ros::Subscriber nav_mode_sub_;
+  ros::Subscriber protocol_status_sub_;
+  ros::Subscriber protocol_error_sub_;
   ros::Subscriber lidar_scan_sub_;
   ros::Subscriber lidar_cloud_sub_;
   ros::Publisher mqtt_odom_pub_;
@@ -662,7 +689,11 @@ private:
   ros::Time latest_lidar_time_;
   unsigned char latest_nav_state_{0};
   unsigned char latest_nav_mode_{0};
+  unsigned char latest_protocol_status_{0};
+  unsigned char latest_protocol_error_{0};
   bool nav_state_valid_{false};
+  bool protocol_status_valid_{false};
+  bool protocol_error_valid_{false};
 
   std::string cmd_vel_topic_{"/cmd_vel"};
   std::string ros_odom_topic_{"/Odometry"};
@@ -674,6 +705,8 @@ private:
   std::string lidar_pose_topic_{"/dmq_dog/lidar_pose"};
   std::string nav_state_topic_{"/navdog/state"};
   std::string nav_mode_topic_{"/navdog/navigation_mode"};
+  std::string protocol_status_topic_{"/navdog/protocol_status"};
+  std::string protocol_error_topic_{"/navdog/protocol_error"};
   std::string odom_frame_id_{"odom"};
   std::string base_frame_id_{"base_link"};
   std::string lidar_frame_id_{"lidar"};

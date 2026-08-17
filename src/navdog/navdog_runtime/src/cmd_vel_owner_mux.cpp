@@ -22,6 +22,8 @@ double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
 double route_follow_linear_speed_mps = 0.30;
 double local_avoid_linear_speed_mps = 0.30;
+std::string external_stop_topic{"/navdog/external_stop"};
+std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -58,6 +60,7 @@ double route_follow_enter_stamp_sec_{0.0};
 double local_avoid_enter_stamp_sec_{0.0};
 bool scan_takeover_ready{false};
 bool scan_takeover_forward_confirmed{false};
+bool external_stop_{false};
 
 // Velocity slew limiter — single instance for smooth handoff.
 navdog_runtime::VelocitySlewLimiter slew_limiter_;
@@ -68,6 +71,7 @@ MotionClass last_logged_motion_{MotionClass::STOP};
 bool motion_log_initialized_{false};
 
 ros::Publisher cmd_vel_pub_;
+ros::Publisher final_cmd_feedback_pub_;
 
 // ownerName：将CommandOwner枚举转换为可读字符串，供日志使用。
 const char* ownerName(CommandOwner owner)
@@ -139,6 +143,15 @@ bool isFresh(double stamp_sec, double now_sec, double timeout_sec)
 geometry_msgs::Twist zeroCommand()
 {
   return geometry_msgs::Twist{};
+}
+
+void publishFinalCommand(const geometry_msgs::Twist& command, double now_sec)
+{
+  cmd_vel_pub_.publish(command);
+  geometry_msgs::TwistStamped feedback;
+  feedback.header.stamp.fromSec(now_sec);
+  feedback.twist = command;
+  final_cmd_feedback_pub_.publish(feedback);
 }
 
 // limitLinearSpeed：若指令线速度模超过max_speed，按比例缩放至上限并记录日志。
@@ -281,6 +294,9 @@ void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& msg)
 { scan_takeover_ready = msg && msg->data; }
 
+void externalStopCallback(const std_msgs::Bool::ConstPtr& msg)
+{ external_stop_ = msg && msg->data; }
+
 // timerCallback：固定频率（默认50Hz）的主输出循环，是全局唯一向/cmd_vel发布的入口。
 // 整体流程：
 // 1. 计算effectiveOwner，并在TRACKING且模式为NONE但刚刚发生状态切换时，
@@ -381,7 +397,19 @@ void timerCallback(const ros::TimerEvent&)
     last_output_cmd_ = zeroCommand();
     logOutputCommand(last_output_cmd_, target_cmd, owner, false,
         "HARD_STOP_STATE", now_sec);
-    cmd_vel_pub_.publish(zeroCommand());
+    publishFinalCommand(zeroCommand(), now_sec);
+    last_publish_stamp_sec_ = now_sec;
+    return;
+  }
+
+  if (external_stop_)
+  {
+    scan_takeover_forward_confirmed = false;
+    slew_limiter_.reset();
+    last_output_cmd_ = zeroCommand();
+    logOutputCommand(last_output_cmd_, target_cmd, owner, false,
+        "EXTERNAL_STOP", now_sec);
+    publishFinalCommand(zeroCommand(), now_sec);
     last_publish_stamp_sec_ = now_sec;
     return;
   }
@@ -524,7 +552,7 @@ void timerCallback(const ros::TimerEvent&)
 
   logOutputCommand(output, target_cmd, owner, target_valid,
       selection_reason, now_sec);
-  cmd_vel_pub_.publish(output);
+  publishFinalCommand(output, now_sec);
   last_output_cmd_ = output;
   last_publish_stamp_sec_ = now_sec;
 }
@@ -546,6 +574,10 @@ int main(int argc, char** argv)
   private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
   private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
   private_nh.param("scan_handoff_hold_sec", scan_handoff_hold_sec, 0.10);
+  private_nh.param("external_stop_topic", external_stop_topic,
+      std::string("/navdog/external_stop"));
+  private_nh.param("final_cmd_feedback_topic", final_cmd_feedback_topic,
+      std::string("/navdog/final_cmd_feedback"));
   private_nh.param("speed_limits/route_follow_linear_mps",
       route_follow_linear_speed_mps, 0.30);
   private_nh.param("speed_limits/local_avoid_linear_mps",
@@ -585,9 +617,13 @@ int main(int argc, char** argv)
       stateCallback);
   ros::Subscriber scan_takeover_ready_sub = nh.subscribe(
       "/native_scan/takeover_ready", 10, scanTakeoverReadyCallback);
+  ros::Subscriber external_stop_sub = nh.subscribe(
+      external_stop_topic, 10, externalStopCallback);
 
   // Publisher — the ONLY node that publishes to /cmd_vel
   cmd_vel_pub_ = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
+  final_cmd_feedback_pub_ = nh.advertise<geometry_msgs::TwistStamped>(
+      final_cmd_feedback_topic, 10);
 
   // Timer
   ros::Timer timer = nh.createTimer(

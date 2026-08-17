@@ -109,10 +109,14 @@ void MqttBridge::onConnect(struct mosquitto* client, void* data, int rc)
       client, nullptr, self->config_.task_topic.c_str(), self->config_.qos);
   const int pause_rc = mosquitto_subscribe(
       client, nullptr, self->config_.pause_topic.c_str(), self->config_.qos);
+  const int obstacle_rc = mosquitto_subscribe(
+      client, nullptr, self->config_.obstacle_topic.c_str(), self->config_.qos);
   MqttLog::write("INFO", "event=MQTT_CONNECTED task_topic=" +
       self->config_.task_topic + " task_sub=" + mosquitto_strerror(task_rc) +
       " pause_topic=" + self->config_.pause_topic + " pause_sub=" +
-      mosquitto_strerror(pause_rc));
+      mosquitto_strerror(pause_rc) +
+      " obstacle_topic=" + self->config_.obstacle_topic +
+      " obstacle_sub=" + mosquitto_strerror(obstacle_rc));
 }
 /**
  * @brief onDisconnect
@@ -149,16 +153,41 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
   if (topic == self->config_.task_topic) // 如果是任务消息
   {
     task_message = true;
+    NavigationMessageMeta meta{};
     std::uint64_t sequence;
     {
       std::lock_guard<std::mutex> lock(self->mutex_);
       sequence = self->next_sequence_;
     }
     valid = MqttCodec::parseTaskMessage(payload, self->config_.default_route_z,
-        self->config_.default_max_vx, sequence, event, charging);
+        self->config_.default_max_vx, sequence, event, charging, &meta);
+    if (valid && event.type == navdog_task::NavigationEventType::START_TASK)
+    {
+      MqttLog::write("INFO", "event=MQTT_NAV_RX ctrl=" +
+          std::to_string(event.task.mode == navdog_task::TaskMode::ROUTE_ONLY
+              ? 2 : 1) +
+          " mode=" + (event.task.mode == navdog_task::TaskMode::ROUTE_ONLY
+              ? "ROUTE_ONLY" : "NORMAL_AVOID") +
+          " id=" + (meta.has_id ? std::to_string(meta.id) : "none") +
+          " map_name=" + (meta.has_map_name ? meta.map_name : "none") +
+          " points=" + std::to_string(event.task.points.size()) +
+          " max_vx=" + std::to_string(event.task.max_vx));
+    }
   }
   else if (topic == self->config_.pause_topic) // 如果是暂停消息
     valid = MqttCodec::parsePauseMessage(payload, event);
+  else if (topic == self->config_.obstacle_topic)
+  {
+    ExternalObstacleInfo obstacle{};
+    valid = MqttCodec::parseObstacleMessage(payload, obstacle);
+    if (valid)
+    {
+      std::lock_guard<std::mutex> lock(self->mutex_);
+      self->latest_obstacle_ = obstacle;
+      self->obstacle_updated_ = true;
+      return;
+    }
+  }
   if (valid)
   {
     std::uint64_t active_sequence = 0;
@@ -166,7 +195,9 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
         self->enqueueTask(event, charging, active_sequence);
     if (!admitted)
     {
-      MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=1 "
+      const int ctrl = event.task.mode == navdog_task::TaskMode::ROUTE_ONLY ? 2 : 1;
+      MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=" +
+          std::to_string(ctrl) + " "
           "reason=WAIT_CTRL_0 active_sequence=" +
           std::to_string(active_sequence));
       return;
@@ -311,6 +342,27 @@ void MqttBridge::publishStatus(const std::string& payload)
       MqttLog::write("WARN", "event=MQTT_PUBLISH_FAILED topic=" +
           config_.status_topic + " error=" + mosquitto_strerror(rc));
   }
+}
+
+void MqttBridge::publishVoice(const std::string& payload)
+{
+  if (client_ && started_)
+  {
+    const int rc = mosquitto_publish(client_, nullptr, config_.voice_topic.c_str(),
+        static_cast<int>(payload.size()), payload.data(), config_.qos, false);
+    if (rc != MOSQ_ERR_SUCCESS)
+      MqttLog::write("WARN", "event=MQTT_PUBLISH_FAILED topic=" +
+          config_.voice_topic + " error=" + mosquitto_strerror(rc));
+  }
+}
+
+bool MqttBridge::latestObstacle(ExternalObstacleInfo& obstacle)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!obstacle_updated_) return false;
+  obstacle = latest_obstacle_;
+  obstacle_updated_ = false;
+  return true;
 }
 /**
  * @brief consumeProtocolError
