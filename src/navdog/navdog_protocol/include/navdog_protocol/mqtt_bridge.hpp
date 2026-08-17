@@ -78,6 +78,7 @@ private:
    * 返回 false 表示当前任务执行期间的重复路线已被协议层忽略。
    */
   bool enqueueTask(navdog_task::NavigationEvent& event, bool charging,
+                   const NavigationMessageMeta& meta,
                    std::uint64_t& active_sequence);
   /** @brief 已持锁前提下将事件推入队列，超过max_queue_size时丢弃最旧事件。 */
   void pushEventLocked(const navdog_task::NavigationEvent& event);
@@ -94,6 +95,8 @@ private:
   bool started_{false};                       // 是否已成功启动
   bool charging_reserved_{false};             // 是否处于充电保留模式
   bool route_locked_{false};                  // 路线是否处于锁定状态（防止重复接受）
+  double active_requested_max_vx_{0.0};        // 当前锁定任务最近一次显式请求的max_vx
+  bool active_requested_max_vx_valid_{false};  // active_requested_max_vx_是否有效
   std::string resolved_client_id_;            // 实际解析后使用的客户端ID
 };
 

@@ -98,6 +98,11 @@ bool MqttCodec::parseTaskMessage(const std::string& payload,
   }
   if (data.isMember("max_vx") && !finiteJson(data["max_vx"], event.task.max_vx))
     return false;
+  if (meta && data.isMember("max_vx"))
+  {
+    meta->max_vx = event.task.max_vx;
+    meta->has_max_vx = true;
+  }
   if (!(event.task.max_vx > 0.0)) return false; // 最大速度必须大于0
   for (const auto& item : points) // 遍历每个路点，检查其是否为对象，x/y/z/yaw是否为有限数
   {

@@ -48,6 +48,10 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET test_velocity_slew_limiter)
     target_link_libraries(test_velocity_slew_limiter ${catkin_LIBRARIES})
   endif()
+  catkin_add_gtest(test_cmd_speed_limit test/test_cmd_speed_limit.cpp)
+  if(TARGET test_cmd_speed_limit)
+    target_link_libraries(test_cmd_speed_limit ${catkin_LIBRARIES})
+  endif()
 endif()
 
 install(TARGETS navdog_runtime navdog_runtime_node cmd_vel_owner_mux

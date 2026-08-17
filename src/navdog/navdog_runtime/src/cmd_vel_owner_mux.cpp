@@ -3,7 +3,9 @@
 #include <geometry_msgs/TwistStamped.h>
 #include <std_msgs/UInt8.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Float64.h>
 #include <navdog_core/types.hpp>
+#include <navdog_runtime/cmd_speed_limit.hpp>
 #include <navdog_runtime/velocity_slew_limiter.hpp>
 
 #include <cmath>
@@ -24,6 +26,7 @@ double route_follow_linear_speed_mps = 0.30;
 double local_avoid_linear_speed_mps = 0.30;
 std::string external_stop_topic{"/navdog/external_stop"};
 std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
+std::string max_vx_limit_topic{"/navdog/max_vx_limit"};
 
 // Current state
 navdog::NavState nav_state_{navdog::NavState::IDLE};
@@ -61,6 +64,8 @@ double local_avoid_enter_stamp_sec_{0.0};
 bool scan_takeover_ready{false};
 bool scan_takeover_forward_confirmed{false};
 bool external_stop_{false};
+double task_max_vx_{0.0};
+bool task_max_vx_valid_{false};
 
 // Velocity slew limiter — single instance for smooth handoff.
 navdog_runtime::VelocitySlewLimiter slew_limiter_;
@@ -167,6 +172,27 @@ void limitLinearSpeed(geometry_msgs::Twist& command, double max_speed,
   ROS_INFO_THROTTLE(1.0,
       "CMD_LINEAR_LIMIT mode=%s requested=%.3f limited=%.3f",
       mode_name, speed, max_speed);
+}
+
+void limitModeLinearSpeed(geometry_msgs::Twist& command,
+                          double mode_limit_mps,
+                          const char* mode_name)
+{
+  const double effective_limit = navdog_runtime::effectiveLinearSpeedLimit(
+      mode_limit_mps, task_max_vx_, task_max_vx_valid_);
+  if (effective_limit <= 0.0)
+  {
+    command.linear.x = 0.0;
+    command.linear.y = 0.0;
+    return;
+  }
+  if (task_max_vx_valid_)
+  {
+    ROS_INFO_THROTTLE(1.0,
+        "CMD_SPEED_LIMIT mode=%s task_max_vx=%.3f mode_limit=%.3f effective=%.3f",
+        mode_name, task_max_vx_, mode_limit_mps, effective_limit);
+  }
+  limitLinearSpeed(command, effective_limit, mode_name);
 }
 
 // classifyMotion：根据输出指令粗略判断运动状态，仅用于日志分类。
@@ -296,6 +322,17 @@ void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& msg)
 
 void externalStopCallback(const std_msgs::Bool::ConstPtr& msg)
 { external_stop_ = msg && msg->data; }
+
+void maxVxLimitCallback(const std_msgs::Float64::ConstPtr& msg)
+{
+  if (!msg || !std::isfinite(msg->data) || msg->data <= 0.0)
+  {
+    ROS_WARN_THROTTLE(1.0, "INVALID_TASK_MAX_VX_LIMIT");
+    return;
+  }
+  task_max_vx_ = msg->data;
+  task_max_vx_valid_ = true;
+}
 
 // timerCallback：固定频率（默认50Hz）的主输出循环，是全局唯一向/cmd_vel发布的入口。
 // 整体流程：
@@ -526,10 +563,10 @@ void timerCallback(const ros::TimerEvent&)
   if (target_valid && owner == CommandOwner::TRACKER)
   {
     if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-      limitLinearSpeed(target_cmd, route_follow_linear_speed_mps,
+      limitModeLinearSpeed(target_cmd, route_follow_linear_speed_mps,
           "ROUTE_FOLLOW");
     else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
-      limitLinearSpeed(target_cmd, local_avoid_linear_speed_mps,
+      limitModeLinearSpeed(target_cmd, local_avoid_linear_speed_mps,
           "LOCAL_AVOID");
   }
 
@@ -578,6 +615,8 @@ int main(int argc, char** argv)
       std::string("/navdog/external_stop"));
   private_nh.param("final_cmd_feedback_topic", final_cmd_feedback_topic,
       std::string("/navdog/final_cmd_feedback"));
+  private_nh.param("max_vx_limit_topic", max_vx_limit_topic,
+      std::string("/navdog/max_vx_limit"));
   private_nh.param("speed_limits/route_follow_linear_mps",
       route_follow_linear_speed_mps, 0.30);
   private_nh.param("speed_limits/local_avoid_linear_mps",
@@ -619,6 +658,8 @@ int main(int argc, char** argv)
       "/native_scan/takeover_ready", 10, scanTakeoverReadyCallback);
   ros::Subscriber external_stop_sub = nh.subscribe(
       external_stop_topic, 10, externalStopCallback);
+  ros::Subscriber max_vx_limit_sub = nh.subscribe(
+      max_vx_limit_topic, 10, maxVxLimitCallback);
 
   // Publisher — the ONLY node that publishes to /cmd_vel
   cmd_vel_pub_ = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);

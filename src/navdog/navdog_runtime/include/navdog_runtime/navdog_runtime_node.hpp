@@ -15,6 +15,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Empty.h>
 #include <std_msgs/Bool.h>
+#include <std_msgs/Float64.h>
 #include <std_msgs/UInt8.h>
 
 #include <memory>
@@ -82,6 +83,8 @@ private:
   // publishMqttStatus：根据核心输出编码并发布MQTT状态上报。
   void publishMqttStatus(const navdog::CoreOutput& output);
   void publishProtocolState(const navdog::CoreOutput& output);
+  void publishMaxVxLimit(double max_vx);
+  void updateTurnVoice(const navdog::CoreOutput& output);
   void updateDynamicObstacleStop(const navdog::CoreOutput& output,
       bool map_error, double now_sec);
   bool shouldPublishTurnVoice(const navdog::CoreOutput& output) const;
@@ -124,6 +127,7 @@ private:
   ros::Publisher mode_publisher_;                         // 导航模式发布者
   ros::Publisher stair_up_active_publisher_;              // Native SCAN楼梯约束发布者
   ros::Publisher external_stop_publisher_;                 // 外部动态障碍停车请求
+  ros::Publisher max_vx_limit_publisher_;                  // 当前任务速度上限
   ros::Publisher protocol_status_publisher_;               // 内部协议状态码
   ros::Publisher protocol_error_publisher_;                // 内部协议错误码
   ros::Publisher final_cmd_publisher_;                    // 最终速度指令发布者

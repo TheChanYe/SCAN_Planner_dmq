@@ -276,6 +276,7 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   nh.setParam("mqtt/keepalive_sec", 60);
   nh.setParam("final_cmd_feedback_topic", std::string("/custom/final_feedback"));
   nh.setParam("external_stop_topic", std::string("/custom/external_stop"));
+  nh.setParam("max_vx_limit_topic", std::string("/custom/max_vx_limit"));
   nh.setParam("protocol_status_topic", std::string("/custom/protocol_status"));
   nh.setParam("protocol_error_topic", std::string("/custom/protocol_error"));
   nh.setParam("dynamic_obstacle/enabled", true);
@@ -301,6 +302,7 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   EXPECT_EQ(app.mqtt.keepalive_sec, 60);
   EXPECT_EQ(app.runtime_io.final_cmd_feedback_topic, "/custom/final_feedback");
   EXPECT_EQ(app.runtime_io.external_stop_topic, "/custom/external_stop");
+  EXPECT_EQ(app.runtime_io.max_vx_limit_topic, "/custom/max_vx_limit");
   EXPECT_EQ(app.runtime_io.protocol_status_topic, "/custom/protocol_status");
   EXPECT_EQ(app.runtime_io.protocol_error_topic, "/custom/protocol_error");
   EXPECT_TRUE(app.dynamic_obstacle.enabled);

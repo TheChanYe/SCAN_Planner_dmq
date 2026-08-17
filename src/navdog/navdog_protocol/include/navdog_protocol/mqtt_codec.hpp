@@ -15,6 +15,8 @@ struct NavigationMessageMeta
   bool has_id{false};
   std::string map_name{};
   bool has_map_name{false};
+  double max_vx{0.0};
+  bool has_max_vx{false};
 };
 
 struct ExternalObstacleInfo

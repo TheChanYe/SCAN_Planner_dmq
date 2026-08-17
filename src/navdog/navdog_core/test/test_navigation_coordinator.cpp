@@ -103,6 +103,34 @@ TEST(NavigationCoordinator, CancelAcknowledgesCompletedTaskAndReturnsIdle)
   EXPECT_FALSE(coordinator.routeManager().hasRoute());
 }
 
+TEST(NavigationCoordinator, MaxVxUpdateKeepsSequenceRouteAndMode)
+{
+  NavigationCoordinator coordinator;
+  NavigationEvent start = startEvent();
+  start.task.mode = TaskMode::NORMAL_AVOID;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(start));
+  const std::uint64_t sequence = coordinator.taskSession().sequence;
+  const std::size_t route_size = coordinator.routeManager().route().size();
+
+  NavigationEvent update{};
+  update.type = NavigationEventType::UPDATE_MAX_VX;
+  update.max_vx = 0.2;
+  EXPECT_EQ(TaskHandleResult::MAX_VX_UPDATED,
+      coordinator.handleEvent(update));
+
+  EXPECT_EQ(sequence, coordinator.taskSession().sequence);
+  EXPECT_EQ(TaskMode::NORMAL_AVOID, coordinator.taskSession().mode);
+  EXPECT_DOUBLE_EQ(0.2, coordinator.taskSession().max_vx);
+  EXPECT_EQ(route_size, coordinator.routeManager().route().size());
+  const CoreOutput output = coordinator.update(CoreInput{}, 1.0);
+  EXPECT_EQ(PlannerActionType::SET_ROUTE, output.planner_action.type);
+  const CoreOutput speed_output = coordinator.update(CoreInput{}, 1.1);
+  EXPECT_EQ(PlannerActionType::UPDATE_SPEED_LIMIT,
+      speed_output.planner_action.type);
+  EXPECT_EQ(sequence, speed_output.planner_action.task.sequence);
+  EXPECT_DOUBLE_EQ(0.2, speed_output.planner_action.max_vx);
+}
+
 TEST(NavigationCoordinator, InvalidTimeFailsDuringPlanningHandshake)
 {
   NavigationCoordinator coordinator;

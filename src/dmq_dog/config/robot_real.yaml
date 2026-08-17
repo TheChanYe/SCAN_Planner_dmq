@@ -37,7 +37,7 @@ odom_timeout_sec: 0.50
 lidar_timeout_sec: 0.50
 use_watchdog_error: true
 
-# var 8eafcf56e345744a9c27652c127e8e45cf00f2bd (上个版本的提交值)
+# var 223d50f474e55a01b03a173a25b2a459d8e3fa2a (上个版本的提交值)
 # Navigation runtime. MQTT status publishing is disabled here because the
 # dmq_bridge publishes the complete error/status/velocity payload.
 control_rate_hz: 50.0
@@ -48,6 +48,7 @@ odom_twist_in_world_frame: true
 final_cmd_topic: "/navdog/route_cmd"
 final_cmd_feedback_topic: "/navdog/final_cmd_feedback"
 external_stop_topic: "/navdog/external_stop"
+max_vx_limit_topic: "/navdog/max_vx_limit"
 protocol_status_topic: "/navdog/protocol_status"
 protocol_error_topic: "/navdog/protocol_error"
 default_route_z: 0.30

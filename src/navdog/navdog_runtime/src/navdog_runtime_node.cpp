@@ -170,6 +170,8 @@ bool NavdogRuntimeNode::initialize()
       nh_.advertise<std_msgs::Bool>("/navdog/stair_up_active", 1, true);
   external_stop_publisher_ =
       nh_.advertise<std_msgs::Bool>(io.external_stop_topic, 1, true);
+  max_vx_limit_publisher_ =
+      nh_.advertise<std_msgs::Float64>(io.max_vx_limit_topic, 1, true);
   protocol_status_publisher_ =
       nh_.advertise<std_msgs::UInt8>(io.protocol_status_topic, 1, true);
   protocol_error_publisher_ =
@@ -316,7 +318,16 @@ void NavdogRuntimeNode::processPlannerAction(
     const navdog::PlannerAction& action, double now_sec)
 {
   if (action.type == navdog::PlannerActionType::SET_ROUTE)
+  {
     pending_planner_feedback_ = feedbackForAction(action, now_sec);
+    publishMaxVxLimit(action.max_vx);
+  }
+  else if (action.type == navdog::PlannerActionType::UPDATE_SPEED_LIMIT)
+  {
+    publishMaxVxLimit(action.max_vx);
+    ROS_INFO("NAV_MAX_VX_UPDATE sequence=%lu max_vx=%.3f",
+        static_cast<unsigned long>(action.task.sequence), action.max_vx);
+  }
   else if (action.type == navdog::PlannerActionType::CANCEL)
     pending_planner_feedback_ = navdog::PlannerFeedback{};
 }
@@ -411,6 +422,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   publishOutput(output, now_sec);
   updateDynamicObstacleStop(output, latest_map_error_, now_sec);
   publishProtocolState(output);
+  updateTurnVoice(output);
   // Publish the terminal state first so the mux hard-stops before native
   // SCAN is reset.  The edge detector prevents a 50 Hz reset loop.
   handleTerminalTransition(output);
@@ -1086,16 +1098,27 @@ void NavdogRuntimeNode::publishMqttStatus(const navdog::CoreOutput& output)
       latest_final_cmd_feedback_valid_ ? cmd.twist.angular.z : 0.0;
   mqtt_->publishStatus(
       navdog_protocol::MqttCodec::encodeStatus(status, error, vx, vy, yaw_rate));
-  if (shouldPublishTurnVoice(output))
-  {
-    mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
-        application_config_.turn_voice.message));
-    last_turn_voice_publish_ = ros::Time::now();
-    ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
-        navdog::navStateName(output.state),
-        navdog::navigationModeName(output.navigation_mode.mode),
-        vx, yaw_rate);
-  }
+}
+
+void NavdogRuntimeNode::publishMaxVxLimit(double max_vx)
+{
+  if (!std::isfinite(max_vx) || max_vx <= 0.0) return;
+  std_msgs::Float64 message;
+  message.data = max_vx;
+  max_vx_limit_publisher_.publish(message);
+}
+
+void NavdogRuntimeNode::updateTurnVoice(const navdog::CoreOutput& output)
+{
+  if (!shouldPublishTurnVoice(output)) return;
+  mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
+      application_config_.turn_voice.message));
+  last_turn_voice_publish_ = ros::Time::now();
+  const auto& twist = latest_final_cmd_feedback_.twist;
+  ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
+      navdog::navStateName(output.state),
+      navdog::navigationModeName(output.navigation_mode.mode),
+      twist.linear.x, twist.angular.z);
 }
 
 void NavdogRuntimeNode::publishProtocolState(const navdog::CoreOutput& output)
@@ -1111,17 +1134,6 @@ void NavdogRuntimeNode::publishProtocolState(const navdog::CoreOutput& output)
   error_msg.data = static_cast<std::uint8_t>(std::max(0, std::min(255, error)));
   protocol_status_publisher_.publish(status_msg);
   protocol_error_publisher_.publish(error_msg);
-  if (shouldPublishTurnVoice(output))
-  {
-    mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
-        application_config_.turn_voice.message));
-    last_turn_voice_publish_ = ros::Time::now();
-    const auto& twist = latest_final_cmd_feedback_.twist;
-    ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
-        navdog::navStateName(output.state),
-        navdog::navigationModeName(output.navigation_mode.mode),
-        twist.linear.x, twist.angular.z);
-  }
 }
 
 }  // namespace navdog_runtime

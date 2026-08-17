@@ -4,6 +4,7 @@ odom_topic: /quad_0/body_pose
 odom_twist_in_world_frame: true
 final_cmd_feedback_topic: /navdog/final_cmd_feedback
 external_stop_topic: /navdog/external_stop
+max_vx_limit_topic: /navdog/max_vx_limit
 protocol_status_topic: /navdog/protocol_status
 protocol_error_topic: /navdog/protocol_error
 default_route_z: 0.3

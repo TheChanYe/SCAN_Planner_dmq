@@ -90,6 +90,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("final_cmd_topic", app.runtime_io.final_cmd_topic);
   LOAD("final_cmd_feedback_topic", app.runtime_io.final_cmd_feedback_topic);
   LOAD("external_stop_topic", app.runtime_io.external_stop_topic);
+  LOAD("max_vx_limit_topic", app.runtime_io.max_vx_limit_topic);
   LOAD("protocol_status_topic", app.runtime_io.protocol_status_topic);
   LOAD("protocol_error_topic", app.runtime_io.protocol_error_topic);
   LOAD("odom_twist_in_world_frame", app.runtime_io.odom_twist_in_world_frame);

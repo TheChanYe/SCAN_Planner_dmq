@@ -2,6 +2,7 @@
 #include "navdog_protocol/mqtt_codec.hpp"
 #include "navdog_protocol/mqtt_log.hpp"
 
+#include <cmath>
 #include <unistd.h>
 #include <utility>
 /**
@@ -149,11 +150,11 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
   bool valid = false;
   bool task_message = false;
   bool charging = false;
+  NavigationMessageMeta meta{};
   const std::string topic(message->topic ? message->topic : "");
   if (topic == self->config_.task_topic) // 如果是任务消息
   {
     task_message = true;
-    NavigationMessageMeta meta{};
     std::uint64_t sequence;
     {
       std::lock_guard<std::mutex> lock(self->mutex_);
@@ -192,14 +193,9 @@ void MqttBridge::onMessage(struct mosquitto*, void* data,
   {
     std::uint64_t active_sequence = 0;
     const bool admitted = !task_message ||
-        self->enqueueTask(event, charging, active_sequence);
+        self->enqueueTask(event, charging, meta, active_sequence);
     if (!admitted)
     {
-      const int ctrl = event.task.mode == navdog_task::TaskMode::ROUTE_ONLY ? 2 : 1;
-      MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=" +
-          std::to_string(ctrl) + " "
-          "reason=WAIT_CTRL_0 active_sequence=" +
-          std::to_string(active_sequence));
       return;
     }
     if (!task_message) self->enqueue(event);
@@ -244,7 +240,8 @@ void MqttBridge::enqueue(const navdog_task::NavigationEvent& event)
  * @brief enqueueTask
  * 任务类事件（START_TASK/CANCEL_TASK）的入队入口，负责实体狗协议的“活动任务锁”语义。
  * 步骤：
- *   1.START_TASK：若已有路线被锁定（route_locked_），拒绝入队并返回当前活动序号；
+ *   1.START_TASK：若已有路线被锁定（route_locked_），忽略新路线；
+ *      仅当报文显式携带且改变 max_vx 时转成 UPDATE_MAX_VX 入队；
  *      否则分配新序号、锁定路线、清除充电保留标记；
  *   2.CANCEL_TASK：清空事件队列、释放活动序号与路线锁，并根据charging参数设置充电保留标记；
  *   3.无论哪种情况最后都会入队并返回当前活动序号。
@@ -252,6 +249,7 @@ void MqttBridge::enqueue(const navdog_task::NavigationEvent& event)
  */
 bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
                              bool charging,
+                             const NavigationMessageMeta& meta,
                              std::uint64_t& active_sequence)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -260,12 +258,46 @@ bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
     if (route_locked_)
     {
       active_sequence = active_sequence_;
-      return false;
+      const int ctrl =
+          event.task.mode == navdog_task::TaskMode::ROUTE_ONLY ? 2 : 1;
+      if (!meta.has_max_vx)
+      {
+        MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=" +
+            std::to_string(ctrl) +
+            " reason=ACTIVE_TASK_LOCKED sequence=" +
+            std::to_string(active_sequence_) +
+            " speed_update=NO_FIELD");
+        return false;
+      }
+      if (active_requested_max_vx_valid_ &&
+          std::fabs(meta.max_vx - active_requested_max_vx_) <= 1e-9)
+      {
+        MqttLog::write("INFO", "event=MQTT_ROUTE_IGNORED ctrl=" +
+            std::to_string(ctrl) +
+            " reason=ACTIVE_TASK_LOCKED sequence=" +
+            std::to_string(active_sequence_) +
+            " speed_update=UNCHANGED");
+        return false;
+      }
+
+      event = navdog_task::NavigationEvent{};
+      event.type = navdog_task::NavigationEventType::UPDATE_MAX_VX;
+      event.max_vx = meta.max_vx;
+      pushEventLocked(event);
+      active_requested_max_vx_ = meta.max_vx;
+      active_requested_max_vx_valid_ = true;
+      MqttLog::write("INFO", "event=MQTT_SPEED_UPDATE ctrl=" +
+          std::to_string(ctrl) + " sequence=" +
+          std::to_string(active_sequence_) + " max_vx=" +
+          std::to_string(meta.max_vx) + " route_update=IGNORED");
+      return true;
     }
     event.task.sequence = next_sequence_++;
     active_sequence_ = event.task.sequence;
     route_locked_ = true;
     charging_reserved_ = false;
+    active_requested_max_vx_ = event.task.max_vx;
+    active_requested_max_vx_valid_ = true;
   }
   else if (event.type == navdog_task::NavigationEventType::CANCEL_TASK)
   {
@@ -273,6 +305,8 @@ bool MqttBridge::enqueueTask(navdog_task::NavigationEvent& event,
     active_sequence_ = 0;
     route_locked_ = false;
     charging_reserved_ = charging;
+    active_requested_max_vx_ = 0.0;
+    active_requested_max_vx_valid_ = false;
   }
   pushEventLocked(event);
   active_sequence = active_sequence_;
@@ -323,6 +357,8 @@ void MqttBridge::completeActiveTask()
     active_sequence_ = 0;
     route_locked_ = false;
     charging_reserved_ = false;
+    active_requested_max_vx_ = 0.0;
+    active_requested_max_vx_valid_ = false;
   }
   MqttLog::write("INFO", "event=MQTT_TASK_UNLOCK sequence=" +
       std::to_string(sequence) + " reason=NAV_SUCCEEDED");

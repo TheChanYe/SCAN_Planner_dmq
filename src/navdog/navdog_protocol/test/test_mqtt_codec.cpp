@@ -33,7 +33,7 @@ TEST(MqttCodec, Ctrl2UsesRouteOnlyAndParsesMeta)
   navdog_protocol::NavigationMessageMeta meta{};
   bool charging = false;
   ASSERT_TRUE(navdog_protocol::MqttCodec::parseTaskMessage(
-      R"({"ctrl":2,"navigation_data":{"id":123,"map_name":"map1","points":[{"x":0,"y":0}]}})",
+      R"({"ctrl":2,"navigation_data":{"id":123,"map_name":"map1","max_vx":0.2,"points":[{"x":0,"y":0}]}})",
       0.3, 0.4, 11, event, charging, &meta));
   EXPECT_EQ(navdog_task::NavigationEventType::START_TASK, event.type);
   EXPECT_EQ(navdog_task::TaskMode::ROUTE_ONLY, event.task.mode);
@@ -41,6 +41,20 @@ TEST(MqttCodec, Ctrl2UsesRouteOnlyAndParsesMeta)
   EXPECT_EQ(123, meta.id);
   EXPECT_TRUE(meta.has_map_name);
   EXPECT_EQ("map1", meta.map_name);
+  EXPECT_TRUE(meta.has_max_vx);
+  EXPECT_DOUBLE_EQ(0.2, meta.max_vx);
+}
+
+TEST(MqttCodec, MissingMaxVxUsesDefaultButMetaRecordsAbsence)
+{
+  navdog_task::NavigationEvent event{};
+  navdog_protocol::NavigationMessageMeta meta{};
+  bool charging = false;
+  ASSERT_TRUE(navdog_protocol::MqttCodec::parseTaskMessage(
+      R"({"ctrl":1,"navigation_data":{"points":[{"x":0,"y":0}]}})",
+      0.3, 0.4, 12, event, charging, &meta));
+  EXPECT_DOUBLE_EQ(0.4, event.task.max_vx);
+  EXPECT_FALSE(meta.has_max_vx);
 }
 
 TEST(MqttCodec, ParsesExternalObstacleInfo)

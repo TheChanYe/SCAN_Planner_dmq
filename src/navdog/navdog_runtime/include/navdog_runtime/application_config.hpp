@@ -25,6 +25,7 @@ struct ApplicationConfig
     std::string final_cmd_topic{"/navdog/route_cmd"};     // 最终输出速度指令topic
     std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
     std::string external_stop_topic{"/navdog/external_stop"};
+    std::string max_vx_limit_topic{"/navdog/max_vx_limit"};
     std::string protocol_status_topic{"/navdog/protocol_status"};
     std::string protocol_error_topic{"/navdog/protocol_error"};
     bool odom_twist_in_world_frame{true};                  // 里程计速度是否为世界系
