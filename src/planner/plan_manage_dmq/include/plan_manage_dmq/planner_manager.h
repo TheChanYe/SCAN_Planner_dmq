@@ -53,6 +53,7 @@ namespace scan_planner
     LocalTrajData local_data_;
     GlobalTrajData global_data_;
     GridMap::Ptr grid_map_;
+    bool stair_route_active_{false};
 
   private:
     /* main planning algorithms & modules */

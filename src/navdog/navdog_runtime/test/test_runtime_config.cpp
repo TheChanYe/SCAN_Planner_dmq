@@ -275,6 +275,7 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   nh.setParam("mqtt/port", 8883);
   nh.setParam("mqtt/keepalive_sec", 60);
   nh.setParam("final_cmd_feedback_topic", std::string("/custom/final_feedback"));
+  nh.setParam("applied_cmd_feedback_topic", std::string("/custom/applied_feedback"));
   nh.setParam("external_stop_topic", std::string("/custom/external_stop"));
   nh.setParam("max_vx_limit_topic", std::string("/custom/max_vx_limit"));
   nh.setParam("protocol_status_topic", std::string("/custom/protocol_status"));
@@ -284,9 +285,11 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   nh.setParam("dynamic_obstacle/hold_sec", 4.0);
   nh.setParam("dynamic_obstacle/timeout_sec", 0.8);
   nh.setParam("turn_voice/enabled", true);
-  nh.setParam("turn_voice/min_yaw_rate", 0.3);
-  nh.setParam("turn_voice/max_linear_speed", 0.25);
+  nh.setParam("scan/reference_z_offset_m", 0.35);
+  nh.setParam("turn_voice/enter_yaw_rate", 0.3);
+  nh.setParam("turn_voice/exit_yaw_rate", 0.18);
   nh.setParam("turn_voice/cooldown_sec", 6.0);
+  nh.setParam("turn_voice/feedback_timeout_sec", 0.4);
   nh.setParam("turn_voice/message", std::string("turn"));
 
   const auto app = Ros1ConfigLoader::load(nh);
@@ -301,6 +304,7 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   EXPECT_EQ(app.mqtt.port, 8883);
   EXPECT_EQ(app.mqtt.keepalive_sec, 60);
   EXPECT_EQ(app.runtime_io.final_cmd_feedback_topic, "/custom/final_feedback");
+  EXPECT_EQ(app.runtime_io.applied_cmd_feedback_topic, "/custom/applied_feedback");
   EXPECT_EQ(app.runtime_io.external_stop_topic, "/custom/external_stop");
   EXPECT_EQ(app.runtime_io.max_vx_limit_topic, "/custom/max_vx_limit");
   EXPECT_EQ(app.runtime_io.protocol_status_topic, "/custom/protocol_status");
@@ -309,10 +313,12 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   EXPECT_DOUBLE_EQ(app.dynamic_obstacle.stop_distance_m, 0.9);
   EXPECT_DOUBLE_EQ(app.dynamic_obstacle.hold_sec, 4.0);
   EXPECT_DOUBLE_EQ(app.dynamic_obstacle.timeout_sec, 0.8);
+  EXPECT_DOUBLE_EQ(app.scan.reference_z_offset_m, 0.35);
   EXPECT_TRUE(app.turn_voice.enabled);
-  EXPECT_DOUBLE_EQ(app.turn_voice.min_yaw_rate, 0.3);
-  EXPECT_DOUBLE_EQ(app.turn_voice.max_linear_speed, 0.25);
+  EXPECT_DOUBLE_EQ(app.turn_voice.enter_yaw_rate, 0.3);
+  EXPECT_DOUBLE_EQ(app.turn_voice.exit_yaw_rate, 0.18);
   EXPECT_DOUBLE_EQ(app.turn_voice.cooldown_sec, 6.0);
+  EXPECT_DOUBLE_EQ(app.turn_voice.feedback_timeout_sec, 0.4);
   EXPECT_EQ(app.turn_voice.message, "turn");
 }
 

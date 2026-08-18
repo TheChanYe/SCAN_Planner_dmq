@@ -24,6 +24,7 @@ struct ApplicationConfig
     std::string odom_topic{"/quad_0/body_pose"};          // 采用的里程计topic
     std::string final_cmd_topic{"/navdog/route_cmd"};     // 最终输出速度指令topic
     std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
+    std::string applied_cmd_feedback_topic{"/dmq_dog/applied_cmd_feedback"};
     std::string external_stop_topic{"/navdog/external_stop"};
     std::string max_vx_limit_topic{"/navdog/max_vx_limit"};
     std::string protocol_status_topic{"/navdog/protocol_status"};
@@ -49,12 +50,18 @@ struct ApplicationConfig
     double timeout_sec{1.0};
   } dynamic_obstacle;
 
+  struct ScanConfig
+  {
+    double reference_z_offset_m{0.30};
+  } scan;
+
   struct TurnVoiceConfig
   {
     bool enabled{false};
-    double min_yaw_rate{0.25};
-    double max_linear_speed{0.20};
+    double enter_yaw_rate{0.25};
+    double exit_yaw_rate{0.15};
     double cooldown_sec{5.0};
+    double feedback_timeout_sec{0.30};
     std::string message{"前方转弯请注意"};
   } turn_voice;
 };

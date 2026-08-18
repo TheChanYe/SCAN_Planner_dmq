@@ -30,6 +30,7 @@ topics:
   nav_mode: "/navdog/navigation_mode"
   protocol_status: "/navdog/protocol_status"
   protocol_error: "/navdog/protocol_error"
+  applied_cmd_feedback: "/dmq_dog/applied_cmd_feedback"
 
 publish_rate_hz: 10.0
 cmd_vel_timeout_sec: 0.30
@@ -47,11 +48,12 @@ odom_topic: "/dmq_dog/navigation_odom"
 odom_twist_in_world_frame: true
 final_cmd_topic: "/navdog/route_cmd"
 final_cmd_feedback_topic: "/navdog/final_cmd_feedback"
+applied_cmd_feedback_topic: "/dmq_dog/applied_cmd_feedback"
 external_stop_topic: "/navdog/external_stop"
 max_vx_limit_topic: "/navdog/max_vx_limit"
 protocol_status_topic: "/navdog/protocol_status"
 protocol_error_topic: "/navdog/protocol_error"
-default_route_z: 0.30
+default_route_z: 0.00
 default_max_vx: 0.40
 
 dynamic_obstacle:
@@ -62,10 +64,14 @@ dynamic_obstacle:
 
 turn_voice:
   enabled: true
-  min_yaw_rate: 0.25
-  max_linear_speed: 0.20
+  enter_yaw_rate: 0.25
+  exit_yaw_rate: 0.15
   cooldown_sec: 5.0
+  feedback_timeout_sec: 0.30
   message: "正在转弯请注意"
+
+scan:
+  reference_z_offset_m: 0.30
 
 limits:
   max_vx: 0.50
@@ -149,24 +155,21 @@ grid_map:
   self_filter_margin_xy: 0.02
   self_filter_margin_z: 0.02
   obstacles_inflation_z_up: 0.10
-  obstacles_inflation_z_down: 0.40
-  # During an approved ascending route, occupancy up to this height above the
-  # interpolated route is treated as stair support. Taller obstacles still block.
-  stair_support_clearance_m: 0.25
+  obstacles_inflation_z_down: 0.10
   p_hit: 0.85
   p_miss: 0.30
   p_min: 0.12
   p_max: 0.98
   p_occ: 0.80
   max_ray_length: 5.0
-  # Dense real scans previously took 80-170ms on a 50ms timer and starved
-  # SCAN reset/path/takeover callbacks. Fuse at 10Hz and keep only fresh data.
+  # Runtime's lightweight corridor map runs at 10Hz. Native SCAN overrides
+  # this to 20Hz in advanced_param.xml after loading this shared YAML.
   occupancy_update_interval_sec: 0.10
   # Full occupancy visualization scans the entire voxel map; 5Hz is enough
   # for diagnostics without competing with planning control callbacks.
   visualization_update_interval_sec: 0.20
-  # Maximum complete endpoint-and-free-space ray updates per lidar frame.
-  max_raycast_walk_points: 8000
+  # Runtime corridor evaluator is intentionally lighter than Native SCAN.
+  max_raycast_walk_points: 4000
   vis_height: 0.30
 
 optimization:
@@ -203,7 +206,8 @@ stair_up:
 
 scan_recovery:
   takeover_timeout_sec: 1.50
-  max_attempts: 2
+  fast_attempts: 2
+  backoff_retry_sec: 1.0
 
 route_follower:
   lookahead_distance_m: 0.60

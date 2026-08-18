@@ -57,6 +57,13 @@ target_link_libraries(dmq_bridge_node
 )
 add_dependencies(dmq_bridge_node ${catkin_EXPORTED_TARGETS})
 
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_gtest(test_driver_motion_mode test/test_driver_motion_mode.cpp)
+  if(TARGET test_driver_motion_mode)
+    target_link_libraries(test_driver_motion_mode ${catkin_LIBRARIES})
+  endif()
+endif()
+
 install(TARGETS dmq_dog dmq_bridge_node
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

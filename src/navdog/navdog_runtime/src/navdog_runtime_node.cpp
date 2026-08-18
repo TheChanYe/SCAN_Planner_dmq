@@ -1,5 +1,7 @@
 #include "navdog_runtime/navdog_runtime_node.hpp"
 #include "navdog_runtime/ros1_config_loader.hpp"
+#include "navdog_runtime/scan_recovery_policy.hpp"
+#include "navdog_runtime/turn_voice_latch.hpp"
 
 #include <navdog_protocol/mqtt_codec.hpp>
 #include <plan_env/grid_map.h>
@@ -94,17 +96,23 @@ bool NavdogRuntimeNode::initialize()
 {
   const auto& io = application_config_.runtime_io;
   if (!std::isfinite(io.control_rate_hz) || io.control_rate_hz <= 0.0 ||
-      !std::isfinite(io.status_rate_hz) || io.status_rate_hz <= 0.0)
+      !std::isfinite(io.status_rate_hz) || io.status_rate_hz <= 0.0 ||
+      !std::isfinite(application_config_.scan.reference_z_offset_m) ||
+      application_config_.scan.reference_z_offset_m < 0.0)
   {
-    ROS_ERROR("invalid runtime rates");
+    ROS_ERROR("invalid runtime rate or scan/reference_z_offset_m");
     return false;
   }
   private_nh_.param("scan_recovery/takeover_timeout_sec",
       scan_takeover_timeout_sec_, 1.5);
-  private_nh_.param("scan_recovery/max_attempts",
-      scan_recovery_max_attempts_, 2);
+  private_nh_.param("scan_recovery/fast_attempts",
+      scan_recovery_fast_attempts_, 2);
+  private_nh_.param("scan_recovery/backoff_retry_sec",
+      scan_recovery_backoff_retry_sec_, 1.0);
   if (!std::isfinite(scan_takeover_timeout_sec_) ||
-      scan_takeover_timeout_sec_ <= 0.0 || scan_recovery_max_attempts_ < 0)
+      scan_takeover_timeout_sec_ <= 0.0 || scan_recovery_fast_attempts_ < 2 ||
+      !std::isfinite(scan_recovery_backoff_retry_sec_) ||
+      scan_recovery_backoff_retry_sec_ <= 0.0)
   {
     ROS_ERROR("invalid SCAN recovery configuration");
     return false;
@@ -150,9 +158,16 @@ bool NavdogRuntimeNode::initialize()
   scan_takeover_ready_subscriber_ = nh_.subscribe(
       "/native_scan/takeover_ready", 10,
       &NavdogRuntimeNode::scanTakeoverReadyCallback, this);
+  scan_reference_ready_subscriber_ = nh_.subscribe(
+      "/native_scan/reference_ready", 10,
+      &NavdogRuntimeNode::scanReferenceReadyCallback, this);
   final_cmd_feedback_subscriber_ = nh_.subscribe(
       io.final_cmd_feedback_topic, 10,
       &NavdogRuntimeNode::finalCmdFeedbackCallback, this,
+      ros::TransportHints().tcpNoDelay());
+  applied_cmd_feedback_subscriber_ = nh_.subscribe(
+      io.applied_cmd_feedback_topic, 10,
+      &NavdogRuntimeNode::appliedCmdFeedbackCallback, this,
       ros::TransportHints().tcpNoDelay());
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
@@ -189,8 +204,9 @@ bool NavdogRuntimeNode::initialize()
       nm.immediate_enter_distance_m, nm.min_local_avoid_hold_sec,
       nm.exit_clear_confirm_sec, nm.exit_front_clearance_m,
       nm.exit_left_clearance_m, nm.exit_right_clearance_m);
-  ROS_INFO("SCAN_RECOVERY_CONFIG takeover_timeout=%.2f max_attempts=%d",
-      scan_takeover_timeout_sec_, scan_recovery_max_attempts_);
+  ROS_INFO("SCAN_RECOVERY_CONFIG takeover_timeout=%.2f fast_attempts=%d backoff_retry=%.2f",
+      scan_takeover_timeout_sec_, scan_recovery_fast_attempts_,
+      scan_recovery_backoff_retry_sec_);
   const auto& stair = application_config_.core.stair_up;
   ROS_INFO("STAIR_UP_CONFIG enabled=%d lookahead=%.2f sample_step=%.2f "
            "trigger_rise=%.2f flat_tolerance=%.2f exit_margin=%.2f "
@@ -207,7 +223,33 @@ bool NavdogRuntimeNode::initialize()
 void NavdogRuntimeNode::scanTakeoverReadyCallback(
     const std_msgs::Bool::ConstPtr& msg)
 {
-  scan_takeover_ready_ = msg && msg->data;
+  const bool ready = msg && msg->data;
+  if (ready && !scan_takeover_ready_)
+    ROS_INFO("SCAN_TAKEOVER_READY sequence=%lu",
+        static_cast<unsigned long>(coordinator_->taskSession().sequence));
+  scan_takeover_ready_ = ready;
+}
+
+void NavdogRuntimeNode::scanReferenceReadyCallback(
+    const std_msgs::Bool::ConstPtr& msg)
+{
+  scan_reference_ready_ = msg && msg->data;
+  if (!scan_reference_ready_)
+  {
+    if (scan_reference_path_sent_)
+    {
+      scan_reference_path_sent_ = false;
+      scan_reference_retry_after_sec_ = ros::Time::now().toSec() +
+          scan_recovery_backoff_retry_sec_;
+    }
+    scan_takeover_ready_ = false;
+    scan_takeover_request_sec_ = 0.0;
+  }
+  else
+  {
+    scan_reference_retry_after_sec_ = 0.0;
+    scan_wait_reference_logged_ = false;
+  }
 }
 
 void NavdogRuntimeNode::finalCmdFeedbackCallback(
@@ -222,6 +264,20 @@ void NavdogRuntimeNode::finalCmdFeedbackCallback(
   }
   latest_final_cmd_feedback_ = *msg;
   latest_final_cmd_feedback_valid_ = true;
+}
+
+void NavdogRuntimeNode::appliedCmdFeedbackCallback(
+    const geometry_msgs::TwistStamped::ConstPtr& msg)
+{
+  if (!msg || !std::isfinite(msg->twist.linear.x) ||
+      !std::isfinite(msg->twist.linear.y) ||
+      !std::isfinite(msg->twist.angular.z))
+  {
+    ROS_WARN_THROTTLE(1.0, "APPLIED_CMD_FEEDBACK_INVALID");
+    return;
+  }
+  latest_applied_cmd_feedback_ = *msg;
+  latest_applied_cmd_feedback_valid_ = true;
 }
 
 // odomCallback：ROS里程计回调，将Odometry消息转换为世界系下的RobotState。
@@ -271,11 +327,8 @@ void NavdogRuntimeNode::processEvents()
     {
       terminal_cleanup_sequence_ = 0;
       log_progress_initialized_ = false;
+      clearScanRecoveryState();
       resetNativeScan("TASK_STARTED");
-      scan_recovery_attempts_ = 0;
-      scan_takeover_ready_ = false;
-      scan_takeover_request_sec_ = 0.0;
-      pending_takeover_sync_ = false;
       last_route_progress_ = navdog::RouteProgress{};
       publishRoute();
       // SCAN builds its global/local reference while RouteFollower owns the
@@ -297,6 +350,7 @@ void NavdogRuntimeNode::processEvents()
            last_output_state_ == navdog::NavState::FAILED);
       if (!scan_already_cleaned)
         resetNativeScan("TASK_CANCELLED");
+      clearScanRecoveryState();
       last_route_progress_ = navdog::RouteProgress{};
       pending_planner_feedback_ = navdog::PlannerFeedback{};
       route_publisher_.publish(nav_msgs::Path{});
@@ -398,12 +452,13 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
-      publishTakeoverSync(input, output);
       scan_takeover_ready_ = false;
-      scan_takeover_request_sec_ = now_sec;
       scan_recovery_attempts_ = 0;
+      scan_recovery_backoff_ = false;
+      scan_recovery_next_retry_sec_ = 0.0;
+      pending_takeover_sync_ = true;
       ROS_INFO("SCAN_HANDOFF_ENTER prewarmed=1 scan_ready=%d",
-          pending_native_scan_path_ ? 0 : 1);
+          scan_reference_ready_ ? 1 : 0);
     }
     else if (output.navigation_mode.previous_mode ==
                  navdog::NavigationMode::LOCAL_AVOID)
@@ -439,21 +494,19 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
 // publishTakeoverSync：向Native SCAN发布接管同步信号（带上当前机器人位置/速度日志），
 // 用于提示Native SCAN即将接管。
 void NavdogRuntimeNode::publishTakeoverSync(
-    const navdog::CoreInput& input, const navdog::CoreOutput& output)
+    const navdog::CoreOutput& output, double now_sec)
 {
   native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
-  ROS_INFO("SCAN_TAKEOVER_SYNC_REQUEST sequence=%lu robot_x=%.3f robot_y=%.3f robot_vx=%.3f robot_vy=%.3f",
-      static_cast<unsigned long>(output.task_sequence), input.robot.x,
-      input.robot.y, input.robot.vx, input.robot.vy);
+  scan_takeover_request_sec_ = now_sec;
+  pending_takeover_sync_ = false;
+  ROS_INFO("SCAN_TAKEOVER_SYNC_SENT sequence=%lu attempt=%d",
+      static_cast<unsigned long>(output.task_sequence),
+      scan_recovery_attempts_);
 }
 
-// handleScanRecovery：当处于LOCAL_AVOID模式且SCAN接管迟迟未就绪时，按次数限制重试：
-// 1. 若不处于LOCAL_AVOID，清空计时/计数并在需要时取消待发布标志，直接返回；
-// 2. 若已就绪，清空计时并返回；
-// 3. 若尚未开始计时，记录请求时刻并返回；
-// 4. 若超过接管超时时长，判断重试次数是否已用尽：已用尽则仅告警不再重试（安全停车）；
-// 5. 否则增加重试计数、主动重置Native SCAN并标记待重新发布参考路径/接管同步，
-//    并重置请求计时以开始下一轮超时等待。
+// handleScanRecovery：REFERENCE_READY前只停车等待，不启动takeover超时；sync
+// 真正发出后才计时。第一次超时重发sync，第二次reset并重建reference，后续
+// 进入周期backoff，任务始终保持active。
 void NavdogRuntimeNode::handleScanRecovery(
     const navdog::CoreOutput& output, double now_sec)
 {
@@ -461,45 +514,89 @@ void NavdogRuntimeNode::handleScanRecovery(
   {
     scan_takeover_request_sec_ = 0.0;
     scan_recovery_attempts_ = 0;
-    if (pending_takeover_sync_)
-      pending_native_scan_path_ = false;
     pending_takeover_sync_ = false;
+    scan_recovery_backoff_ = false;
+    scan_recovery_next_retry_sec_ = 0.0;
+    scan_wait_reference_logged_ = false;
     return;
   }
 
   if (scan_takeover_ready_)
   {
     scan_takeover_request_sec_ = 0.0;
+    scan_recovery_backoff_ = false;
+    return;
+  }
+
+  if (scan_recovery_backoff_)
+  {
+    if (now_sec < scan_recovery_next_retry_sec_)
+      return;
+    scan_recovery_backoff_ = false;
+    resetNativeScan("RECOVERY_BACKOFF_RETRY");
+    pending_native_scan_path_ = true;
+    pending_takeover_sync_ = true;
+    ROS_WARN("SCAN_RECOVERY_RESET sequence=%lu reason=BACKOFF_RETRY",
+        static_cast<unsigned long>(output.task_sequence));
+  }
+
+  if (!scan_reference_ready_)
+  {
+    scan_takeover_request_sec_ = 0.0;
+    if (!scan_reference_path_sent_ && !pending_native_scan_path_ &&
+        now_sec >= scan_reference_retry_after_sec_)
+      pending_native_scan_path_ = true;
+    if (!scan_wait_reference_logged_)
+    {
+      scan_wait_reference_logged_ = true;
+      ROS_INFO("SCAN_TAKEOVER_WAIT_REFERENCE sequence=%lu",
+          static_cast<unsigned long>(output.task_sequence));
+    }
+    return;
+  }
+
+  if (pending_takeover_sync_)
+  {
+    publishTakeoverSync(output, now_sec);
     return;
   }
 
   if (scan_takeover_request_sec_ <= 0.0)
-  {
-    scan_takeover_request_sec_ = now_sec;
     return;
-  }
 
   const double elapsed = now_sec - scan_takeover_request_sec_;
   if (!std::isfinite(elapsed) || elapsed < scan_takeover_timeout_sec_)
     return;
 
-  if (scan_recovery_attempts_ >= scan_recovery_max_attempts_)
+  ++scan_recovery_attempts_;
+  ROS_WARN("SCAN_TAKEOVER_TIMEOUT sequence=%lu stage=SYNC_WAIT elapsed=%.3f attempt=%d",
+      static_cast<unsigned long>(output.task_sequence), elapsed,
+      scan_recovery_attempts_);
+  scan_takeover_request_sec_ = 0.0;
+
+  const auto recovery_action = scanRecoveryActionAfterTimeout(
+      scan_recovery_attempts_, scan_recovery_fast_attempts_);
+  if (recovery_action == ScanRecoveryAction::RESEND_SYNC)
   {
-    ROS_ERROR_THROTTLE(2.0,
-        "SCAN_RECOVERY_EXHAUSTED sequence=%lu attempts=%d action=SAFE_STOP",
-        static_cast<unsigned long>(output.task_sequence),
-        scan_recovery_attempts_);
+    pending_takeover_sync_ = true;
     return;
   }
 
-  ++scan_recovery_attempts_;
-  ROS_WARN("SCAN_TAKEOVER_TIMEOUT sequence=%lu elapsed=%.3f attempt=%d/%d",
-      static_cast<unsigned long>(output.task_sequence), elapsed,
-      scan_recovery_attempts_, scan_recovery_max_attempts_);
-  resetNativeScan("TAKEOVER_TIMEOUT");
-  pending_native_scan_path_ = true;
-  pending_takeover_sync_ = true;
-  scan_takeover_request_sec_ = now_sec;
+  if (recovery_action == ScanRecoveryAction::RESET_REFERENCE)
+  {
+    resetNativeScan("TAKEOVER_TIMEOUT");
+    pending_native_scan_path_ = true;
+    pending_takeover_sync_ = true;
+    ROS_WARN("SCAN_RECOVERY_RESET sequence=%lu reason=SECOND_SYNC_TIMEOUT",
+        static_cast<unsigned long>(output.task_sequence));
+    return;
+  }
+
+  scan_recovery_backoff_ = true;
+  scan_recovery_next_retry_sec_ = now_sec + scan_recovery_backoff_retry_sec_;
+  ROS_WARN("SCAN_RECOVERY_BACKOFF sequence=%lu retry_in=%.1f",
+      static_cast<unsigned long>(output.task_sequence),
+      scan_recovery_backoff_retry_sec_);
 }
 
 // logNavigationChanges：对比本周期与上一次记录的导航状态/运动分类/路线进度段/
@@ -517,7 +614,7 @@ void NavdogRuntimeNode::logNavigationChanges(
   if (stair_activated)
   {
     const auto& elevation = output.route_elevation;
-    ROS_INFO("STAIR_UP_TRIGGER rise=%.3f current_z=%.3f forward_z=%.3f "
+    ROS_INFO("STAIR_UP_ENTER rise=%.3f current_route_z=%.3f forward_route_z=%.3f "
              "robot_z=%.3f arc=%.3f hold_until=%.3f mode_transition=%d",
         elevation.rise_m, elevation.current_z, elevation.max_forward_z,
         input.robot.z, output.route_progress.arc_length_m,
@@ -820,6 +917,7 @@ void NavdogRuntimeNode::handleTerminalTransition(
   {
     terminal_cleanup_sequence_ = output.task_sequence;
     resetNativeScan(entered_succeeded ? "TASK_SUCCEEDED" : "TASK_FAILED");
+    clearScanRecoveryState();
     pending_native_scan_path_ = false;
     pending_planner_feedback_ = navdog::PlannerFeedback{};
     if (entered_succeeded && mqtt_)
@@ -845,6 +943,11 @@ void NavdogRuntimeNode::resetNativeScan(const char* reason)
   native_scan_reset_publisher_.publish(std_msgs::Empty{});
 
   pending_native_scan_path_ = false;
+  scan_reference_ready_ = false;
+  scan_reference_path_sent_ = false;
+  scan_reference_retry_after_sec_ = 0.0;
+  scan_takeover_ready_ = false;
+  scan_takeover_request_sec_ = 0.0;
   native_scan_reset_time_ = ros::Time::now();
   ++native_scan_reset_count_;
 
@@ -852,25 +955,30 @@ void NavdogRuntimeNode::resetNativeScan(const char* reason)
       reason ? reason : "UNKNOWN");
 }
 
-// scheduleNativeScanReferencePath：若标记了待发布Native SCAN参考路径，
-// 且距上次重置已经过了最小延迟（确保Native SCAN先收到重置信号），
-// 则实际发布参考路径并清除标志；若同时有待发布的接管同步，
-// 则发布同步信号并重置接管请求计时（开启下一轮超时等待）。
+void NavdogRuntimeNode::clearScanRecoveryState()
+{
+  scan_takeover_ready_ = false;
+  scan_reference_ready_ = false;
+  scan_reference_path_sent_ = false;
+  scan_reference_retry_after_sec_ = 0.0;
+  scan_takeover_request_sec_ = 0.0;
+  scan_recovery_attempts_ = 0;
+  pending_takeover_sync_ = false;
+  scan_recovery_backoff_ = false;
+  scan_recovery_next_retry_sec_ = 0.0;
+  scan_wait_reference_logged_ = false;
+}
+
+// scheduleNativeScanReferencePath：reset后延迟发布参考路径。同步信号只能由
+// handleScanRecovery在reference_ready之后发送。
 void NavdogRuntimeNode::scheduleNativeScanReferencePath()
 {
   if (pending_native_scan_path_ &&
       (ros::Time::now() - native_scan_reset_time_).toSec() >= 0.02)
   {
     publishNativeScanReferencePath(last_route_progress_);
+    scan_reference_path_sent_ = true;
     pending_native_scan_path_ = false;
-    if (pending_takeover_sync_)
-    {
-      native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
-      pending_takeover_sync_ = false;
-      scan_takeover_request_sec_ = ros::Time::now().toSec();
-      ROS_INFO("SCAN_RECOVERY_SYNC_REQUEST attempt=%d",
-          scan_recovery_attempts_);
-    }
   }
 }
 
@@ -905,6 +1013,9 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
   nav_msgs::Path path;
   path.header.stamp = ros::Time::now();
   path.header.frame_id = "world";
+  path.header.seq = static_cast<std::uint32_t>(
+      coordinator_->taskSession().sequence);
+  const double z_offset = application_config_.scan.reference_z_offset_m;
 
   // First point: current robot position.
   {
@@ -913,7 +1024,7 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
     pose.header = path.header;
     pose.pose.position.x = robot_.x;
     pose.pose.position.y = robot_.y;
-    pose.pose.position.z = robot_.z;
+    pose.pose.position.z = robot_.z + z_offset;
     pose.pose.orientation = tf::createQuaternionMsgFromYaw(robot_.yaw);
     path.poses.push_back(pose);
   }
@@ -926,17 +1037,25 @@ void NavdogRuntimeNode::publishNativeScanReferencePath(
     pose.header = path.header;
     pose.pose.position.x = point.x;
     pose.pose.position.y = point.y;
-    pose.pose.position.z = point.z;
+    pose.pose.position.z = point.z + z_offset;
     pose.pose.orientation = tf::createQuaternionMsgFromYaw(
         point.has_yaw ? point.yaw : 0.0);
     path.poses.push_back(pose);
   }
 
   native_scan_path_publisher_.publish(path);
-  ROS_INFO("NATIVE_SCAN_PATH_PUBLISHED points=%lu "
-           "first_remaining_index=%lu",
+  double z_min = path.poses.front().pose.position.z;
+  double z_max = z_min;
+  for (const auto& pose : path.poses)
+  {
+    z_min = std::min(z_min, pose.pose.position.z);
+    z_max = std::max(z_max, pose.pose.position.z);
+  }
+  ROS_INFO("NATIVE_SCAN_PATH_PUBLISHED sequence=%u points=%lu "
+           "first_remaining_index=%lu z_offset=%.3f z_min=%.3f z_max=%.3f",
+      path.header.seq,
       static_cast<unsigned long>(path.poses.size()),
-      static_cast<unsigned long>(first_remaining_index));
+      static_cast<unsigned long>(first_remaining_index), z_offset, z_min, z_max);
 }
 
 void NavdogRuntimeNode::updateDynamicObstacleStop(
@@ -1018,34 +1137,6 @@ void NavdogRuntimeNode::updateDynamicObstacleStop(
   external_stop_publisher_.publish(stop);
 }
 
-bool NavdogRuntimeNode::shouldPublishTurnVoice(
-    const navdog::CoreOutput& output) const
-{
-  const auto& config = application_config_.turn_voice;
-  if (!config.enabled || !mqtt_ || !latest_final_cmd_feedback_valid_ ||
-      !navigationActive(output.state) ||
-      output.state == navdog::NavState::PAUSED ||
-      output.state == navdog::NavState::SUCCEEDED)
-    return false;
-
-  if (!std::isfinite(config.min_yaw_rate) ||
-      !std::isfinite(config.max_linear_speed) ||
-      !std::isfinite(config.cooldown_sec) ||
-      config.min_yaw_rate < 0.0 || config.max_linear_speed < 0.0 ||
-      config.cooldown_sec < 0.0)
-    return false;
-
-  const auto& twist = latest_final_cmd_feedback_.twist;
-  const bool turning =
-      std::fabs(twist.angular.z) >= config.min_yaw_rate &&
-      std::hypot(twist.linear.x, twist.linear.y) <= config.max_linear_speed;
-  if (!turning) return false;
-
-  return last_turn_voice_publish_.isZero() ||
-      (ros::Time::now() - last_turn_voice_publish_).toSec() >=
-          config.cooldown_sec;
-}
-
 // statusForOutput：根据核心输出状态与协议错误标志推导上报的status/error码：
 // 失败/紧急停止时status=0且error=2；暂停时status=5；
 // 规划/对齐/跟踪/恢复中等中间过程状态status=1；其余默认status=0，
@@ -1110,15 +1201,68 @@ void NavdogRuntimeNode::publishMaxVxLimit(double max_vx)
 
 void NavdogRuntimeNode::updateTurnVoice(const navdog::CoreOutput& output)
 {
-  if (!shouldPublishTurnVoice(output)) return;
+  const auto& config = application_config_.turn_voice;
+  const ros::Time now = ros::Time::now();
+  const bool config_valid = config.enabled && mqtt_ &&
+      std::isfinite(config.enter_yaw_rate) &&
+      std::isfinite(config.exit_yaw_rate) &&
+      std::isfinite(config.cooldown_sec) &&
+      std::isfinite(config.feedback_timeout_sec) &&
+      config.enter_yaw_rate > config.exit_yaw_rate &&
+      config.exit_yaw_rate >= 0.0 && config.cooldown_sec >= 0.0 &&
+      config.feedback_timeout_sec > 0.0;
+
+  geometry_msgs::TwistStamped command;
+  bool command_valid = false;
+  const bool applied_fresh = latest_applied_cmd_feedback_valid_ &&
+      !latest_applied_cmd_feedback_.header.stamp.isZero() &&
+      (now - latest_applied_cmd_feedback_.header.stamp).toSec() >= 0.0 &&
+      (now - latest_applied_cmd_feedback_.header.stamp).toSec() <=
+          config.feedback_timeout_sec;
+  if (applied_fresh)
+  {
+    command = latest_applied_cmd_feedback_;
+    command_valid = true;
+  }
+  else if (latest_final_cmd_feedback_valid_)
+  {
+    command = latest_final_cmd_feedback_;
+    command_valid = true;
+  }
+
+  const auto& twist = command.twist;
+  const auto latch = updateTurnVoiceLatch(
+      turn_active_, config_valid && command_valid &&
+          output.state == navdog::NavState::TRACKING,
+      command_valid ? twist.angular.z : 0.0,
+      config.enter_yaw_rate, config.exit_yaw_rate);
+  turn_active_ = latch.active;
+  if (latch.edge == TurnVoiceEdge::EXIT)
+  {
+    ROS_INFO("TURN_EXIT yaw_rate=%.3f vx=%.3f vy=%.3f state=%s",
+        command_valid ? twist.angular.z : 0.0,
+        command_valid ? twist.linear.x : 0.0,
+        command_valid ? twist.linear.y : 0.0,
+        navdog::navStateName(output.state));
+    return;
+  }
+  if (latch.edge != TurnVoiceEdge::ENTER)
+    return;
+
+  ROS_INFO("TURN_ENTER yaw_rate=%.3f vx=%.3f vy=%.3f source=%s",
+      twist.angular.z, twist.linear.x, twist.linear.y,
+      applied_fresh ? "APPLIED_CMD" : "FINAL_CMD_FALLBACK");
+  if (!last_turn_voice_publish_.isZero() &&
+      (now - last_turn_voice_publish_).toSec() < config.cooldown_sec)
+    return;
+
   mqtt_->publishVoice(navdog_protocol::MqttCodec::encodeVoiceMessage(
-      application_config_.turn_voice.message));
-  last_turn_voice_publish_ = ros::Time::now();
-  const auto& twist = latest_final_cmd_feedback_.twist;
-  ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f yaw_rate=%.3f",
+      config.message));
+  last_turn_voice_publish_ = now;
+  ROS_INFO("TURN_VOICE_PUBLISHED state=%s mode=%s vx=%.3f vy=%.3f yaw_rate=%.3f",
       navdog::navStateName(output.state),
       navdog::navigationModeName(output.navigation_mode.mode),
-      twist.linear.x, twist.angular.z);
+      twist.linear.x, twist.linear.y, twist.angular.z);
 }
 
 void NavdogRuntimeNode::publishProtocolState(const navdog::CoreOutput& output)

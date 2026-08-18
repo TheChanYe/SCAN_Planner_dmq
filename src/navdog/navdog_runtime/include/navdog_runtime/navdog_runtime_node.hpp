@@ -57,7 +57,9 @@ private:
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
   // scanTakeoverReadyCallback：接收SCAN接管就绪信号，更新scan_takeover_ready_标志。
   void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& message);
+  void scanReferenceReadyCallback(const std_msgs::Bool::ConstPtr& message);
   void finalCmdFeedbackCallback(const geometry_msgs::TwistStamped::ConstPtr& message);
+  void appliedCmdFeedbackCallback(const geometry_msgs::TwistStamped::ConstPtr& message);
   /**
    * @brief 固定 50 Hz 控制顺序：事件、输入快照、SCAN 观察、Core、SCAN 副作用、发布。
    * Runtime 不在此处重新判断 Route/SCAN 切换条件。
@@ -69,10 +71,11 @@ private:
   void processPlannerAction(const navdog::PlannerAction& action, double now_sec);
   /** @brief Reset is reserved for task lifecycle boundaries; path publication is deferred for ROS ordering. */
   void resetNativeScan(const char* reason);
+  void clearScanRecoveryState();
   // scheduleNativeScanReferencePath：标记需要在本周期末尾向Native SCAN发布参考路径，
   // 延迟到controlCallback统一发布以保证ROS消息顺序。
   void scheduleNativeScanReferencePath();
-  // handleScanRecovery：当SCAN接管尝试失败时按次数限制重试，超过上限则放弃并切回默认控制。
+  // handleScanRecovery：两次快速恢复后进入周期backoff，活动任务保持安全停车并持续重试。
   void handleScanRecovery(const navdog::CoreOutput& output, double now_sec);
   // publishRoute：将当前导航任务的完整路线作为Path发布（供可视化/监控）。
   void publishRoute();
@@ -87,10 +90,8 @@ private:
   void updateTurnVoice(const navdog::CoreOutput& output);
   void updateDynamicObstacleStop(const navdog::CoreOutput& output,
       bool map_error, double now_sec);
-  bool shouldPublishTurnVoice(const navdog::CoreOutput& output) const;
   // publishTakeoverSync：发布与Native SCAN接管同步相关的信息。
-  void publishTakeoverSync(const navdog::CoreInput& input,
-      const navdog::CoreOutput& output);
+  void publishTakeoverSync(const navdog::CoreOutput& output, double now_sec);
   /** @brief Reset native SCAN exactly once when the coordinator enters a terminal task state. */
   void handleTerminalTransition(const navdog::CoreOutput& output);
   // logNavigationChanges：对比本周期与上一次的导航状态/模式/进度，仅在发生变化时打印日志。
@@ -118,7 +119,9 @@ private:
 
   ros::Subscriber odom_subscriber_;                       // 里程计订阅者
   ros::Subscriber scan_takeover_ready_subscriber_;        // SCAN接管就绪信号订阅者
+  ros::Subscriber scan_reference_ready_subscriber_;       // SCAN参考路径就绪信号订阅者
   ros::Subscriber final_cmd_feedback_subscriber_;          // Mux最终速度反馈订阅者
+  ros::Subscriber applied_cmd_feedback_subscriber_;        // 真机最终应用速度反馈订阅者
   ros::Publisher route_publisher_;                        // 路线发布者
   ros::Publisher native_scan_path_publisher_;             // Native SCAN参考路径发布者
   ros::Publisher native_scan_reset_publisher_;            // Native SCAN重置信号发布者
@@ -140,6 +143,8 @@ private:
   ros::Time last_status_publish_{};               // 上一次状态发布时刻
   geometry_msgs::TwistStamped latest_final_cmd_feedback_{};
   bool latest_final_cmd_feedback_valid_{false};
+  geometry_msgs::TwistStamped latest_applied_cmd_feedback_{};
+  bool latest_applied_cmd_feedback_valid_{false};
   bool latest_map_error_{false};
 
   enum class DynamicObstacleState
@@ -153,14 +158,22 @@ private:
   ros::Time latest_external_obstacle_stamp_{};
   ros::Time dynamic_obstacle_stop_until_{};
   ros::Time last_turn_voice_publish_{};
+  bool turn_active_{false};
 
   bool pending_native_scan_path_{false};          // 是否待发布Native SCAN参考路径
   bool pending_takeover_sync_{false};             // 是否待发布接管同步信息
   bool scan_takeover_ready_{false};               // SCAN接管是否就绪
+  bool scan_reference_ready_{false};              // SCAN参考路径和首轨迹是否就绪
+  bool scan_reference_path_sent_{false};          // 当前reset代次是否已发送参考路径
+  double scan_reference_retry_after_sec_{0.0};    // reference失败/重启后的限频重发时刻
   double scan_takeover_request_sec_{0.0};         // 发起接管请求的时刻
   double scan_takeover_timeout_sec_{1.5};         // 接管就绪等待超时
   int scan_recovery_attempts_{0};                 // 当前已尝试的SCAN恢复次数
-  int scan_recovery_max_attempts_{2};             // 最大允许的SCAN恢复尝试次数
+  int scan_recovery_fast_attempts_{2};            // 进入backoff前的快速恢复次数
+  double scan_recovery_backoff_retry_sec_{1.0};   // backoff重试周期
+  bool scan_recovery_backoff_{false};
+  double scan_recovery_next_retry_sec_{0.0};
+  bool scan_wait_reference_logged_{false};
   std::uint32_t native_scan_reset_count_{0};      // Native SCAN重置累计次数
   ros::Time native_scan_reset_time_{};            // 最近一次Native SCAN重置时刻
   navdog::NavState last_logged_state_{navdog::NavState::IDLE};  // 上次记录日志的导航状态

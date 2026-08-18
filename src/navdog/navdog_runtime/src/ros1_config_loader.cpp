@@ -89,6 +89,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("odom_topic", app.runtime_io.odom_topic);
   LOAD("final_cmd_topic", app.runtime_io.final_cmd_topic);
   LOAD("final_cmd_feedback_topic", app.runtime_io.final_cmd_feedback_topic);
+  LOAD("applied_cmd_feedback_topic", app.runtime_io.applied_cmd_feedback_topic);
   LOAD("external_stop_topic", app.runtime_io.external_stop_topic);
   LOAD("max_vx_limit_topic", app.runtime_io.max_vx_limit_topic);
   LOAD("protocol_status_topic", app.runtime_io.protocol_status_topic);
@@ -118,10 +119,12 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("dynamic_obstacle/stop_distance_m", app.dynamic_obstacle.stop_distance_m);
   LOAD("dynamic_obstacle/hold_sec", app.dynamic_obstacle.hold_sec);
   LOAD("dynamic_obstacle/timeout_sec", app.dynamic_obstacle.timeout_sec);
+  LOAD("scan/reference_z_offset_m", app.scan.reference_z_offset_m);
   LOAD("turn_voice/enabled", app.turn_voice.enabled);
-  LOAD("turn_voice/min_yaw_rate", app.turn_voice.min_yaw_rate);
-  LOAD("turn_voice/max_linear_speed", app.turn_voice.max_linear_speed);
+  LOAD("turn_voice/enter_yaw_rate", app.turn_voice.enter_yaw_rate);
+  LOAD("turn_voice/exit_yaw_rate", app.turn_voice.exit_yaw_rate);
   LOAD("turn_voice/cooldown_sec", app.turn_voice.cooldown_sec);
+  LOAD("turn_voice/feedback_timeout_sec", app.turn_voice.feedback_timeout_sec);
   LOAD("turn_voice/message", app.turn_voice.message);
 #undef LOAD
 

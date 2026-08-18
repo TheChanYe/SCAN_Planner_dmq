@@ -27,6 +27,7 @@ topics:
   lidar_pose: "/dmq_dog/lidar_pose"
   nav_state: "/navdog/state"
   nav_mode: "/navdog/navigation_mode"
+  applied_cmd_feedback: "/dmq_dog/applied_cmd_feedback"
 
 publish_rate_hz: 10.0
 cmd_vel_timeout_sec: 0.30

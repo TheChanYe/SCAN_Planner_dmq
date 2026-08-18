@@ -272,24 +272,20 @@ NavigationModeOutput NavigationModeManager::update(
   const bool route_ascending = stair_config_.enabled &&
       route_elevation.valid && route_elevation.ascending;
   const bool stair_activated_this_update = route_ascending &&
-      status_.avoidance_allowed && !status_.stair_up_active;
-  if (route_ascending && status_.avoidance_allowed)
+      status_.avoidance_allowed && !status_.stair_up_active &&
+      status_.mode == NavigationMode::ROUTE_FOLLOW;
+  if (route_ascending && status_.avoidance_allowed &&
+      (status_.stair_up_active ||
+       status_.mode == NavigationMode::ROUTE_FOLLOW))
   {
     status_.stair_hold_until_arc_m = std::max(
         status_.stair_hold_until_arc_m,
         route_elevation.checked_until_arc_m);
-    // A normal corridor block may enter LOCAL_AVOID before the rising route
-    // reaches the elevation lookahead.  Keep the mode transition single-owned,
-    // but allow the stair constraint to latch when ascent is confirmed later.
     status_.stair_up_active = true;
     if (status_.mode == NavigationMode::ROUTE_FOLLOW)
     {
       transitionTo(NavigationMode::LOCAL_AVOID,
           NavigationModeReason::ROUTE_ASCENDING, progress, now_sec);
-    }
-    else if (stair_activated_this_update)
-    {
-      status_.reason = NavigationModeReason::ROUTE_ASCENDING;
     }
   }
 

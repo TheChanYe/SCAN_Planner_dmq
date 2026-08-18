@@ -1,7 +1,9 @@
 #include "dmq_dog/dmq_mqtt_client.hpp"
+#include "dmq_dog/driver_motion_mode.hpp"
 
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/Twist.h>
+#include <geometry_msgs/TwistStamped.h>
 #include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 #include <sensor_msgs/LaserScan.h>
@@ -18,7 +20,6 @@
 
 namespace
 {
-
 constexpr double kPi = 3.14159265358979323846;
 
 // MotionClass：当前周期下发速度的运动分类，仅用于日志诊断。
@@ -80,7 +81,7 @@ std::string normalizeFrameId(std::string frame_id)
 }
 
 // DmqBridgeNode：dmq_dog 桥接节点。连接 ROS 与真机 MQTT 接口，职责包括：
-//   1. 订阅 /cmd_vel 等规划指令，经限幅/死区/前进优先适配等处理后通过 MQTT 下发给真机；
+//   1. 订阅 /cmd_vel，Route阶段可做前进优先适配；LOCAL_AVOID保留SCAN全向指令；
 //   2. 订阅真机上报的里程计/状态并转发为 ROS 消息；
 //   3. 转发雷达点云/里程计给导航链路，并发布雷达安装位置的静态TF。
 class DmqBridgeNode
@@ -118,6 +119,8 @@ public:
     lidar_pose_pub_ = nh_.advertise<nav_msgs::Odometry>(lidar_pose_topic_, 10);
     dog_error_pub_ = nh_.advertise<std_msgs::UInt8>("dmq_dog/error", 10, true);
     dog_status_pub_ = nh_.advertise<std_msgs::UInt8>("dmq_dog/status", 10, true);
+    applied_cmd_feedback_pub_ = nh_.advertise<geometry_msgs::TwistStamped>(
+        applied_cmd_feedback_topic_, 10);
 
     mqtt_.setOdomCallback([this](const dmq_dog::DogOdom& odom) {
       publishMqttOdom(odom);
@@ -181,6 +184,8 @@ private:
                protocol_status_topic_);
     pnh_.param("topics/protocol_error", protocol_error_topic_,
                protocol_error_topic_);
+    pnh_.param("topics/applied_cmd_feedback", applied_cmd_feedback_topic_,
+               applied_cmd_feedback_topic_);
 
     pnh_.param("publish_rate_hz", publish_rate_hz_, publish_rate_hz_);
     pnh_.param("cmd_vel_timeout_sec", cmd_vel_timeout_sec_, cmd_vel_timeout_sec_);
@@ -301,7 +306,7 @@ private:
     nav_state_valid_ = true;
   }
 
-  // navModeCallback：接收导航模式（ROUTE_FOLLOW/LOCAL_AVOID等）并缓存，当前仅用于缓存，
+  // navModeCallback：缓存导航模式，用于LOCAL_AVOID禁用前进优先运动改写。
   // 未在本文件其他处直接使用。
   void navModeCallback(const std_msgs::UInt8::ConstPtr& msg)
   {
@@ -526,13 +531,12 @@ private:
   //   2. 确定 status/error：优先使用真机上报的状态，否则根据指令是否为零推断，
   //      再用 protocolState 根据导航状态机覆盖；
   //   3. 若启用看门狗且里程计/雷达数据超时，强制置 error=1；
-  //   4. 若启用前进优先，调用 adaptToForwardMotion 适配全向指令；
-  //   5. 对 vx/vy/yaw_rate 依次做限幅（前进优先时角速度限幅取 max_yaw_rate_ 与
+  //   4. ROUTE阶段若启用前进优先则适配全向指令；LOCAL_AVOID保留SCAN vx/vy/yaw；
+  //   5. 对 vx/vy/yaw_rate 依次做限幅（启用适配时角速度限幅取 max_yaw_rate_ 与
   //      forward_motion_max_yaw_rate_ 中较小者）；
   //   6. 若启用死区，对三个分量分别应用 applyMinimumEffectiveVelocity 修正；
-  //   7. 前进优先模式下，指令过时/为零时重置适配器并强制角速度为0，否则对角速度
-  //      应用 limitPublishedYawRate 做加加速度限制；
-  //   8. 记录诊断日志，最后通过 MQTT 发布最终指令。
+  //   7. 指令过时/为零时重置适配器并强制角速度为0，否则应用角加速度限制；
+  //   8. 发布applied反馈，记录诊断日志，再通过MQTT发布同一最终指令。
   void publishTimer(const ros::TimerEvent&)
   {
     geometry_msgs::Twist cmd;
@@ -566,12 +570,14 @@ private:
     const geometry_msgs::Twist raw_cmd = cmd;
     const bool zero_command = std::fabs(vx) < 1e-6 &&
         std::fabs(vy) < 1e-6 && std::fabs(yaw_rate) < 1e-6;
-    if (prefer_forward_motion_)
+    const bool forward_adapter_enabled = dmq_dog::forwardMotionAdapterEnabled(
+        prefer_forward_motion_, latest_nav_mode_);
+    if (forward_adapter_enabled)
       adaptToForwardMotion(vx, vy, yaw_rate);
 
     vx = clampValue(vx, max_vx_);
     vy = clampValue(vy, max_vy_);
-    const double yaw_limit = prefer_forward_motion_
+    const double yaw_limit = forward_adapter_enabled
         ? std::min(max_yaw_rate_, forward_motion_max_yaw_rate_)
         : max_yaw_rate_;
     yaw_rate = clampValue(yaw_rate, yaw_limit);
@@ -584,20 +590,22 @@ private:
       yaw_rate = applyMinimumEffectiveVelocity(
           yaw_rate, zero_threshold_yaw_rate_, min_effective_yaw_rate_);
     }
-    if (prefer_forward_motion_)
+    if (cmd_stale || zero_command)
     {
-      if (cmd_stale || zero_command)
-      {
-        resetMotionAdapter();
-        yaw_rate = 0.0;
-      }
-      else
-      {
-        yaw_rate = limitPublishedYawRate(yaw_rate, now);
-      }
+      resetMotionAdapter();
+      yaw_rate = 0.0;
     }
+    else
+      yaw_rate = limitPublishedYawRate(yaw_rate, now);
     logMqttControl(raw_cmd, vx, vy, yaw_rate, cmd_stale, zero_command,
         status, error);
+    geometry_msgs::TwistStamped applied;
+    applied.header.stamp = now;
+    applied.header.frame_id = base_frame_id_;
+    applied.twist.linear.x = vx;
+    applied.twist.linear.y = vy;
+    applied.twist.angular.z = yaw_rate;
+    applied_cmd_feedback_pub_.publish(applied);
     mqtt_.publishControl(error, status, vx, vy, yaw_rate);
   }
 
@@ -679,6 +687,7 @@ private:
   ros::Publisher lidar_pose_pub_;
   ros::Publisher dog_error_pub_;
   ros::Publisher dog_status_pub_;
+  ros::Publisher applied_cmd_feedback_pub_;
   ros::Timer publish_timer_;
   tf2_ros::StaticTransformBroadcaster static_tf_broadcaster_;
 
@@ -707,6 +716,7 @@ private:
   std::string nav_mode_topic_{"/navdog/navigation_mode"};
   std::string protocol_status_topic_{"/navdog/protocol_status"};
   std::string protocol_error_topic_{"/navdog/protocol_error"};
+  std::string applied_cmd_feedback_topic_{"/dmq_dog/applied_cmd_feedback"};
   std::string odom_frame_id_{"odom"};
   std::string base_frame_id_{"base_link"};
   std::string lidar_frame_id_{"lidar"};

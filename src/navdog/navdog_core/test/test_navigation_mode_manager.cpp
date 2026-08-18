@@ -352,7 +352,7 @@ TEST(NavigationModeManagerTest, RouteAscentEntersAvoidImmediatelyWithPriority)
   EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 1.5);
 }
 
-TEST(NavigationModeManagerTest, RouteAscentLatchesAfterOrdinaryAvoidEntry)
+TEST(NavigationModeManagerTest, RouteAscentDoesNotLatchAfterOrdinaryAvoidEntry)
 {
   NavigationModeConfig mode_config;
   mode_config.enter_confirm_sec = 0.0;
@@ -368,9 +368,9 @@ TEST(NavigationModeManagerTest, RouteAscentLatchesAfterOrdinaryAvoidEntry)
       elevation(true, 0.15, 2.0), corridor(true, 0.5), obstacles(), 1.1);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_FALSE(output.status.transitioned);
-  EXPECT_EQ(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
-  EXPECT_TRUE(output.status.stair_up_active);
-  EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 2.0);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::LOCAL_AVOID_ACTIVE);
+  EXPECT_FALSE(output.status.stair_up_active);
+  EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 0.0);
   EXPECT_EQ(output.status.avoidance_cycle_count, 1u);
 }
 

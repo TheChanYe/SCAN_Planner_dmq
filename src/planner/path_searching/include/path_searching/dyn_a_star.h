@@ -67,7 +67,7 @@ private:
 
 	//bool (*checkOccupancyPtr)( const Eigen::Vector3d &pos );
 
-	inline int checkOccupancy(const Eigen::Vector3d &pos, const double yaw) { return grid_map_->getPlanningOccupancy(pos, yaw); }
+	inline int checkOccupancy(const Eigen::Vector3d &pos, const double yaw) { return grid_map_->getInflateOccupancy(pos, yaw); }
 
 	std::vector<GridNodePtr> retrievePath(GridNodePtr current);
 

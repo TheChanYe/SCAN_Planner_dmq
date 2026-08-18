@@ -3,11 +3,12 @@ status_rate_hz: 10.0
 odom_topic: /quad_0/body_pose
 odom_twist_in_world_frame: true
 final_cmd_feedback_topic: /navdog/final_cmd_feedback
+applied_cmd_feedback_topic: /dmq_dog/applied_cmd_feedback
 external_stop_topic: /navdog/external_stop
 max_vx_limit_topic: /navdog/max_vx_limit
 protocol_status_topic: /navdog/protocol_status
 protocol_error_topic: /navdog/protocol_error
-default_route_z: 0.3
+default_route_z: 0.0
 default_max_vx: 0.4
 mqtt:
   enabled: true
@@ -29,10 +30,13 @@ dynamic_obstacle:
   timeout_sec: 1.0
 turn_voice:
   enabled: false
-  min_yaw_rate: 0.25
-  max_linear_speed: 0.20
+  enter_yaw_rate: 0.25
+  exit_yaw_rate: 0.15
   cooldown_sec: 5.0
+  feedback_timeout_sec: 0.30
   message: "前方转弯请注意"
+scan:
+  reference_z_offset_m: 0.30
 manager:
   max_vel: 0.75
   max_acc: 0.5
@@ -62,13 +66,16 @@ grid_map:
   double_cylinder_radius: 0.25
   double_cylinder_offset: 0.18
   obstacles_inflation_z_up: 0.1
-  obstacles_inflation_z_down: 0.4
+  obstacles_inflation_z_down: 0.1
   p_hit: 0.85
   p_miss: 0.3
   p_min: 0.12
   p_max: 0.98
   p_occ: 0.8
   max_ray_length: 5.0
+  occupancy_update_interval_sec: 0.10
+  visualization_update_interval_sec: 0.20
+  max_raycast_walk_points: 4000
   vis_height: 0.3
 limits:
   max_vx: 0.5

@@ -4,6 +4,7 @@
 #include <Eigen/Eigen>
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <geometry_msgs/PoseStamped.h>
 #include <iostream>
 #include <memory>
@@ -112,7 +113,14 @@ namespace scan_planner
     double safety_immediate_replan_sec_{1.0};
     double safety_direct_replan_sec_{3.0};
     double safety_replan_cooldown_sec_{0.20};
+    double max_map_age_sec_{0.25};
     ros::Time last_safety_replan_time_;
+    bool reference_ready_{false};
+    bool reference_generation_pending_{false};
+    std::uint32_t reference_sequence_{0};
+    std::size_t reference_point_count_{0};
+    double reference_z_min_{0.0};
+    double reference_z_max_{0.0};
 
     Eigen::Vector3d odom_pos_, odom_vel_, odom_acc_; // odometry state
     Eigen::Quaterniond odom_orient_;
@@ -132,7 +140,7 @@ namespace scan_planner
     std::unique_ptr<ros::AsyncSpinner> stair_state_spinner_;
     ros::Timer exec_timer_, safety_timer_;
     ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_, stair_up_active_sub_;
-    ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
+    ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_, reference_ready_pub_;
 
     enum class ReplanResult
     {
@@ -218,8 +226,9 @@ namespace scan_planner
     void resetCallback(const std_msgs::EmptyConstPtr &msg);
     // takeoverSyncCallback：接收接管同步信号，标记待处理接管。
     void takeoverSyncCallback(const std_msgs::EmptyConstPtr &msg);
-    // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，只切换规划占用约束。
+    // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，只切换初始化偏好。
     void stairUpActiveCallback(const std_msgs::BoolConstPtr &msg);
+    void publishReferenceReady(bool ready);
 
     // checkCollision：对当前局部轨迹做碰撞检测。
     bool checkCollision();

@@ -20,8 +20,6 @@ void GridMap::initMap(ros::NodeHandle &nh)
   
   node_.param("grid_map/obstacles_inflation_z_up", mp_.obstacles_inflation_z_up, -1.0);
   node_.param("grid_map/obstacles_inflation_z_down", mp_.obstacles_inflation_z_down, -1.0);
-  node_.param("grid_map/stair_support_clearance_m",
-              mp_.stair_support_clearance_m_, 0.20);
   node_.param("grid_map/double_cylinder_radius", mp_.double_cylinder_radius_, -1.0);
   node_.param("grid_map/double_cylinder_offset", mp_.double_cylinder_offset_, 0.0);
   node_.param("grid_map/map_sliding_en", mp_.map_sliding_en_, true);
@@ -87,14 +85,6 @@ void GridMap::initMap(ros::NodeHandle &nh)
   mp_.body_length_ = std::max(0.0, mp_.body_length_);
   mp_.body_width_ = std::max(0.0, mp_.body_width_);
   mp_.body_height_ = std::max(0.0, mp_.body_height_);
-  if (!std::isfinite(mp_.stair_support_clearance_m_) ||
-      mp_.stair_support_clearance_m_ < 0.0)
-  {
-    ROS_WARN("Invalid grid_map/stair_support_clearance_m; use 0.20m");
-    mp_.stair_support_clearance_m_ = 0.20;
-  }
-  mp_.stair_support_clearance_m_ = std::min(
-      mp_.stair_support_clearance_m_, mp_.body_height_);
   mp_.self_filter_margin_xy_ =
       std::max(0.0, mp_.self_filter_margin_xy_);
   mp_.self_filter_margin_z_ =
@@ -156,10 +146,9 @@ void GridMap::initMap(ros::NodeHandle &nh)
   md_.occupancy_buffer_inflate_cnt_ = vector<int>(buffer_size, 0);
   rebuildInflationOffsets();
 
-  ROS_INFO("SCAN_STAIR_COLLISION_MODEL support_clearance=%.3f "
-           "body_height=%.3f z_up=%.3f",
-      mp_.stair_support_clearance_m_, mp_.body_height_,
-      mp_.obstacles_inflation_z_up);
+  ROS_INFO("SCAN_BODY_OCCUPANCY_MODEL body_height=%.3f z_up=%.3f z_down=%.3f",
+      mp_.body_height_, mp_.obstacles_inflation_z_up,
+      mp_.obstacles_inflation_z_down);
 
   md_.count_hit_and_miss_ = vector<short>(buffer_size, 0);
   md_.count_hit_ = vector<short>(buffer_size, 0);

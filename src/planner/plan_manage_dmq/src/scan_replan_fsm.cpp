@@ -63,6 +63,7 @@ namespace scan_planner
     nh.param("fsm/safety_immediate_replan_sec", safety_immediate_replan_sec_, 1.0);
     nh.param("fsm/safety_direct_replan_sec", safety_direct_replan_sec_, 3.0);
     nh.param("fsm/safety_replan_cooldown_sec", safety_replan_cooldown_sec_, 0.20);
+    nh.param("fsm/max_map_age_sec", max_map_age_sec_, 0.25);
     nh.param("fsm/nominal_replan_period_sec", nominal_replan_period_sec_, 0.20);
     nh.param("fsm/min_replan_progress_m", min_replan_progress_m_, 0.05);
     nh.param("fsm/replan_retry_interval_sec", replan_retry_interval_sec_, 0.10);
@@ -109,7 +110,8 @@ namespace scan_planner
         safety_direct_replan_sec_ < safety_immediate_replan_sec_ ||
         safety_replan_cooldown_sec_ < 0.0 ||
         nominal_replan_period_sec_ <= 0.0 || min_replan_progress_m_ < 0.0 ||
-        replan_retry_interval_sec_ <= 0.0 || replan_lead_time_sec_ <= 0.0)
+        replan_retry_interval_sec_ <= 0.0 || replan_lead_time_sec_ <= 0.0 ||
+        !std::isfinite(max_map_age_sec_) || max_map_age_sec_ <= 0.0)
     {
       ROS_FATAL("[SCANReplanFSM] Invalid safety replan params: "
                 "immediate=%.3f direct=%.3f cooldown=%.3f",
@@ -170,6 +172,9 @@ namespace scan_planner
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
     data_disp_pub_ = nh.advertise<scan_planner::DataDisp>("/planning/data_display", 100);
     self_inflation_pub_ = nh.advertise<visualization_msgs::Marker>("self_inflation", 10, true);
+    reference_ready_pub_ = nh.advertise<std_msgs::Bool>(
+        "/native_scan/reference_ready", 1, true);
+    publishReferenceReady(false);
 
     if (navi_mode_ == NAVI_MODE::MANUAL_TARGET)
       goal_sub_ = nh.subscribe("/move_base_simple/goal", 1, &SCANReplanFSM::rvizGoalCallback, this);
@@ -435,7 +440,7 @@ namespace scan_planner
     const int sample_num = std::max(1, static_cast<int>(std::ceil(duration / sample_dt)));
     const Eigen::Vector3d final_pt = global_data.global_traj_.evaluate(duration);
     const Eigen::Vector3d final_prev = global_data.global_traj_.evaluate(duration * (sample_num - 1) / sample_num);
-    const int final_occ = map->getPlanningOccupancy(final_pt, estimateYawFromSegment(final_prev, final_pt));
+    const int final_occ = map->getInflateOccupancy(final_pt, estimateYawFromSegment(final_prev, final_pt));
     if (final_occ <= 0)
       return true;
 
@@ -446,7 +451,7 @@ namespace scan_planner
       const Eigen::Vector3d pt = global_data.global_traj_.evaluate(t);
       const Eigen::Vector3d prev_pt = global_data.global_traj_.evaluate(prev_t);
 
-      if (map->getPlanningOccupancy(pt, estimateYawFromSegment(prev_pt, pt)) == 0)
+      if (map->getInflateOccupancy(pt, estimateYawFromSegment(prev_pt, pt)) == 0)
       {
         const Eigen::Vector3d raw_end = end_pt_;
         end_pt_ = pt;
@@ -476,7 +481,7 @@ namespace scan_planner
       return false;
 
     const double yaw = getOdomYaw();
-    if (map->getPlanningOccupancy(start_pt, yaw) == 0)
+    if (map->getInflateOccupancy(start_pt, yaw) == 0)
       return true;
 
     const Eigen::Vector2d retreat_dir(-std::cos(yaw), -std::sin(yaw));
@@ -490,7 +495,7 @@ namespace scan_planner
       candidate(0) += retreat_dir(0) * d;
       candidate(1) += retreat_dir(1) * d;
 
-      if (map->getPlanningOccupancy(candidate, yaw) == 0)
+      if (map->getInflateOccupancy(candidate, yaw) == 0)
       {
         ROS_WARN("SCAN_START_ESCAPE origin=(%.2f,%.2f) escaped=(%.2f,%.2f) retreat=%.2f",
             start_pt(0), start_pt(1), candidate(0), candidate(1), d);
@@ -517,6 +522,10 @@ namespace scan_planner
       return;
     }
 
+    if (reference_ready_)
+      publishReferenceReady(false);
+    reference_sequence_ = msg->header.seq;
+    reference_generation_pending_ = false;
     std::vector<Eigen::Vector3d> waypoints;
     waypoints.reserve(msg->poses.size());
     constexpr double kDuplicatePointDistanceM = 0.01;
@@ -567,6 +576,9 @@ namespace scan_planner
       z_min = std::min(z_min, waypoint.z());
       z_max = std::max(z_max, waypoint.z());
     }
+    reference_point_count_ = waypoints.size();
+    reference_z_min_ = z_min;
+    reference_z_max_ = z_max;
     ROS_INFO("SCAN_3D_PATH points=%zu z_start=%.3f z_end=%.3f z_range=%.3f",
              waypoints.size(), waypoints.front().z(), waypoints.back().z(),
              z_max - z_min);
@@ -574,6 +586,7 @@ namespace scan_planner
 
     if (success)
     {
+      reference_generation_pending_ = true;
       // Force a fresh planning session regardless of current state.
       // Old FSM state, failure counters, and emergency flags must not
       // carry over from a previous task or a previous LOCAL_AVOID exit.
@@ -601,7 +614,8 @@ namespace scan_planner
     }
     else
     {
-      ROS_ERROR("❌ Unable to generate global trajectory!");
+      ROS_ERROR("Unable to generate global trajectory");
+      publishReferenceReady(false);
     }
   }
 
@@ -614,9 +628,15 @@ namespace scan_planner
     have_target_ = false;
     have_new_target_ = false;
     stair_up_active_.store(false, std::memory_order_relaxed);
+    reference_generation_pending_ = false;
+    reference_sequence_ = 0;
+    reference_point_count_ = 0;
+    reference_z_min_ = 0.0;
+    reference_z_max_ = 0.0;
+    publishReferenceReady(false);
     if (planner_manager_ && planner_manager_->grid_map_)
     {
-      planner_manager_->grid_map_->setStairUpActive(false);
+      planner_manager_->stair_route_active_ = false;
       planner_manager_->grid_map_->resetBuffer();
       waiting_for_fresh_map_ = true;
     }
@@ -715,9 +735,18 @@ namespace scan_planner
         msg->data, std::memory_order_relaxed);
     if (previous == msg->data)
       return;
-    if (planner_manager_ && planner_manager_->grid_map_)
-      planner_manager_->grid_map_->setStairUpActive(msg->data);
-    ROS_INFO("SCAN_STAIR_CONSTRAINT active=%d", msg->data ? 1 : 0);
+    if (planner_manager_)
+      planner_manager_->stair_route_active_ = msg->data;
+    ROS_INFO("SCAN_STAIR_ROUTE_PREFERENCE active=%d random_lateral_allowed=%d",
+        msg->data ? 1 : 0, msg->data ? 0 : 1);
+  }
+
+  void SCANReplanFSM::publishReferenceReady(bool ready)
+  {
+    reference_ready_ = ready;
+    std_msgs::Bool message;
+    message.data = ready;
+    reference_ready_pub_.publish(message);
   }
 
   // takeoverSyncCallback：接收Native SCAN接管同步信号（从手动/其他控制模式
@@ -731,11 +760,12 @@ namespace scan_planner
   {
     if (navi_mode_ != NAVI_MODE::REFERENCE_PATH)
       return;
-    if (!have_odom_ || !have_target_ || !planner_manager_)
+    if (!have_odom_ || !have_target_ || !planner_manager_ || !reference_ready_)
     {
       takeover_sync_pending_ = true;
-      ROS_WARN("SCAN_TAKEOVER_SYNC_DEFERRED have_odom=%d have_target=%d",
-          have_odom_ ? 1 : 0, have_target_ ? 1 : 0);
+      ROS_WARN("SCAN_TAKEOVER_SYNC_DEFERRED have_odom=%d have_target=%d reference_ready=%d",
+          have_odom_ ? 1 : 0, have_target_ ? 1 : 0,
+          reference_ready_ ? 1 : 0);
       return;
     }
 
@@ -945,7 +975,7 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
-    if (takeover_sync_pending_ && have_odom_ && have_target_ &&
+    if (takeover_sync_pending_ && have_odom_ && have_target_ && reference_ready_ &&
         planner_manager_ && navi_mode_ == NAVI_MODE::REFERENCE_PATH)
     {
       // Deferred synchronization is completed as soon as both odometry and
@@ -1002,10 +1032,17 @@ namespace scan_planner
     case GEN_NEW_TRAJ:
     {
       auto map = planner_manager_ ? planner_manager_->grid_map_ : nullptr;
-      if (!map || !map->hasInflatedObservation())
+      const double map_stamp = map ? map->getLastOccupancyUpdateStampSec() : 0.0;
+      const double map_age = map_stamp > 0.0
+          ? ros::Time::now().toSec() - map_stamp
+          : std::numeric_limits<double>::infinity();
+      if (!map || !map->hasInflatedObservation() ||
+          !std::isfinite(map_age) || map_age < 0.0 ||
+          map_age > max_map_age_sec_)
       {
         ROS_INFO_THROTTLE(1.0,
-            "SCAN_WAIT_FRESH_MAP state=GEN_NEW_TRAJ");
+            "SCAN_WAIT_FRESH_MAP state=GEN_NEW_TRAJ map_age=%.3f max_age=%.3f",
+            map_age, max_map_age_sec_);
         break;
       }
       if (waiting_for_fresh_map_)
@@ -1071,6 +1108,14 @@ namespace scan_planner
         next_target_retry_time_ = ros::Time(0);
         changeFSMExecState(EXEC_TRAJ, "FSM");
         flag_escape_emergency_ = true;
+        if (reference_generation_pending_)
+        {
+          reference_generation_pending_ = false;
+          publishReferenceReady(true);
+          ROS_INFO("SCAN_REFERENCE_READY sequence=%u points=%zu z_min=%.3f z_max=%.3f",
+              reference_sequence_, reference_point_count_,
+              reference_z_min_, reference_z_max_);
+        }
       }
       else if (result == ReplanResult::TARGET_UNAVAILABLE)
       {
@@ -1430,7 +1475,7 @@ namespace scan_planner
       const Eigen::Vector3d next = info.position_traj_.evaluateDeBoorT(
           std::min(sample_t + kValidationStepSec, info.duration_));
       if (!pos.allFinite() || !next.allFinite() ||
-          planner_manager_->grid_map_->getPlanningOccupancy(
+          planner_manager_->grid_map_->getInflateOccupancy(
               pos, estimateYawFromSegment(pos, next)) != 0)
       {
         collision_time_sec = sample_t;
@@ -1498,9 +1543,28 @@ namespace scan_planner
         info->duration_ <= 1e-5)
       return;
 
+    const ros::Time now = ros::Time::now();
+    const double map_stamp = map ? map->getLastOccupancyUpdateStampSec() : 0.0;
+    const double map_age = map_stamp > 0.0
+        ? now.toSec() - map_stamp
+        : std::numeric_limits<double>::infinity();
+    if (odom_vel_.head<2>().norm() > 0.02 &&
+        (!std::isfinite(map_age) || map_age < 0.0 ||
+         map_age > max_map_age_sec_))
+    {
+      ROS_ERROR_THROTTLE(1.0,
+          "SCAN_MAP_STALE map_age=%.3f max_age=%.3f action=EMERGENCY_STOP",
+          map_age, max_map_age_sec_);
+      flag_escape_emergency_ = true;
+      emergency_stop_active_ = false;
+      next_emergency_retry_time_ = now +
+          ros::Duration(emergency_retry_interval_sec_);
+      changeFSMExecState(EMERGENCY_STOP, "MAP_STALE");
+      return;
+    }
+
     /* ---------- check trajectory ---------- */
     constexpr double time_step = 0.01;
-    const ros::Time now = ros::Time::now();
     double t_cur = (now - info->start_time_).toSec();
     t_cur = std::min(std::max(t_cur, 0.0), info->duration_);
     double t_2_3 = info->duration_ * 2 / 3;
@@ -1511,9 +1575,13 @@ namespace scan_planner
 
       Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t);
       Eigen::Vector3d pos_next = info->position_traj_.evaluateDeBoorT(std::min(t + time_step, info->duration_));
-      if (map->getPlanningOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
+      if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next)))
       {
         const double collision_time_ahead = t - t_cur;
+        const int old_traj_id = info->traj_id_;
+        ROS_WARN_THROTTLE(0.5,
+            "SCAN_DYNAMIC_COLLISION collision_time_ahead=%.2f map_age=%.3f traj_id=%d",
+            collision_time_ahead, map_age, old_traj_id);
 
         // 上一次安全重规划距离当前的时间。
         // 从未执行过安全重规划时，视为冷却已经结束。
@@ -1544,6 +1612,8 @@ namespace scan_planner
               ReplanResult::SUCCESS)
           {
             last_safety_replan_time_ = now;
+            ROS_INFO("SCAN_DYNAMIC_REPLAN_SUCCESS old_traj=%d new_traj=%d",
+                old_traj_id, planner_manager_->local_data_.traj_id_);
 
             changeFSMExecState(
                 EXEC_TRAJ,
@@ -1551,6 +1621,12 @@ namespace scan_planner
           }
           else
           {
+            ROS_ERROR("SCAN_DYNAMIC_REPLAN_FAILED old_traj=%d action=EMERGENCY_STOP",
+                old_traj_id);
+            flag_escape_emergency_ = true;
+            emergency_stop_active_ = false;
+            next_emergency_retry_time_ = now +
+                ros::Duration(emergency_retry_interval_sec_);
             changeFSMExecState(
                 EMERGENCY_STOP,
                 "SAFETY_EMERGENCY_FAILED");
@@ -1597,12 +1673,20 @@ namespace scan_planner
           if (planFromCurrentTraj() ==
               ReplanResult::SUCCESS)
           {
+            ROS_INFO("SCAN_DYNAMIC_REPLAN_SUCCESS old_traj=%d new_traj=%d",
+                old_traj_id, planner_manager_->local_data_.traj_id_);
             changeFSMExecState(
                 EXEC_TRAJ,
                 "SAFETY_NEAR_SUCCESS");
           }
           else
           {
+            ROS_ERROR("SCAN_DYNAMIC_REPLAN_FAILED old_traj=%d action=EMERGENCY_STOP",
+                old_traj_id);
+            flag_escape_emergency_ = true;
+            emergency_stop_active_ = false;
+            next_emergency_retry_time_ = now +
+                ros::Duration(emergency_retry_interval_sec_);
             changeFSMExecState(
                 EMERGENCY_STOP,
                 "SAFETY_NEAR_FAILED");
@@ -1623,7 +1707,11 @@ namespace scan_planner
             collision_time_ahead);
 
         if (planFromCurrentTraj() == ReplanResult::SUCCESS)
+        {
           last_safety_replan_time_ = now;
+          ROS_INFO("SCAN_DYNAMIC_REPLAN_SUCCESS old_traj=%d new_traj=%d",
+              old_traj_id, planner_manager_->local_data_.traj_id_);
+        }
         else
           ROS_WARN_THROTTLE(1.0,
               "SCAN_SAFETY_KEEP_OLD collision_time_ahead=%.2f",
@@ -1956,7 +2044,7 @@ namespace scan_planner
       if (!std::isfinite(yaw))
         return false;
 
-      return map->getPlanningOccupancy(point, yaw) == 0;
+      return map->getInflateOccupancy(point, yaw) == 0;
     };
 
     // --- Phase 2: find the farthest free route sample ---------------------
