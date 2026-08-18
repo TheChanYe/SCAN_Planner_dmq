@@ -554,6 +554,30 @@ TEST(ScanRouteCorridorEvaluator3DTest, UsesInterpolatedRouteZAsQueryHeight)
   EXPECT_NEAR(assessment.query_z_m, 0.4, kEps);
 }
 
+TEST(ScanRouteCorridorEvaluator3DTest, AppliesBodyQueryZOffset)
+{
+  auto grid = std::make_shared<FakeInflatedGridQuery3D>(0.10, kNow);
+  grid->addOccupied(1.0, 0.0, 0.30);
+  navdog::RouteCorridorConfig config;
+  config.lookahead_distance_m = 2.0;
+
+  navdog::NavigationTask task = makeStraightRoute();
+  task.points[0].z = 0.0;
+  task.points[1].z = 0.0;
+  const auto progress =
+      makeProgress(1, 0, 0.0, 0.0, 0.0, 0.0, 10.0);
+  const auto robot = makeRobot(0.0, 0.0, 0.0);
+
+  ScanRouteCorridorEvaluator3D raw_evaluator(config, grid);
+  EXPECT_FALSE(raw_evaluator.evaluate(task, progress, robot, kNow).blocked);
+
+  ScanRouteCorridorEvaluator3D body_evaluator(config, grid, 0.30);
+  const auto assessment =
+      body_evaluator.evaluate(task, progress, robot, kNow);
+  EXPECT_TRUE(assessment.blocked);
+  EXPECT_NEAR(assessment.query_z_m, 0.30, kEps);
+}
+
 // =============================================================================
 // RejectsInvalidRobotZ
 // =============================================================================
@@ -664,6 +688,29 @@ TEST(ScanRouteCorridorEvaluator3DTest, SupportsSinglePointRoute)
 
   EXPECT_TRUE(assessment.valid);
   EXPECT_TRUE(assessment.blocked);
+}
+
+TEST(ScanRouteCorridorEvaluator3DTest, SinglePointRouteAppliesQueryZOffset)
+{
+  auto grid = std::make_shared<FakeInflatedGridQuery3D>(0.10, kNow);
+  grid->addOccupied(1.0, 0.0, 0.30);
+  navdog::RouteCorridorConfig config;
+  config.lookahead_distance_m = 2.0;
+
+  navdog::NavigationTask task = makeSinglePointTask(2.0, 0.0);
+  task.points[0].z = 0.0;
+  navdog::RouteProgress progress =
+      makeProgress(1, 0, 0.0, 0.0, 2.0, 0.0, 2.0);
+  const auto robot = makeRobot(0.0, 0.0, 0.0);
+
+  ScanRouteCorridorEvaluator3D raw_evaluator(config, grid);
+  EXPECT_FALSE(raw_evaluator.evaluate(task, progress, robot, kNow).blocked);
+
+  ScanRouteCorridorEvaluator3D body_evaluator(config, grid, 0.30);
+  const auto assessment =
+      body_evaluator.evaluate(task, progress, robot, kNow);
+  EXPECT_TRUE(assessment.blocked);
+  EXPECT_NEAR(assessment.query_z_m, 0.30, kEps);
 }
 
 // =============================================================================

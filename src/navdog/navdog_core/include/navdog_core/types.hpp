@@ -196,6 +196,9 @@ struct RouteElevationAssessment
   double current_z{0.0};
   double max_forward_z{0.0};
   double rise_m{0.0};
+  double max_local_slope_m_per_m{0.0};
+  double steep_rise_m{0.0};
+  double max_drawdown_m{0.0};
   double checked_until_arc_m{0.0};
 };
 

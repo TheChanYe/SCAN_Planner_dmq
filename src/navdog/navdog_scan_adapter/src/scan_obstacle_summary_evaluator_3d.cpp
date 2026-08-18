@@ -16,8 +16,9 @@ double radians(double degrees) { return degrees * kPi / 180.0; }
 // 构造函数：保存扇区配置与膨胀地图查询接口。
 ScanObstacleSummaryEvaluator3D::ScanObstacleSummaryEvaluator3D(
     const Config& config,
-    const std::shared_ptr<InflatedGridQuery3D>& grid)
-    : config_(config), grid_(grid)
+    const std::shared_ptr<InflatedGridQuery3D>& grid,
+    double query_z_offset_m)
+    : config_(config), grid_(grid), query_z_offset_m_(query_z_offset_m)
 {
 }
 
@@ -47,7 +48,7 @@ double ScanObstacleSummaryEvaluator3D::evaluateSector(
       const auto result = grid_->query(
           robot.x + distance * std::cos(angle),
           robot.y + distance * std::sin(angle),
-          robot.z, angle);
+          robot.z + query_z_offset_m_, angle);
       if (result != InflatedGridQueryResult::FREE)
       {
         nearest = std::min(nearest, distance);
@@ -70,7 +71,7 @@ navdog::ObstacleSummary ScanObstacleSummaryEvaluator3D::evaluate(
   if (!grid_ || !grid_->ready() || !robot.valid ||
       !std::isfinite(robot.x) || !std::isfinite(robot.y) ||
       !std::isfinite(robot.z) || !std::isfinite(robot.yaw) ||
-      !std::isfinite(now_sec))
+      !std::isfinite(query_z_offset_m_) || !std::isfinite(now_sec))
   {
     return result;
   }

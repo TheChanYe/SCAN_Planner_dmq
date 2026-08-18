@@ -111,15 +111,16 @@ TEST(RouteManager, GoalAndOutOfRangeInterpolationUseLastPoint)
   EXPECT_FALSE(manager.forwardTarget(0.0, -1.0, point));
 }
 
-TEST(RouteManager, ElevationAssessmentDetectsOnlySignificantAscent)
+TEST(RouteManager, ElevationAssessmentUsesRiseSlopeAndContinuity)
 {
-  const auto assess = [](const std::vector<double>& z_values) {
+  const auto assess = [](const std::vector<double>& z_values,
+                          double point_spacing_m) {
     navdog::RouteManager manager;
     std::vector<navdog_task::RoutePoint> points;
     for (std::size_t i = 0; i < z_values.size(); ++i)
     {
       navdog_task::RoutePoint point;
-      point.x = static_cast<double>(i) * 0.5;
+      point.x = static_cast<double>(i) * point_spacing_m;
       point.z = z_values[i];
       points.push_back(point);
     }
@@ -129,11 +130,40 @@ TEST(RouteManager, ElevationAssessmentDetectsOnlySignificantAscent)
     progress.task_sequence = 1;
     progress.arc_length_m = 0.0;
     progress.total_length_m = points.back().x;
-    return manager.assessElevation(progress, navdog::StairUpConfig{});
+    navdog::StairUpConfig config;
+    config.lookahead_distance_m = 2.20;
+    return manager.assessElevation(progress, config);
   };
 
-  EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.30}).ascending);
-  EXPECT_FALSE(assess({0.30, 0.31, 0.29, 0.32}).ascending);
-  EXPECT_TRUE(assess({0.30, 0.30, 0.45, 0.60, 0.75}).ascending);
-  EXPECT_FALSE(assess({0.75, 0.60, 0.45, 0.30}).ascending);
+  const auto flat = assess({0.0, 0.0, 0.0, 0.0, 0.0}, 0.5);
+  EXPECT_FALSE(flat.ascending);
+
+  const auto gradual_drift =
+      assess({0.0, 0.0275, 0.055, 0.0825, 0.11}, 0.55);
+  EXPECT_GE(gradual_drift.rise_m, 0.10);
+  EXPECT_LT(gradual_drift.max_local_slope_m_per_m, 0.08);
+  EXPECT_LT(gradual_drift.steep_rise_m, 0.05);
+  EXPECT_FALSE(gradual_drift.ascending);
+
+  const auto spike = assess({0.0, 0.0, 0.11, 0.0, 0.0}, 0.5);
+  EXPECT_GT(spike.max_drawdown_m, 0.03);
+  EXPECT_FALSE(spike.ascending);
+
+  const auto stairs =
+      assess({0.0, 0.0, 0.05, 0.10, 0.15, 0.20}, 0.4);
+  EXPECT_GE(stairs.rise_m, 0.10);
+  EXPECT_GE(stairs.steep_rise_m, 0.05);
+  EXPECT_LE(stairs.max_drawdown_m, 0.03);
+  EXPECT_TRUE(stairs.ascending);
+
+  const auto noisy_top =
+      assess({0.0, 0.05, 0.10, 0.15, 0.14, 0.15}, 0.4);
+  EXPECT_NEAR(noisy_top.max_drawdown_m, 0.01, 1e-9);
+  EXPECT_TRUE(noisy_top.ascending);
+}
+
+int main(int argc, char** argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

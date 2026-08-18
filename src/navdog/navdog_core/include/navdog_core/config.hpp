@@ -168,6 +168,7 @@ struct StairUpConfig
   double lookahead_distance_m{1.50};
   double sample_step_m{0.10};
   double trigger_rise_m{0.10};
+  double min_local_slope_m_per_m{0.08};
   double flat_tolerance_m{0.03};
   double exit_progress_margin_m{0.15};
   double exit_confirm_sec{0.50};

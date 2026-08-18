@@ -17,9 +17,11 @@ constexpr double kEpsilon = 1e-9;
 // 构造函数：保存走廊评估配置与膨胀地图查询接口。
 ScanRouteCorridorEvaluator3D::ScanRouteCorridorEvaluator3D(
     const navdog::RouteCorridorConfig& config,
-    const std::shared_ptr<InflatedGridQuery3D>& grid)
+    const std::shared_ptr<InflatedGridQuery3D>& grid,
+    double query_z_offset_m)
     : config_(config),
-      grid_(grid)
+      grid_(grid),
+      query_z_offset_m_(query_z_offset_m)
 {
 }
 /**
@@ -67,7 +69,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
   // --- 机器人位姿有效性检查 ---
   if (!robot.valid)
     return assessment;
-  if (!std::isfinite(robot.z))
+  if (!std::isfinite(robot.z) || !std::isfinite(query_z_offset_m_))
     return assessment;
 
   // --- 路线进度有效性与任务序号匹配检查 ---
@@ -139,7 +141,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
     const double ratio = std::max(0.0, std::min(1.0, progress.segment_ratio));
     cur_z = a.z + ratio * (b.z - a.z);
   }
-  assessment.query_z_m = cur_z;
+  assessment.query_z_m = cur_z + query_z_offset_m_;
 
   // 辅助lambda：对单个中心点沿垂直于行进方向的法线方向展开采样（走廊宽度方向）。
   // 返回true表示继续评估，返回false表示已命中终止评估（障碍/超图/无效）。
@@ -158,7 +160,7 @@ ScanRouteCorridorEvaluator3D::evaluate(
       const InflatedGridQueryResult result = grid_->query(
           px + lateral * normal_x,
           py + lateral * normal_y,
-          pz,
+          pz + query_z_offset_m_,
           seg_yaw);
       if (result == InflatedGridQueryResult::OCCUPIED)
       {

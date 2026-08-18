@@ -140,13 +140,16 @@ bool NavdogRuntimeNode::initialize()
   standalone_grid_map->initMap(private_nh_);
   grid_query_ = std::make_shared<navdog_scan_adapter::ScanGridMapQuery>(
       standalone_grid_map);
+  const double query_z_offset =
+      application_config_.scan.reference_z_offset_m;
   corridor_evaluator_.reset(
       new navdog_scan_adapter::ScanRouteCorridorEvaluator3D(
-          application_config_.core.route_corridor, grid_query_));
+          application_config_.core.route_corridor, grid_query_,
+          query_z_offset));
   obstacle_evaluator_.reset(
       new navdog_scan_adapter::ScanObstacleSummaryEvaluator3D(
           navdog_scan_adapter::ScanObstacleSummaryEvaluator3D::Config{},
-          grid_query_));
+          grid_query_, query_z_offset));
 
   mqtt_.reset(new navdog_protocol::MqttBridge(application_config_.mqtt));
   if (!mqtt_->start())
@@ -209,10 +212,11 @@ bool NavdogRuntimeNode::initialize()
       scan_recovery_backoff_retry_sec_);
   const auto& stair = application_config_.core.stair_up;
   ROS_INFO("STAIR_UP_CONFIG enabled=%d lookahead=%.2f sample_step=%.2f "
-           "trigger_rise=%.2f flat_tolerance=%.2f exit_margin=%.2f "
-           "exit_confirm=%.2f",
+           "trigger_rise=%.2f min_local_slope=%.3f flat_tolerance=%.2f "
+           "exit_margin=%.2f exit_confirm=%.2f",
       stair.enabled ? 1 : 0, stair.lookahead_distance_m,
-      stair.sample_step_m, stair.trigger_rise_m, stair.flat_tolerance_m,
+      stair.sample_step_m, stair.trigger_rise_m,
+      stair.min_local_slope_m_per_m, stair.flat_tolerance_m,
       stair.exit_progress_margin_m, stair.exit_confirm_sec);
 
   return true;
@@ -614,9 +618,12 @@ void NavdogRuntimeNode::logNavigationChanges(
   if (stair_activated)
   {
     const auto& elevation = output.route_elevation;
-    ROS_INFO("STAIR_UP_ENTER rise=%.3f current_route_z=%.3f forward_route_z=%.3f "
+    ROS_INFO("STAIR_UP_ENTER rise=%.3f max_slope=%.3f steep_rise=%.3f "
+             "drawdown=%.3f current_route_z=%.3f forward_route_z=%.3f "
              "robot_z=%.3f arc=%.3f hold_until=%.3f mode_transition=%d",
-        elevation.rise_m, elevation.current_z, elevation.max_forward_z,
+        elevation.rise_m, elevation.max_local_slope_m_per_m,
+        elevation.steep_rise_m, elevation.max_drawdown_m,
+        elevation.current_z, elevation.max_forward_z,
         input.robot.z, output.route_progress.arc_length_m,
         output.navigation_mode.stair_hold_until_arc_m,
         output.navigation_mode.transitioned ? 1 : 0);

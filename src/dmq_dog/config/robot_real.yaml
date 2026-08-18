@@ -200,6 +200,7 @@ stair_up:
   lookahead_distance_m: 2.20
   sample_step_m: 0.10
   trigger_rise_m: 0.10
+  min_local_slope_m_per_m: 0.08
   flat_tolerance_m: 0.03
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50

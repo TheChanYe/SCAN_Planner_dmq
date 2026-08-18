@@ -30,7 +30,8 @@ public:
   // 构造函数：保存扇区配置与膨胀地图查询接口。
   ScanObstacleSummaryEvaluator3D(
       const Config& config,
-      const std::shared_ptr<InflatedGridQuery3D>& grid);
+      const std::shared_ptr<InflatedGridQuery3D>& grid,
+      double query_z_offset_m = 0.0);
 
   // evaluate：计算机器人当前位姿下前/左/右/后四个扇区内的最近障碍物距离汇总。
   // 输入：robot - 机器人位姿；now_sec - 当前时间戳。
@@ -53,6 +54,7 @@ private:
 
   Config config_{};                     // 扇区配置
   std::shared_ptr<InflatedGridQuery3D> grid_{};  // 底层膨胀地图查询接口
+  double query_z_offset_m_{0.0};
 };
 
 }  // namespace navdog_scan_adapter

@@ -61,6 +61,7 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
   nh.setParam("stair_up/lookahead_distance_m", 1.8);
   nh.setParam("stair_up/sample_step_m", 0.12);
   nh.setParam("stair_up/trigger_rise_m", 0.14);
+  nh.setParam("stair_up/min_local_slope_m_per_m", 0.09);
   nh.setParam("stair_up/flat_tolerance_m", 0.02);
   nh.setParam("stair_up/exit_progress_margin_m", 0.20);
   nh.setParam("stair_up/exit_confirm_sec", 0.60);
@@ -70,6 +71,7 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
   EXPECT_DOUBLE_EQ(config.stair_up.lookahead_distance_m, 1.8);
   EXPECT_DOUBLE_EQ(config.stair_up.sample_step_m, 0.12);
   EXPECT_DOUBLE_EQ(config.stair_up.trigger_rise_m, 0.14);
+  EXPECT_DOUBLE_EQ(config.stair_up.min_local_slope_m_per_m, 0.09);
   EXPECT_DOUBLE_EQ(config.stair_up.flat_tolerance_m, 0.02);
   EXPECT_DOUBLE_EQ(config.stair_up.exit_progress_margin_m, 0.20);
   EXPECT_DOUBLE_EQ(config.stair_up.exit_confirm_sec, 0.60);

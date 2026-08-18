@@ -150,7 +150,11 @@ RouteElevationAssessment RouteManager::assessElevation(
       !std::isfinite(config.lookahead_distance_m) ||
       config.lookahead_distance_m <= 0.0 ||
       !std::isfinite(config.sample_step_m) || config.sample_step_m <= 0.0 ||
-      !std::isfinite(config.trigger_rise_m) || config.trigger_rise_m <= 0.0)
+      !std::isfinite(config.trigger_rise_m) || config.trigger_rise_m <= 0.0 ||
+      !std::isfinite(config.min_local_slope_m_per_m) ||
+      config.min_local_slope_m_per_m <= 0.0 ||
+      !std::isfinite(config.flat_tolerance_m) ||
+      config.flat_tolerance_m < 0.0)
   {
     return assessment;
   }
@@ -163,26 +167,60 @@ RouteElevationAssessment RouteManager::assessElevation(
       progress.total_length_m,
       progress.arc_length_m + config.lookahead_distance_m);
   double max_forward_z = current.z;
+  double max_local_slope = 0.0;
+  double steep_rise = 0.0;
+  double running_max_z = current.z;
+  double max_drawdown = 0.0;
+  double previous_arc = progress.arc_length_m;
+  navdog_task::RoutePoint previous_sample = current;
+
+  const auto assessSample = [&](double arc,
+      const navdog_task::RoutePoint& sample) {
+    const double ds = arc - previous_arc;
+    if (ds > 1e-9)
+    {
+      const double dz = sample.z - previous_sample.z;
+      const double slope = dz / ds;
+      max_local_slope = std::max(max_local_slope, slope);
+      if (dz > 0.0 &&
+          slope + 1e-9 >= config.min_local_slope_m_per_m)
+      {
+        steep_rise += dz;
+      }
+    }
+    max_forward_z = std::max(max_forward_z, sample.z);
+    running_max_z = std::max(running_max_z, sample.z);
+    max_drawdown = std::max(max_drawdown, running_max_z - sample.z);
+    previous_arc = arc;
+    previous_sample = sample;
+  };
+
   for (double arc = progress.arc_length_m + config.sample_step_m;
        arc < checked_until; arc += config.sample_step_m)
   {
     navdog_task::RoutePoint sample{};
     if (!pointAtArcLength(arc, sample))
       return RouteElevationAssessment{};
-    max_forward_z = std::max(max_forward_z, sample.z);
+    assessSample(arc, sample);
   }
 
   navdog_task::RoutePoint final_sample{};
   if (!pointAtArcLength(checked_until, final_sample))
     return assessment;
-  max_forward_z = std::max(max_forward_z, final_sample.z);
+  assessSample(checked_until, final_sample);
 
   assessment.valid = true;
   assessment.current_z = current.z;
   assessment.max_forward_z = max_forward_z;
   assessment.rise_m = max_forward_z - current.z;
+  assessment.max_local_slope_m_per_m = max_local_slope;
+  assessment.steep_rise_m = steep_rise;
+  assessment.max_drawdown_m = max_drawdown;
   assessment.checked_until_arc_m = checked_until;
-  assessment.ascending = assessment.rise_m + 1e-9 >= config.trigger_rise_m;
+  assessment.ascending =
+      assessment.rise_m + 1e-9 >= config.trigger_rise_m &&
+      assessment.steep_rise_m + 1e-9 >= 0.5 * config.trigger_rise_m &&
+      assessment.max_drawdown_m <= config.flat_tolerance_m + 1e-9;
   return assessment;
 }
 
