@@ -142,7 +142,7 @@
          Native SCAN fuses at 20Hz. Each selected ray still updates its endpoint
          and complete free-space walk; RViz remains diagnostic-only at 5Hz. -->
     <param name="grid_map/occupancy_update_interval_sec" value="0.05"/>
-    <param name="grid_map/max_raycast_walk_points" value="8000"/>
+    <param name="grid_map/max_raycast_walk_points" value="6000"/>
     <param name="grid_map/visualization_update_interval_sec" value="0.20"/>
     <param name="grid_map/obstacles_inflation_z_up" value="0.10"/>
     <param name="grid_map/obstacles_inflation_z_down" value="0.10"/>

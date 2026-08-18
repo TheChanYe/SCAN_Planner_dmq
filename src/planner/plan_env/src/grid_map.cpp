@@ -156,6 +156,7 @@ void GridMap::initMap(ros::NodeHandle &nh)
   md_.flag_traverse_ = vector<char>(buffer_size, -1);
 
   md_.raycast_num_ = 0;
+  md_.raycast_selection_phase_ = 0;
 
   md_.proj_points_.resize(640 * 480 / mp_.skip_pixel_ / mp_.skip_pixel_);
   md_.proj_points_cnt = 0;
@@ -271,6 +272,7 @@ void GridMap::resetAllMapData()
   std::fill(md_.count_hit_.begin(), md_.count_hit_.end(), 0);
   std::fill(md_.flag_rayend_.begin(), md_.flag_rayend_.end(), -1);
   std::fill(md_.flag_traverse_.begin(), md_.flag_traverse_.end(), -1);
+  md_.raycast_selection_phase_ = 0;
   std::queue<Eigen::Vector3i> empty;
   std::swap(md_.cache_voxel_, empty);
 }
@@ -596,7 +598,16 @@ void GridMap::raycastProcess()
 
   ros::Time t1, t2;
 
-  md_.raycast_num_ += 1;
+  if (md_.raycast_num_ >= std::numeric_limits<char>::max())
+  {
+    std::fill(md_.flag_rayend_.begin(), md_.flag_rayend_.end(), -1);
+    std::fill(md_.flag_traverse_.begin(), md_.flag_traverse_.end(), -1);
+    md_.raycast_num_ = 0;
+  }
+  else
+  {
+    md_.raycast_num_ += 1;
+  }
 
   int vox_idx;
   double length;
@@ -626,15 +637,23 @@ void GridMap::raycastProcess()
           : md_.proj_points_cnt;
   const bool point_set_capped =
       selected_point_count < md_.proj_points_cnt;
+  const int phase_count = point_set_capped
+      ? (md_.proj_points_cnt + selected_point_count - 1) /
+            selected_point_count
+      : 1;
+  const int selection_phase = point_set_capped
+      ? md_.raycast_selection_phase_ % phase_count
+      : 0;
 
   for (int selected_index = 0;
        selected_index < selected_point_count;
        ++selected_index)
   {
+    const int base_index = static_cast<int>(
+        static_cast<long long>(selected_index) *
+        md_.proj_points_cnt / selected_point_count);
     const int i = point_set_capped
-        ? static_cast<int>(
-              static_cast<long long>(selected_index) *
-              md_.proj_points_cnt / selected_point_count)
+        ? (base_index + selection_phase) % md_.proj_points_cnt
         : selected_index;
     pt_w = md_.proj_points_[i];
 
@@ -710,6 +729,10 @@ void GridMap::raycastProcess()
       }
     }
   }
+
+  md_.raycast_selection_phase_ = point_set_capped
+      ? (selection_phase + 1) % phase_count
+      : 0;
 
   if (point_set_capped)
   {
@@ -846,8 +869,10 @@ void GridMap::updateOccupancyCallback(const ros::TimerEvent & /*event*/)
       mp_.occupancy_update_interval_sec_ * 1000.0;
   if (raycast_ms > update_budget_ms)
   {
-    ROS_WARN("SCAN_OCC_UPDATE_SLOW elapsed_ms=%.1f budget_ms=%.1f proj_points=%d",
-        raycast_ms, update_budget_ms, md_.proj_points_cnt);
+    ROS_WARN("SCAN_OCC_UPDATE_SLOW elapsed_ms=%.1f budget_ms=%.1f "
+             "proj_points=%d cap=%d",
+        raycast_ms, update_budget_ms, md_.proj_points_cnt,
+        mp_.max_raycast_points_);
   }
   // t3 = ros::Time::now();
 

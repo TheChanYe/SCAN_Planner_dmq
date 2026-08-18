@@ -162,6 +162,7 @@ struct MappingData {
   vector<short> count_hit_, count_hit_and_miss_;
   vector<char> flag_traverse_, flag_rayend_;
   char raycast_num_;
+  int raycast_selection_phase_{0};
   queue<Eigen::Vector3i> cache_voxel_;
 
   // range of updating grid
