@@ -25,4 +25,17 @@ TEST(ScanRecoveryPolicyTest, LaterTimeoutsRemainRetryableInBackoff)
       ScanRecoveryAction::ENTER_BACKOFF);
 }
 
+TEST(ScanRecoveryPolicyTest, ReferenceTimeoutStartsOnlyAfterPathWasSent)
+{
+  EXPECT_FALSE(scanReferenceBuildTimedOut(0.0, 10.0, 3.0));
+  EXPECT_FALSE(scanReferenceBuildTimedOut(8.0, 10.0, 3.0));
+  EXPECT_TRUE(scanReferenceBuildTimedOut(7.0, 10.0, 3.0));
+}
+
 }  // namespace navdog_runtime
+
+int main(int argc, char** argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

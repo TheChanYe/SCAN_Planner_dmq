@@ -65,7 +65,8 @@ ROS 组合根。负责订阅/发布、定时循环、参数加载、调用 Core�
 SCAN 原生规划代码。通用算法保留在原有包中，真实狗集成使用 `plan_manage_dmq`：
 
 - SCAN 只负责地图、规划、轨迹和跟踪。
-- `closed_loop_controller` 只发布 `/navdog/scan_cmd`。
+- `closed_loop_controller` 只发布 `/native_scan/raw_cmd`；Runtime将其交给Core的
+  `SafetySupervisor`后再发布 `/navdog/scan_cmd`。
 - SCAN 不解析 MQTT，不修改 Navdog 任务状态，不直接发布 `/cmd_vel`。
 - 修改上游通用算法前必须确认不能在 `plan_manage_dmq` 或 adapter 中解决，避免污染原始模块。
 
@@ -115,7 +116,7 @@ SCAN/GridMap -> navdog_scan_adapter -> navdog_runtime -> navdog_core
 
 ```text
 ROUTE_FOLLOW -> /navdog/route_cmd
-LOCAL_AVOID  -> /navdog/scan_cmd
+LOCAL_AVOID  -> /native_scan/raw_cmd -> Runtime/Core SafetySupervisor -> /navdog/scan_cmd
 cmd_vel_owner_mux -> /cmd_vel
 dmq_bridge -> MQTT physical command
 ```

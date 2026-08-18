@@ -89,6 +89,8 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   app.runtime_io.status_rate_hz = c.runtime.status_rate_hz;
   LOAD("odom_topic", app.runtime_io.odom_topic);
   LOAD("final_cmd_topic", app.runtime_io.final_cmd_topic);
+  LOAD("raw_scan_cmd_topic", app.runtime_io.raw_scan_cmd_topic);
+  LOAD("scan_cmd_topic", app.runtime_io.scan_cmd_topic);
   LOAD("final_cmd_feedback_topic", app.runtime_io.final_cmd_feedback_topic);
   LOAD("applied_cmd_feedback_topic", app.runtime_io.applied_cmd_feedback_topic);
   LOAD("external_stop_topic", app.runtime_io.external_stop_topic);

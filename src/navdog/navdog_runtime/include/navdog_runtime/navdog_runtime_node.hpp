@@ -55,6 +55,7 @@ public:
 private:
   /** @brief ROS 回调：将里程计转换为世界系 m/rad 的 RobotState 并互斥保存。 */
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
+  void rawScanCmdCallback(const geometry_msgs::Twist::ConstPtr& message);
   // scanTakeoverReadyCallback：接收SCAN接管就绪信号，更新scan_takeover_ready_标志。
   void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& message);
   void scanReferenceReadyCallback(const std_msgs::Bool::ConstPtr& message);
@@ -118,11 +119,13 @@ private:
   std::unique_ptr<navdog_protocol::MqttBridge> mqtt_;  // MQTT桥接
 
   ros::Subscriber odom_subscriber_;                       // 里程计订阅者
+  ros::Subscriber raw_scan_cmd_subscriber_;               // Native SCAN原始控制意图
   ros::Subscriber scan_takeover_ready_subscriber_;        // SCAN接管就绪信号订阅者
   ros::Subscriber scan_reference_ready_subscriber_;       // SCAN参考路径就绪信号订阅者
   ros::Subscriber final_cmd_feedback_subscriber_;          // Mux最终速度反馈订阅者
   ros::Subscriber applied_cmd_feedback_subscriber_;        // 真机最终应用速度反馈订阅者
   ros::Publisher route_publisher_;                        // 路线发布者
+  ros::Publisher safe_scan_cmd_publisher_;                // Core安全门控后的SCAN指令
   ros::Publisher native_scan_path_publisher_;             // Native SCAN参考路径发布者
   ros::Publisher native_scan_reset_publisher_;            // Native SCAN重置信号发布者
   ros::Publisher native_scan_takeover_sync_publisher_;    // 接管同步信息发布者
@@ -140,6 +143,7 @@ private:
   navdog::RobotState robot_{};                    // 最新里程计转换得到的机器人状态
   navdog::RouteProgress last_route_progress_{};   // 上一次的路线进度
   navdog::PlannerFeedback pending_planner_feedback_{};  // 待提交给协调器的规划器反馈
+  navdog::VelocityCommand latest_raw_scan_cmd_{};      // 最新Native SCAN原始速度
   ros::Time last_status_publish_{};               // 上一次状态发布时刻
   geometry_msgs::TwistStamped latest_final_cmd_feedback_{};
   bool latest_final_cmd_feedback_valid_{false};
@@ -165,6 +169,7 @@ private:
   bool scan_takeover_ready_{false};               // SCAN接管是否就绪
   bool scan_reference_ready_{false};              // SCAN参考路径和首轨迹是否就绪
   bool scan_reference_path_sent_{false};          // 当前reset代次是否已发送参考路径
+  double scan_reference_path_sent_sec_{0.0};      // 当前reference开始生成的时刻
   double scan_reference_retry_after_sec_{0.0};    // reference失败/重启后的限频重发时刻
   double scan_takeover_request_sec_{0.0};         // 发起接管请求的时刻
   double scan_takeover_timeout_sec_{1.5};         // 接管就绪等待超时

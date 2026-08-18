@@ -109,6 +109,7 @@ private:
       const NavigationModeStatus& mode_status,
       const ObstacleSummary& obstacles,
       const RouteCorridorAssessment& corridor,
+      const VelocityCommand& planner_cmd,
       bool corridor_available,
       double max_vx,
       double now_sec);
@@ -123,13 +124,14 @@ private:
       double max_vx,
       double now_sec);
 
-  // executeLocalAvoid：LOCAL_AVOID模式下不产生实际控制量，只返回零速度（实际控制由
-  // SCAN原生闭环控制器产生并由Mux层选择）。
+  // executeLocalAvoid：返回Native SCAN的原始控制意图，交给本类后续的
+  // SafetySupervisor统一安全门控。
   VelocityCommand executeLocalAvoid(
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
       const NavigationModeStatus& mode_status,
+      const VelocityCommand& planner_cmd,
       double max_vx,
       double now_sec);
 

@@ -39,8 +39,8 @@ geometry_msgs::Twist latest_scan_cmd_{};
 double scan_cmd_stamp_sec_{0.0};
 
 // CommandOwner：当前允许写入/cmd_vel的指令来源方。
-// ROUTE：由StartAlign/GoalAlign阶段的route_cmd控制；TRACKER：由跟踪器
-// （RouteFollower或SCAN本地避障）控制；NONE：无人拥有，必须硬停车。
+// ROUTE：由Core的RouteFollower/对齐控制器产生route_cmd；TRACKER：仅由SCAN
+// 本地避障控制器产生scan_cmd；NONE：无人拥有，必须硬停车。
 enum class CommandOwner
 {
   NONE,
@@ -57,9 +57,7 @@ enum class MotionClass
 };
 
 CommandOwner previous_owner_{CommandOwner::NONE};
-double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
-double route_follow_enter_stamp_sec_{0.0};
 double local_avoid_enter_stamp_sec_{0.0};
 bool scan_takeover_ready{false};
 bool scan_takeover_forward_confirmed{false};
@@ -91,8 +89,8 @@ const char* ownerName(CommandOwner owner)
 }
 
 // effectiveOwner：根据当前导航状态与模式确定指令权归属于谁：
-// START_ALIGN/GOAL_ALIGN阶段归ROUTE；TRACKING且模式为ROUTE_FOLLOW或
-// LOCAL_AVOID时归TRACKER；TRACKING但模式为NONE时视为过渡期，暂不分配
+// START_ALIGN/GOAL_ALIGN和TRACKING+ROUTE_FOLLOW阶段归ROUTE；只有
+// TRACKING+LOCAL_AVOID归TRACKER；TRACKING但模式为NONE时视为过渡期，暂不分配
 // 所有权；其余所有非运动状态（IDLE/PLANNING/PAUSED/FAILED/SUCCEEDED/
 // RECOVERY/EMERGENCY_STOP）均不分配权限。
 CommandOwner effectiveOwner()
@@ -104,8 +102,9 @@ CommandOwner effectiveOwner()
       return CommandOwner::ROUTE;
 
     case navdog::NavState::TRACKING:
-      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW ||
-          navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+        return CommandOwner::ROUTE;
+      if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
         return CommandOwner::TRACKER;
       // mode NONE during TRACKING — grace period.
       return CommandOwner::NONE;
@@ -302,12 +301,7 @@ void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
   const auto previous = navigation_mode_;
   navigation_mode_ = static_cast<navdog::NavigationMode>(msg->data);
-  if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW &&
-      previous != navdog::NavigationMode::ROUTE_FOLLOW)
-  {
-    route_follow_enter_stamp_sec_ = ros::Time::now().toSec();
-  }
-  else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID &&
+  if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID &&
       previous != navdog::NavigationMode::LOCAL_AVOID)
   {
     local_avoid_enter_stamp_sec_ = ros::Time::now().toSec();
@@ -380,8 +374,6 @@ void timerCallback(const ros::TimerEvent&)
   if (owner != previous_owner_)
   {
     const CommandOwner old_owner = previous_owner_;
-    owner_change_stamp_sec_ = now_sec;
-
     // Every ownership change starts from the last velocity actually sent to
     // the robot, rather than a possibly stale limiter-internal value.
     slew_limiter_.setCurrent(
@@ -471,27 +463,6 @@ void timerCallback(const ros::TimerEvent&)
     {
       const bool scan_cmd_fresh =
           isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec);
-      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-      {
-        const bool route_track_cmd_after_handoff =
-            scan_cmd_stamp_sec_ >
-                std::max(owner_change_stamp_sec_,
-                         route_follow_enter_stamp_sec_) + kEpsilon;
-        if (route_track_cmd_after_handoff && scan_cmd_fresh)
-        {
-          target_cmd = latest_scan_cmd_;
-          target_valid = true;
-          selection_reason = "ROUTE_TRACK_FRESH";
-        }
-        else
-        {
-          selection_reason = route_track_cmd_after_handoff
-              ? "ROUTE_TRACK_STALE" : "ROUTE_TRACK_WAITING_COMMAND";
-          ROS_WARN_THROTTLE(1.0, "%s", selection_reason);
-        }
-        break;
-      }
-
       const bool scan_cmd_after_handoff =
           scan_cmd_stamp_sec_ > local_avoid_enter_stamp_sec_ + kEpsilon;
       if (scan_takeover_ready && scan_cmd_after_handoff && scan_cmd_fresh)
@@ -560,12 +531,14 @@ void timerCallback(const ros::TimerEvent&)
       break;
   }
 
-  if (target_valid && owner == CommandOwner::TRACKER)
+  if (target_valid)
   {
-    if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+    if (owner == CommandOwner::ROUTE &&
+        navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
       limitModeLinearSpeed(target_cmd, route_follow_linear_speed_mps,
           "ROUTE_FOLLOW");
-    else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+    else if (owner == CommandOwner::TRACKER &&
+        navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
       limitModeLinearSpeed(target_cmd, local_avoid_linear_speed_mps,
           "LOCAL_AVOID");
   }

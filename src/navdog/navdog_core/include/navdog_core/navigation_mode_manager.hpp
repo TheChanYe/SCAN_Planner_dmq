@@ -145,6 +145,9 @@ private:
   double clear_candidate_start_sec_{0.0};   // "可以退出避障"候选确认开始时刻
   bool clear_candidate_active_{false};      // 退出确认计时器是否已启动
 
+  double stair_clear_candidate_start_sec_{0.0}; // 楼梯路线结束确认开始时刻
+  bool stair_clear_candidate_active_{false};    // 楼梯偏好释放确认是否已启动
+
   double last_update_stamp_sec_{0.0};       // 上一次 update 调用的时间戳，用于检测时间倒流
   bool has_last_update_stamp_{false};       // 是否已有上一次时间戳记录
 

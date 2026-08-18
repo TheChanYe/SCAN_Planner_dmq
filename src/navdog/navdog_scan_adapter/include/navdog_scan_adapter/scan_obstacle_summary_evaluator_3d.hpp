@@ -41,12 +41,18 @@ public:
       double now_sec) const;
 
 private:
+  struct SectorResult
+  {
+    double nearest;
+    bool valid{false};
+  };
+
   // evaluateSector：在一个扇形扇区内均匀发射多条射线，沿每条射线按步长递增距离采样，
-  // 遇到非FREE则记录该射线的命中距离并停止该射线，最后返回所有射线中的最近命中距离
-  // （无命中则为无穷大）。
+  // 只有遇到OCCUPIED才记录命中距离；OUT_OF_MAP/INVALID停止该射线但不伪装成
+  // 障碍，整个扇区没有有效查询时返回valid=false。
   // 输入：robot - 机器人位姿；center_angle - 扇区中心方向（相对机体朝向）；
   //       half_angle - 半角度（弧度）；range - 最大探测距离。
-  double evaluateSector(
+  SectorResult evaluateSector(
       const navdog::RobotState& robot,
       double center_angle,
       double half_angle,

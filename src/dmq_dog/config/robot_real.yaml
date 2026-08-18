@@ -38,7 +38,7 @@ odom_timeout_sec: 0.50
 lidar_timeout_sec: 0.50
 use_watchdog_error: true
 
-# var 223d50f474e55a01b03a173a25b2a459d8e3fa2a (上个版本的提交值)
+# var f84fead9a4295550c708b3831d8ace7e92413220 (上个版本的提交值)
 # Navigation runtime. MQTT status publishing is disabled here because the
 # dmq_bridge publishes the complete error/status/velocity payload.
 control_rate_hz: 50.0
@@ -47,6 +47,8 @@ publish_mqtt_status: false
 odom_topic: "/dmq_dog/navigation_odom"
 odom_twist_in_world_frame: true
 final_cmd_topic: "/navdog/route_cmd"
+raw_scan_cmd_topic: "/native_scan/raw_cmd"
+scan_cmd_topic: "/navdog/scan_cmd"
 final_cmd_feedback_topic: "/navdog/final_cmd_feedback"
 applied_cmd_feedback_topic: "/dmq_dog/applied_cmd_feedback"
 external_stop_topic: "/navdog/external_stop"
@@ -222,18 +224,6 @@ route_follower:
   # retained only for a route target that is genuinely behind the dog.
   heading_turn_only_threshold_rad: 0.80
   max_vx: 0.40
-
-# Continuous controller for the original MQTT polyline. It publishes forward
-# velocity plus one yaw correction; lateral velocity is intentionally zero.
-route_tracking:
-  lookahead_distance_m: 0.60
-  heading_lookahead_m: 0.40
-  max_forward_search_m: 2.50
-  near_goal_slowdown_m: 0.80
-  kp_position: 0.70
-  kp_yaw: 1.50
-  max_vx: 0.30
-  max_yaw_rate: 0.65
 
 route_corridor_observation:
   map_timeout_sec: 1.50

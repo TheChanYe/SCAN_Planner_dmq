@@ -149,8 +149,21 @@ TEST(RouteManager, ElevationAssessmentUsesRiseSlopeAndContinuity)
   EXPECT_GT(spike.max_drawdown_m, 0.03);
   EXPECT_FALSE(spike.ascending);
 
+  const auto single_waypoint_jump =
+      assess({0.0, 0.0, 0.15, 0.15, 0.15}, 0.5);
+  EXPECT_GE(single_waypoint_jump.rise_m, 0.10);
+  EXPECT_GE(single_waypoint_jump.steep_rise_m, 0.05);
+  EXPECT_LE(single_waypoint_jump.max_drawdown_m, 0.03);
+  EXPECT_FALSE(single_waypoint_jump.ascending);
+
+  const auto insufficient_continuity =
+      assess({0.0, 0.08, 0.16, 0.16, 0.16}, 0.5);
+  EXPECT_GE(insufficient_continuity.rise_m, 0.10);
+  EXPECT_GE(insufficient_continuity.steep_rise_m, 0.05);
+  EXPECT_FALSE(insufficient_continuity.ascending);
+
   const auto stairs =
-      assess({0.0, 0.0, 0.05, 0.10, 0.15, 0.20}, 0.4);
+      assess({0.0, 0.05, 0.05, 0.10, 0.10, 0.15, 0.15}, 0.3);
   EXPECT_GE(stairs.rise_m, 0.10);
   EXPECT_GE(stairs.steep_rise_m, 0.05);
   EXPECT_LE(stairs.max_drawdown_m, 0.03);

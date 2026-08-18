@@ -144,6 +144,7 @@ RouteElevationAssessment RouteManager::assessElevation(
     const RouteProgress& progress,
     const StairUpConfig& config) const noexcept
 {
+  constexpr std::size_t kMinRisingRouteSegments = 3;
   RouteElevationAssessment assessment{};
   if (!config.enabled || !hasRoute() || !progress.valid ||
       progress.task_sequence != task_view_.sequence ||
@@ -209,6 +210,56 @@ RouteElevationAssessment RouteManager::assessElevation(
     return assessment;
   assessSample(checked_until, final_sample);
 
+  // Interpolated samples are useful for measuring rise and drawdown, but one
+  // bad source waypoint can turn a single Z jump into many apparently rising
+  // samples. Require the rise to be present on at least three distinct source
+  // route segments, which means at least four received route points provide
+  // the stair evidence. Flat tread segments remain allowed.
+  std::size_t rising_route_segments = 0;
+  double segment_start_arc = 0.0;
+  for (std::size_t i = 1; i < task_view_.points.size(); ++i)
+  {
+    const auto& segment_start = task_view_.points[i - 1];
+    const auto& segment_end = task_view_.points[i];
+    const double segment_length = std::hypot(
+        segment_end.x - segment_start.x,
+        segment_end.y - segment_start.y);
+    const double segment_end_arc = segment_start_arc + segment_length;
+    if (segment_length <= 1e-12)
+      continue;
+    if (segment_end_arc <= progress.arc_length_m + 1e-9)
+    {
+      segment_start_arc = segment_end_arc;
+      continue;
+    }
+    if (segment_start_arc >= checked_until - 1e-9)
+      break;
+
+    const double overlap_start = std::max(
+        segment_start_arc, progress.arc_length_m);
+    const double overlap_end = std::min(segment_end_arc, checked_until);
+    const double overlap_length = overlap_end - overlap_start;
+    if (overlap_length > 1e-9)
+    {
+      const double start_ratio =
+          (overlap_start - segment_start_arc) / segment_length;
+      const double end_ratio =
+          (overlap_end - segment_start_arc) / segment_length;
+      const double start_z = segment_start.z +
+          start_ratio * (segment_end.z - segment_start.z);
+      const double end_z = segment_start.z +
+          end_ratio * (segment_end.z - segment_start.z);
+      const double dz = end_z - start_z;
+      if (dz > 0.0 &&
+          dz / overlap_length + 1e-9 >=
+              config.min_local_slope_m_per_m)
+      {
+        ++rising_route_segments;
+      }
+    }
+    segment_start_arc = segment_end_arc;
+  }
+
   assessment.valid = true;
   assessment.current_z = current.z;
   assessment.max_forward_z = max_forward_z;
@@ -220,7 +271,8 @@ RouteElevationAssessment RouteManager::assessElevation(
   assessment.ascending =
       assessment.rise_m + 1e-9 >= config.trigger_rise_m &&
       assessment.steep_rise_m + 1e-9 >= 0.5 * config.trigger_rise_m &&
-      assessment.max_drawdown_m <= config.flat_tolerance_m + 1e-9;
+      assessment.max_drawdown_m <= config.flat_tolerance_m + 1e-9 &&
+      rising_route_segments >= kMinRisingRouteSegments;
   return assessment;
 }
 

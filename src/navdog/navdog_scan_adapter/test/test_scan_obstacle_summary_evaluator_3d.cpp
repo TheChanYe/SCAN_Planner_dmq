@@ -17,6 +17,8 @@ public:
   InflatedGridQueryResult query(
       double x, double, double z, double) const noexcept override
   {
+    if (force_out_of_map_)
+      return InflatedGridQueryResult::OUT_OF_MAP;
     const bool height_matches = !height_sensitive_ ||
         std::abs(z - occupied_z_) < 0.025;
     return x >= 0.5 && height_matches
@@ -26,6 +28,7 @@ public:
   bool ready_{true};
   bool height_sensitive_{false};
   double occupied_z_{0.30};
+  bool force_out_of_map_{false};
 };
 
 TEST(ScanObstacleSummaryEvaluator3DTest, MapNotReadyIsInvalid)
@@ -63,6 +66,19 @@ TEST(ScanObstacleSummaryEvaluator3DTest, AppliesBodyQueryZOffset)
 
   ScanObstacleSummaryEvaluator3D body_evaluator(config, grid, 0.30);
   EXPECT_NEAR(body_evaluator.evaluate(robot, 1.0).front_min, 0.5, 0.026);
+}
+
+TEST(ScanObstacleSummaryEvaluator3DTest, OutOfMapIsInvalidNotCloseObstacle)
+{
+  auto grid = std::make_shared<FakeGrid>();
+  grid->force_out_of_map_ = true;
+  ScanObstacleSummaryEvaluator3D evaluator({}, grid);
+  navdog::RobotState robot{};
+  robot.valid = true;
+
+  const auto result = evaluator.evaluate(robot, 1.0);
+  EXPECT_FALSE(result.valid);
+  EXPECT_TRUE(std::isinf(result.front_min));
 }
 }
 }

@@ -277,6 +277,8 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   nh.setParam("mqtt/port", 8883);
   nh.setParam("mqtt/keepalive_sec", 60);
   nh.setParam("final_cmd_feedback_topic", std::string("/custom/final_feedback"));
+  nh.setParam("raw_scan_cmd_topic", std::string("/custom/raw_scan"));
+  nh.setParam("scan_cmd_topic", std::string("/custom/safe_scan"));
   nh.setParam("applied_cmd_feedback_topic", std::string("/custom/applied_feedback"));
   nh.setParam("external_stop_topic", std::string("/custom/external_stop"));
   nh.setParam("max_vx_limit_topic", std::string("/custom/max_vx_limit"));
@@ -306,6 +308,8 @@ TEST(MqttConfigTest, LoadsTopicsFromParams)
   EXPECT_EQ(app.mqtt.port, 8883);
   EXPECT_EQ(app.mqtt.keepalive_sec, 60);
   EXPECT_EQ(app.runtime_io.final_cmd_feedback_topic, "/custom/final_feedback");
+  EXPECT_EQ(app.runtime_io.raw_scan_cmd_topic, "/custom/raw_scan");
+  EXPECT_EQ(app.runtime_io.scan_cmd_topic, "/custom/safe_scan");
   EXPECT_EQ(app.runtime_io.applied_cmd_feedback_topic, "/custom/applied_feedback");
   EXPECT_EQ(app.runtime_io.external_stop_topic, "/custom/external_stop");
   EXPECT_EQ(app.runtime_io.max_vx_limit_topic, "/custom/max_vx_limit");

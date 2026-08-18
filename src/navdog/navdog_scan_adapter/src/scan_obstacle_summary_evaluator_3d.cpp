@@ -27,7 +27,8 @@ ScanObstacleSummaryEvaluator3D::ScanObstacleSummaryEvaluator3D(
 // 每条射线沿方向按步长（取地图分辨率一半与0.025的较大值）递增距离采样，
 // 一旦查到非FREE则记录该射线的命中距离并跳出该射线的采样循环，
 // 最后取所有射线中的最近命中距离作为该扇区结果（均无命中则为正无穷大）。
-double ScanObstacleSummaryEvaluator3D::evaluateSector(
+ScanObstacleSummaryEvaluator3D::SectorResult
+ScanObstacleSummaryEvaluator3D::evaluateSector(
     const navdog::RobotState& robot,
     double center_angle,
     double half_angle,
@@ -35,7 +36,7 @@ double ScanObstacleSummaryEvaluator3D::evaluateSector(
 {
   const int ray_count = std::max(1, config_.rays_per_sector);
   const double step = std::max(grid_->resolutionM() * 0.5, 0.025);
-  double nearest = std::numeric_limits<double>::infinity();
+  SectorResult sector{std::numeric_limits<double>::infinity(), false};
   for (int ray = 0; ray < ray_count; ++ray)
   {
     const double ratio = ray_count == 1
@@ -49,14 +50,23 @@ double ScanObstacleSummaryEvaluator3D::evaluateSector(
           robot.x + distance * std::cos(angle),
           robot.y + distance * std::sin(angle),
           robot.z + query_z_offset_m_, angle);
-      if (result != InflatedGridQueryResult::FREE)
+      if (result == InflatedGridQueryResult::OCCUPIED)
       {
-        nearest = std::min(nearest, distance);
+        sector.nearest = std::min(sector.nearest, distance);
+        sector.valid = true;
         break;
       }
+      if (result == InflatedGridQueryResult::FREE)
+      {
+        sector.valid = true;
+        continue;
+      }
+      // OUT_OF_MAP is not an obstacle. Stop this ray at the map boundary;
+      // INVALID makes the sector invalid unless another ray had valid data.
+      break;
     }
   }
-  return nearest;
+  return sector;
 }
 
 // evaluate：计算机器人四周障碍物汇总。
@@ -76,16 +86,20 @@ navdog::ObstacleSummary ScanObstacleSummaryEvaluator3D::evaluate(
     return result;
   }
 
-  result.front_min = evaluateSector(robot, 0.0,
+  const SectorResult front = evaluateSector(robot, 0.0,
       radians(config_.front_half_angle_deg), config_.front_range_m);
-  result.left_min = evaluateSector(robot, kPi * 0.5,
+  const SectorResult left = evaluateSector(robot, kPi * 0.5,
       radians(config_.side_half_angle_deg), config_.side_range_m);
-  result.right_min = evaluateSector(robot, -kPi * 0.5,
+  const SectorResult right = evaluateSector(robot, -kPi * 0.5,
       radians(config_.side_half_angle_deg), config_.side_range_m);
-  result.rear_min = evaluateSector(robot, kPi,
+  const SectorResult rear = evaluateSector(robot, kPi,
       radians(config_.rear_half_angle_deg), config_.rear_range_m);
+  result.front_min = front.nearest;
+  result.left_min = left.nearest;
+  result.right_min = right.nearest;
+  result.rear_min = rear.nearest;
   result.stamp_sec = now_sec;
-  result.valid = true;
+  result.valid = front.valid && left.valid && right.valid && rear.valid;
   return result;
 }
 

@@ -417,6 +417,30 @@ TEST(NavigationModeManagerTest, StairAvoidExitsOnFlatTopAfterConfirmation)
   EXPECT_FALSE(output.status.stair_up_active);
 }
 
+TEST(NavigationModeManagerTest, StairPreferenceClearsWhileOrdinaryObstacleKeepsAvoid)
+{
+  NavigationModeConfig mode_config;
+  mode_config.min_local_avoid_hold_sec = 0.0;
+  StairUpConfig stair_config;
+  stair_config.exit_confirm_sec = 0.5;
+  NavigationModeManager manager(mode_config, stair_config);
+  RouteProgress p = progress();
+
+  manager.update(task(), robot(), p, elevation(true, 0.15, 1.5),
+      corridor(false), obstacles(), 1.0);
+
+  p.arc_length_m = 1.35;
+  manager.update(task(), robot(), p, elevation(false, 0.02, 2.85),
+      corridor(true, 0.5), obstacles(0.4, 2.0, 2.0), 2.0);
+  const auto output = manager.update(task(), robot(), p,
+      elevation(false, 0.02, 2.85), corridor(true, 0.5),
+      obstacles(0.4, 2.0, 2.0), 2.5);
+
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_FALSE(output.status.stair_up_active);
+  EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 0.0);
+}
+
 }  // namespace
 }  // namespace navdog
 

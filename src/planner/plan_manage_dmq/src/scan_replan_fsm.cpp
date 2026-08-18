@@ -1,5 +1,6 @@
 
 #include <plan_manage_dmq/scan_replan_fsm.h>
+#include <plan_manage_dmq/reference_trajectory_selector.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -1567,6 +1568,64 @@ namespace scan_planner
     constexpr double time_step = 0.01;
     double t_cur = (now - info->start_time_).toSec();
     t_cur = std::min(std::max(t_cur, 0.0), info->duration_);
+    const Eigen::Vector3d planned_now =
+        info->position_traj_.evaluateDeBoorT(t_cur);
+    Eigen::Vector3d actual_body = odom_pos_;
+    actual_body.z() = planned_now.z();
+    const Eigen::Vector3d body_heading =
+        odom_orient_.toRotationMatrix().col(0);
+    const double body_yaw = std::atan2(body_heading.y(), body_heading.x());
+    const double tracking_error_xy =
+        (actual_body - planned_now).head<2>().norm();
+    if (!planned_now.allFinite() || !actual_body.allFinite() ||
+        !std::isfinite(body_yaw) || !std::isfinite(tracking_error_xy))
+    {
+      ROS_ERROR_THROTTLE(0.5,
+          "SCAN_ACTUAL_BODY_STATE_INVALID traj_id=%d action=EMERGENCY_STOP",
+          info->traj_id_);
+      flag_escape_emergency_ = true;
+      emergency_stop_active_ = false;
+      next_emergency_retry_time_ = now +
+          ros::Duration(emergency_retry_interval_sec_);
+      changeFSMExecState(EMERGENCY_STOP, "ACTUAL_BODY_STATE_INVALID");
+      return;
+    }
+    const double tracking_warning_m =
+        std::max(0.15, self_double_cylinder_radius_);
+    const double tracking_abort_m = 2.0 * tracking_warning_m;
+    if (tracking_error_xy > tracking_abort_m)
+    {
+      ROS_ERROR("SCAN_TRACKING_LOST error_xy=%.3f limit=%.3f traj_id=%d "
+                "action=EMERGENCY_STOP",
+          tracking_error_xy, tracking_abort_m, info->traj_id_);
+      flag_escape_emergency_ = true;
+      emergency_stop_active_ = false;
+      next_emergency_retry_time_ = now +
+          ros::Duration(emergency_retry_interval_sec_);
+      changeFSMExecState(EMERGENCY_STOP, "TRACKING_LOST");
+      return;
+    }
+    if (tracking_error_xy > tracking_warning_m)
+    {
+      ROS_WARN_THROTTLE(1.0,
+          "SCAN_TRACKING_DEVIATION error_xy=%.3f abort_at=%.3f traj_id=%d",
+          tracking_error_xy, tracking_abort_m, info->traj_id_);
+    }
+
+    if (map->getInflateOccupancy(actual_body, body_yaw) != 0)
+    {
+      ROS_ERROR_THROTTLE(0.5,
+          "SCAN_ACTUAL_BODY_COLLISION map_age=%.3f tracking_error_xy=%.3f "
+          "traj_id=%d action=EMERGENCY_STOP",
+          map_age, tracking_error_xy, info->traj_id_);
+      flag_escape_emergency_ = true;
+      emergency_stop_active_ = false;
+      next_emergency_retry_time_ = now +
+          ros::Duration(emergency_retry_interval_sec_);
+      changeFSMExecState(EMERGENCY_STOP, "ACTUAL_BODY_COLLISION");
+      return;
+    }
+
     double t_2_3 = info->duration_ * 2 / 3;
     for (double t = t_cur; t < info->duration_; t += time_step)
     {
@@ -1918,19 +1977,10 @@ namespace scan_planner
     return true;
   }
 
-  // getLocalTarget：从全局轨迹/参考路径上选取本轮局部重规划的目标点local_target_pt_（受
-  // target_distance_cap_m限制）。默认先将local_target_pt_设为起点（绝不回退到远方
-  // 的全局终点，若找不到安全目标必须返回false让调用方回退重试）。
-  // 整体三阶段流程：
-  // 阶段1 采样：从上次进度时刻progress_t开始沿全局路径按固定时间步长采样，
-  //   记录每个采样点到里程计起点的距离，并找到距离最近的采样时刻作为新的
-  //   last_progress_time_（路径跟踪进度）；
-  // 阶段2 选点：从规划地平线上限处开始向回搜索第一个且不低于最小目标距离
-  //   的空闲采样点（仅检查候选点本身是否占据，机人到目标的路径不做占据检查，
-  //   绕障交给后续reboundReplan+A*+B样条优化完成），找到则直接采用；
-  // 阶段3 近目标回退：若机器人已很接近全局终点（在no_replan_thresh_与
-  //   min_target_dist之间的盲区）且终点本身空闲，则直接以终点为局部目标；
-  // 若以上三阶段均无法找到合法目标点，则返回false。
+  // getLocalTarget：先在当前进度前方的有限弧长窗口内投影机器人，再沿参考轨迹
+  // 累计弧长向前选择局部目标。投影和预看都遵循路径顺序，回环/折返路线中后续
+  // 空间近点不能越过当前路线段抢占目标。目标占据时只在该前向窗口内向回寻找
+  // 空闲候选点，实际绕障仍由A*与B样条优化完成。
   bool SCANReplanFSM::getLocalTarget(double target_distance_cap_m)
   {
     auto &global_data = planner_manager_->global_data_;
@@ -1969,6 +2019,9 @@ namespace scan_planner
     const double t_step = std::max(
         0.02,
         planning_horizon_ / 20.0 / max_vel);
+    const double min_target_dist = 0.8;
+    const double max_target_dist =
+        std::max(1.0, std::min(planning_horizon_, target_distance_cap_m));
 
     double progress_t = global_data.last_progress_time_;
 
@@ -1979,59 +2032,65 @@ namespace scan_planner
         0.0,
         std::min(progress_t, duration));
 
-    // --- Phase 1: sample route and record distance from robot ----------
-    struct RouteSample
-    {
-      double t;
-      Eigen::Vector3d pos;
-      double dist;
-    };
-    std::vector<RouteSample> samples;
-
-    double dist_min = 1e100;
-    double dist_min_t = progress_t;
-
-    for (double t = progress_t;
-         t <= duration + 1e-6;
-         t += t_step)
-    {
-      const double eval_t = std::max(
-          0.0,
-          std::min(t, duration));
-
-      const Eigen::Vector3d pos_t =
-          global_data.getPosition(eval_t);
-
-      if (!pos_t.allFinite())
-        continue;
-
-      const double dist = (pos_t - start_pt_).norm();
-
-      if (!std::isfinite(dist))
-        continue;
-
-      if (dist < dist_min)
-      {
-        dist_min = dist;
-        dist_min_t = eval_t;
-      }
-
-      samples.push_back({eval_t, pos_t, dist});
-    }
-
-    global_data.last_progress_time_ = dist_min_t;
-
-    if (samples.empty())
+    const Eigen::Vector3d first_position =
+        global_data.getPosition(progress_t);
+    if (!first_position.allFinite())
     {
       ROS_ERROR_THROTTLE(
           1.0,
-          "[getLocalTarget] no valid route samples");
+          "[getLocalTarget] invalid first route sample");
       return false;
     }
 
-    // --- occupancy helper: only check the candidate point itself ----------
-    // The straight-line path from robot to target is NOT checked.
-    // Obstacle avoidance is handled by reboundReplan (A* + B-spline optimisation).
+    // A stale prewarmed trajectory may lag behind the robot. Extend the
+    // projection window by that physical separation, but never inspect the
+    // complete remaining route merely because a later branch returns nearby.
+    const double projection_search_arc =
+        planning_horizon_ + (first_position - start_pt_).norm();
+    const double sample_arc_limit =
+        projection_search_arc + max_target_dist;
+
+    std::vector<scan_planner_dmq::ReferenceTrajectorySample> samples;
+    samples.reserve(48);
+    samples.push_back({progress_t, first_position, 0.0});
+
+    double sample_t = progress_t;
+    double sample_arc = 0.0;
+    Eigen::Vector3d previous_position = first_position;
+    while (sample_t < duration - 1e-9 &&
+           sample_arc <= sample_arc_limit + 1e-6)
+    {
+      const double next_t = std::min(duration, sample_t + t_step);
+      const Eigen::Vector3d position = global_data.getPosition(next_t);
+      if (!position.allFinite())
+      {
+        ROS_ERROR_THROTTLE(
+            1.0,
+            "[getLocalTarget] invalid route sample");
+        return false;
+      }
+
+      sample_arc += (position - previous_position).norm();
+      samples.push_back({next_t, position, sample_arc});
+      previous_position = position;
+      sample_t = next_t;
+    }
+
+    const auto window =
+        scan_planner_dmq::selectForwardReferenceWindow(
+            samples, start_pt_, projection_search_arc, max_target_dist);
+    if (!window.valid)
+    {
+      ROS_ERROR_THROTTLE(
+          1.0,
+          "[getLocalTarget] unable to select forward reference window");
+      return false;
+    }
+
+    const auto& progress_sample = samples[window.progress_index];
+    global_data.last_progress_time_ = std::max(
+        progress_t, progress_sample.time_sec);
+
     auto targetIsFree =
         [&](const Eigen::Vector3d &point) -> bool
     {
@@ -2047,49 +2106,33 @@ namespace scan_planner
       return map->getInflateOccupancy(point, yaw) == 0;
     };
 
-    // --- Phase 2: find the farthest free route sample ---------------------
-    // Walk backward from planning_horizon_ so we pick the farthest free
-    // point first.  Only the candidate point itself is checked; the path
-    // from the robot to the target is left to reboundReplan + A* + B-spline
-    // optimisation.
-    const double min_target_dist = 0.8;
-    const double max_target_dist =
-        std::max(1.0, std::min(planning_horizon_, target_distance_cap_m));
-
-    bool found_route_target = false;
-    for (int i = static_cast<int>(samples.size()) - 1; i >= 0; --i)
+    for (std::size_t i = window.target_index + 1;
+         i-- > window.progress_index;)
     {
-      if (!std::isfinite(samples[i].dist))
+      const double forward_arc =
+          samples[i].arc_length_m - progress_sample.arc_length_m;
+      if (forward_arc < min_target_dist - 1e-6)
+        break;
+
+      if (!targetIsFree(samples[i].position))
         continue;
 
-      if (samples[i].dist > max_target_dist + 1e-6)
-        continue;
+      local_target_pt_ = samples[i].position;
+      local_target_vel_ = global_data.getVelocity(samples[i].time_sec);
+      if (!local_target_vel_.allFinite())
+        local_target_vel_.setZero();
+      else if (local_target_vel_.norm() > max_vel)
+        local_target_vel_ = local_target_vel_.normalized() * max_vel;
 
-      if (samples[i].dist < min_target_dist - 1e-6)
-        break;  // all remaining samples are too close
-
-      if (!targetIsFree(samples[i].pos))
-        continue;
-
-      local_target_pt_ = samples[i].pos;
-      local_target_vel_.setZero();
-      found_route_target = true;
-      break;
-    }
-
-    if (found_route_target)
-    {
-      ROS_DEBUG("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) dist=%.2f target_cap=%.2f",
+      ROS_DEBUG("SCAN_LOCAL_TARGET_SELECTED target=(%.2f,%.2f,%.2f) "
+                "euclidean_dist=%.2f forward_arc=%.2f progress_t=%.2f "
+                "target_t=%.2f target_cap=%.2f",
           local_target_pt_(0), local_target_pt_(1), local_target_pt_(2),
-          (local_target_pt_ - start_pt_).norm(), max_target_dist);
+          (local_target_pt_ - start_pt_).norm(), forward_arc,
+          progress_sample.time_sec, samples[i].time_sec, max_target_dist);
       return true;
     }
 
-    // --- Phase 3: near-global-goal fallback --------------------------------
-    // When the robot is within (no_replan_thresh_, min_target_dist) of the
-    // final global target and the final target itself is free, plan directly
-    // to it. This eliminates the 0.1~0.8 m dead zone where no ordinary route
-    // sample satisfies the 0.8 m minimum-distance rule.
     const Eigen::Vector3d final_target =
         global_data.getPosition(duration);
 

@@ -31,6 +31,8 @@ void NavigationModeManager::reset() noexcept
   blocked_candidate_start_sec_ = 0.0;
   clear_candidate_active_ = false;
   clear_candidate_start_sec_ = 0.0;
+  stair_clear_candidate_active_ = false;
+  stair_clear_candidate_start_sec_ = 0.0;
 }
 
 // isConfigValid：校验配置自身的合法性：确认时长不能为负、立即进入距离不能大于
@@ -140,6 +142,8 @@ void NavigationModeManager::initializeForTask(
   blocked_candidate_start_sec_ = 0.0;
   clear_candidate_active_ = false;
   clear_candidate_start_sec_ = 0.0;
+  stair_clear_candidate_active_ = false;
+  stair_clear_candidate_start_sec_ = 0.0;
 }
 
 // transitionTo：执行一次模式转换。
@@ -171,6 +175,8 @@ void NavigationModeManager::transitionTo(
   blocked_candidate_start_sec_ = 0.0;
   clear_candidate_active_ = false;
   clear_candidate_start_sec_ = 0.0;
+  stair_clear_candidate_active_ = false;
+  stair_clear_candidate_start_sec_ = 0.0;
 }
 
 // update：导航模式状态机主入口，每个控制周期调用一次。整体流程：
@@ -432,12 +438,48 @@ NavigationModeOutput NavigationModeManager::update(
     const bool stair_progress_satisfied = !status_.stair_up_active ||
         progress.arc_length_m + stair_config_.exit_progress_margin_m +
             kTimeEpsilonSec >= status_.stair_hold_until_arc_m;
+    const bool stair_release_conditions = stair_route_flat &&
+        stair_progress_satisfied;
+
+    // Stair preference has its own lifetime. Once the route is flat and the
+    // held stair arc has been traversed, release it even if an ordinary
+    // obstacle still keeps LOCAL_AVOID active. Otherwise a box encountered
+    // after the stairs would continue suppressing SCAN's lateral fallback.
+    if (status_.stair_up_active)
+    {
+      if (stair_release_conditions)
+      {
+        if (!stair_clear_candidate_active_)
+        {
+          stair_clear_candidate_active_ = true;
+          stair_clear_candidate_start_sec_ = now_sec;
+        }
+        if (now_sec - stair_clear_candidate_start_sec_ >=
+            stair_config_.exit_confirm_sec)
+        {
+          status_.stair_up_active = false;
+          status_.stair_hold_until_arc_m = 0.0;
+          stair_clear_candidate_active_ = false;
+          stair_clear_candidate_start_sec_ = 0.0;
+        }
+      }
+      else
+      {
+        stair_clear_candidate_active_ = false;
+        stair_clear_candidate_start_sec_ = 0.0;
+      }
+    }
+    else
+    {
+      stair_clear_candidate_active_ = false;
+      stair_clear_candidate_start_sec_ = 0.0;
+    }
+
     const bool all_exit_conditions =
         minimum_hold_satisfied &&
         corridor_clear &&
         clearance_satisfied &&
-        stair_route_flat &&
-        stair_progress_satisfied;
+        stair_release_conditions;
 
     if (all_exit_conditions)
     {

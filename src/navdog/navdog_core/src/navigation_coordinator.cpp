@@ -427,8 +427,8 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
 
 // =============================================================================
 // executeLocalAvoid
-// LOCAL_AVOID 模式下本协调器不产生实际控制量，只返回零速度：实际的局部避障速度由 SCAN
-// 原生闭环控制器产生，并在 Mux 层选择（本类不插手该链路）。
+// LOCAL_AVOID 使用Native SCAN的原始控制意图。指令在update()末尾与
+// Route指令一样经过唯一SafetySupervisor，Runtime只负责转换和发布。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeLocalAvoid(
@@ -436,6 +436,7 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
     const RobotState& robot,
     const RouteProgress& progress,
     const NavigationModeStatus& mode_status,
+    const VelocityCommand& planner_cmd,
     double max_vx,
     double now_sec)
 {
@@ -444,9 +445,12 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
   (void)progress;
   (void)mode_status;
   (void)max_vx;
-  // LOCAL_AVOID velocity is produced by the native SCAN closed-loop
-  // controller and selected by the Mux.  Coordinator outputs zero.
-  return makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
+  if (!planner_cmd.valid)
+    return makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
+
+  VelocityCommand command = planner_cmd;
+  command.source = CommandSource::PLANNER;
+  return command;
 }
 
 // =============================================================================
@@ -469,6 +473,7 @@ VelocityCommand NavigationCoordinator::executeMode(
     const NavigationModeStatus& mode_status,
     const ObstacleSummary& obstacles,
     const RouteCorridorAssessment& corridor,
+    const VelocityCommand& planner_cmd,
     bool corridor_available,
     double max_vx,
     double now_sec)
@@ -540,6 +545,7 @@ VelocityCommand NavigationCoordinator::executeMode(
           robot,
           progress,
           mode_status,
+          planner_cmd,
           max_vx,
           now_sec);
       break;
@@ -973,6 +979,7 @@ CoreOutput NavigationCoordinator::update(
                       mode_output.status,
                       input.obstacles,
                       obs_output.assessment,
+                      input.planner_cmd,
                       corridor_available,
                       task_manager_.session().max_vx,
                       now_sec);

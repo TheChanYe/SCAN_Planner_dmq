@@ -97,10 +97,11 @@ bool NavdogRuntimeNode::initialize()
   const auto& io = application_config_.runtime_io;
   if (!std::isfinite(io.control_rate_hz) || io.control_rate_hz <= 0.0 ||
       !std::isfinite(io.status_rate_hz) || io.status_rate_hz <= 0.0 ||
+      io.raw_scan_cmd_topic.empty() || io.scan_cmd_topic.empty() ||
       !std::isfinite(application_config_.scan.reference_z_offset_m) ||
       application_config_.scan.reference_z_offset_m < 0.0)
   {
-    ROS_ERROR("invalid runtime rate or scan/reference_z_offset_m");
+    ROS_ERROR("invalid runtime rate, SCAN command topic, or scan/reference_z_offset_m");
     return false;
   }
   private_nh_.param("scan_recovery/takeover_timeout_sec",
@@ -158,6 +159,9 @@ bool NavdogRuntimeNode::initialize()
   odom_subscriber_ = nh_.subscribe(io.odom_topic, 10,
       &NavdogRuntimeNode::odomCallback, this,
       ros::TransportHints().tcpNoDelay());
+  raw_scan_cmd_subscriber_ = nh_.subscribe(io.raw_scan_cmd_topic, 10,
+      &NavdogRuntimeNode::rawScanCmdCallback, this,
+      ros::TransportHints().tcpNoDelay());
   scan_takeover_ready_subscriber_ = nh_.subscribe(
       "/native_scan/takeover_ready", 10,
       &NavdogRuntimeNode::scanTakeoverReadyCallback, this);
@@ -174,6 +178,8 @@ bool NavdogRuntimeNode::initialize()
       ros::TransportHints().tcpNoDelay());
   route_publisher_ =
       nh_.advertise<nav_msgs::Path>("/navdog/global_route", 1, true);
+  safe_scan_cmd_publisher_ = nh_.advertise<geometry_msgs::Twist>(
+      io.scan_cmd_topic, 10);
   native_scan_path_publisher_ =
       nh_.advertise<nav_msgs::Path>("/native_scan/initial_path", 1, true);
   native_scan_reset_publisher_ =
@@ -237,12 +243,18 @@ void NavdogRuntimeNode::scanTakeoverReadyCallback(
 void NavdogRuntimeNode::scanReferenceReadyCallback(
     const std_msgs::Bool::ConstPtr& msg)
 {
+  const bool was_ready = scan_reference_ready_;
   scan_reference_ready_ = msg && msg->data;
   if (!scan_reference_ready_)
   {
-    if (scan_reference_path_sent_)
+    // Native publishes false while consuming a newly sent reference. Keep
+    // that generation in flight; resending after one backoff interval used
+    // to restart a 1.8-2.0s solve forever. A false edge after READY instead
+    // indicates process restart/lost state and must rebuild the reference.
+    if (was_ready)
     {
       scan_reference_path_sent_ = false;
+      scan_reference_path_sent_sec_ = 0.0;
       scan_reference_retry_after_sec_ = ros::Time::now().toSec() +
           scan_recovery_backoff_retry_sec_;
     }
@@ -251,6 +263,7 @@ void NavdogRuntimeNode::scanReferenceReadyCallback(
   }
   else
   {
+    scan_reference_path_sent_sec_ = 0.0;
     scan_reference_retry_after_sec_ = 0.0;
     scan_wait_reference_logged_ = false;
   }
@@ -312,6 +325,23 @@ void NavdogRuntimeNode::odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
       std::isfinite(robot.yaw_rate) && std::isfinite(robot.stamp_sec);
   std::lock_guard<std::mutex> lock(odom_mutex_);
   robot_ = robot;
+}
+
+void NavdogRuntimeNode::rawScanCmdCallback(
+    const geometry_msgs::Twist::ConstPtr& msg)
+{
+  navdog::VelocityCommand command{};
+  command.stamp_sec = ros::Time::now().toSec();
+  command.source = navdog::CommandSource::PLANNER;
+  if (msg)
+  {
+    command.vx = msg->linear.x;
+    command.vy = msg->linear.y;
+    command.yaw_rate = msg->angular.z;
+    command.valid = std::isfinite(command.vx) &&
+        std::isfinite(command.vy) && std::isfinite(command.yaw_rate);
+  }
+  latest_raw_scan_cmd_ = command;
 }
 
 // processEvents：从MQTT事件队列中依次取出待处理事件并提交给导航协调器处理，
@@ -441,6 +471,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
         input.robot, now_sec);
   }
   input.planner = pending_planner_feedback_;
+  input.planner_cmd = latest_raw_scan_cmd_;
   pending_planner_feedback_ = navdog::PlannerFeedback{};
 
   const navdog::CoreOutput output = coordinator_->update(input, now_sec);
@@ -547,6 +578,22 @@ void NavdogRuntimeNode::handleScanRecovery(
   if (!scan_reference_ready_)
   {
     scan_takeover_request_sec_ = 0.0;
+    const double reference_timeout_sec = std::max(
+        3.0, scan_takeover_timeout_sec_ +
+            2.0 * scan_recovery_backoff_retry_sec_);
+    if (scan_reference_path_sent_ &&
+        scanReferenceBuildTimedOut(scan_reference_path_sent_sec_, now_sec,
+            reference_timeout_sec))
+    {
+      ++scan_recovery_attempts_;
+      ROS_WARN("SCAN_REFERENCE_TIMEOUT sequence=%lu elapsed=%.3f action=RESET_REFERENCE",
+          static_cast<unsigned long>(output.task_sequence),
+          now_sec - scan_reference_path_sent_sec_);
+      resetNativeScan("REFERENCE_TIMEOUT");
+      pending_native_scan_path_ = true;
+      pending_takeover_sync_ = true;
+      return;
+    }
     if (!scan_reference_path_sent_ && !pending_native_scan_path_ &&
         now_sec >= scan_reference_retry_after_sec_)
       pending_native_scan_path_ = true;
@@ -870,6 +917,12 @@ void NavdogRuntimeNode::publishOutput(
   geometry_msgs::TwistStamped command;
   command.header.stamp.fromSec(now_sec);
   command.twist = toTwist(output.final_cmd);
+  if (output.state == navdog::NavState::TRACKING &&
+      output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
+  {
+    safe_scan_cmd_publisher_.publish(command.twist);
+    command.twist = geometry_msgs::Twist{};
+  }
   final_cmd_publisher_.publish(command);
   std_msgs::UInt8 state;
   state.data = static_cast<std::uint8_t>(output.state);
@@ -952,9 +1005,11 @@ void NavdogRuntimeNode::resetNativeScan(const char* reason)
   pending_native_scan_path_ = false;
   scan_reference_ready_ = false;
   scan_reference_path_sent_ = false;
+  scan_reference_path_sent_sec_ = 0.0;
   scan_reference_retry_after_sec_ = 0.0;
   scan_takeover_ready_ = false;
   scan_takeover_request_sec_ = 0.0;
+  latest_raw_scan_cmd_ = navdog::VelocityCommand{};
   native_scan_reset_time_ = ros::Time::now();
   ++native_scan_reset_count_;
 
@@ -967,6 +1022,7 @@ void NavdogRuntimeNode::clearScanRecoveryState()
   scan_takeover_ready_ = false;
   scan_reference_ready_ = false;
   scan_reference_path_sent_ = false;
+  scan_reference_path_sent_sec_ = 0.0;
   scan_reference_retry_after_sec_ = 0.0;
   scan_takeover_request_sec_ = 0.0;
   scan_recovery_attempts_ = 0;
@@ -974,6 +1030,7 @@ void NavdogRuntimeNode::clearScanRecoveryState()
   scan_recovery_backoff_ = false;
   scan_recovery_next_retry_sec_ = 0.0;
   scan_wait_reference_logged_ = false;
+  latest_raw_scan_cmd_ = navdog::VelocityCommand{};
 }
 
 // scheduleNativeScanReferencePath：reset后延迟发布参考路径。同步信号只能由
@@ -985,6 +1042,7 @@ void NavdogRuntimeNode::scheduleNativeScanReferencePath()
   {
     publishNativeScanReferencePath(last_route_progress_);
     scan_reference_path_sent_ = true;
+    scan_reference_path_sent_sec_ = ros::Time::now().toSec();
     pending_native_scan_path_ = false;
   }
 }

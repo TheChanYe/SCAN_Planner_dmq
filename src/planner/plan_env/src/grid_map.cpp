@@ -625,11 +625,11 @@ void GridMap::raycastProcess()
   Eigen::Vector3d half = Eigen::Vector3d(0.5, 0.5, 0.5);
   Eigen::Vector3d ray_pt, pt_w;
 
-  // Bounded complete-update budget: see
-  // MappingParameters::max_raycast_points_. Select evenly across the
-  // ordered lidar frame so angular coverage is retained. Endpoint and free
-  // space updates always use the same selected point set; integrating hits
-  // without their clearing rays leaves persistent ghost obstacles.
+  // Bounded complete-update budget: reserve half for the nearest unique
+  // endpoints, then fill the rest with phase-rotated uniform coverage. This
+  // guarantees that a small close obstacle enters fusion promptly without
+  // starving the rest of the ordered lidar frame. Endpoint and free-space
+  // updates always use this same selected point set.
   const int selected_point_count =
       (mp_.max_raycast_points_ > 0 &&
        mp_.max_raycast_points_ < md_.proj_points_cnt)
@@ -645,16 +645,65 @@ void GridMap::raycastProcess()
       ? md_.raycast_selection_phase_ % phase_count
       : 0;
 
-  for (int selected_index = 0;
-       selected_index < selected_point_count;
-       ++selected_index)
+  md_.raycast_selected_indices_.clear();
+  md_.raycast_selected_indices_.reserve(selected_point_count);
+  if (!point_set_capped)
   {
-    const int base_index = static_cast<int>(
-        static_cast<long long>(selected_index) *
-        md_.proj_points_cnt / selected_point_count);
-    const int i = point_set_capped
-        ? (base_index + selection_phase) % md_.proj_points_cnt
-        : selected_index;
+    for (int i = 0; i < md_.proj_points_cnt; ++i)
+      md_.raycast_selected_indices_.push_back(i);
+  }
+  else
+  {
+    md_.raycast_candidate_indices_.resize(md_.proj_points_cnt);
+    md_.raycast_selected_mask_.assign(md_.proj_points_cnt, 0);
+    for (int i = 0; i < md_.proj_points_cnt; ++i)
+      md_.raycast_candidate_indices_[i] = i;
+
+    const int nearest_count = selected_point_count / 2;
+    auto nearer = [&](int lhs, int rhs) {
+      return (md_.proj_points_[lhs] - md_.ray_pos_).squaredNorm() <
+          (md_.proj_points_[rhs] - md_.ray_pos_).squaredNorm();
+    };
+    std::nth_element(md_.raycast_candidate_indices_.begin(),
+        md_.raycast_candidate_indices_.begin() + nearest_count,
+        md_.raycast_candidate_indices_.end(), nearer);
+    for (int n = 0; n < nearest_count; ++n)
+    {
+      const int index = md_.raycast_candidate_indices_[n];
+      md_.raycast_selected_indices_.push_back(index);
+      md_.raycast_selected_mask_[index] = 1;
+    }
+
+    for (int slot = 0; slot < selected_point_count &&
+         static_cast<int>(md_.raycast_selected_indices_.size()) <
+             selected_point_count; ++slot)
+    {
+      const int base_index = static_cast<int>(
+          static_cast<long long>(slot) * md_.proj_points_cnt /
+          selected_point_count);
+      const int index = (base_index + selection_phase) % md_.proj_points_cnt;
+      if (md_.raycast_selected_mask_[index])
+        continue;
+      md_.raycast_selected_indices_.push_back(index);
+      md_.raycast_selected_mask_[index] = 1;
+    }
+
+    // Nearest and uniform sets can overlap. Fill any remaining slots from a
+    // phase-rotated scan so the actual complete-ray count still equals cap.
+    for (int offset = 0; offset < md_.proj_points_cnt &&
+         static_cast<int>(md_.raycast_selected_indices_.size()) <
+             selected_point_count; ++offset)
+    {
+      const int index = (offset + selection_phase) % md_.proj_points_cnt;
+      if (md_.raycast_selected_mask_[index])
+        continue;
+      md_.raycast_selected_indices_.push_back(index);
+      md_.raycast_selected_mask_[index] = 1;
+    }
+  }
+
+  for (const int i : md_.raycast_selected_indices_)
+  {
     pt_w = md_.proj_points_[i];
 
     // set flag for projected point
@@ -738,9 +787,10 @@ void GridMap::raycastProcess()
   {
     ROS_WARN_THROTTLE(2.0,
         "SCAN_OCC_RAYCAST_BUDGET_CAPPED skipped=%d cap=%d total=%d "
-        "complete_updates=1",
+        "nearest_priority=%d complete_updates=1",
         md_.proj_points_cnt - selected_point_count,
-        selected_point_count, md_.proj_points_cnt);
+        selected_point_count, md_.proj_points_cnt,
+        selected_point_count / 2);
   }
 
   min_x = min(min_x, md_.ray_pos_(0));

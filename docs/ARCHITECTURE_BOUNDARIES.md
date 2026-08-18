@@ -4,4 +4,7 @@ Dependency direction is `navdog_task ← navdog_core ← navdog_runtime`. Protoc
 
 Task and Core are standard C++ only. Protocol may use Mosquitto/JsonCpp but no ROS or navigation decision. The adapter may use ROS/GridMap but only produces observations. Runtime is the composition root; it may not duplicate `NavigationModeManager` conditions. SCAN plans/tracks only and never parses MQTT or changes Navdog state.
 
-`/navdog/route_cmd` is Route-only, `/navdog/scan_cmd` is SCAN-only, and `cmd_vel_owner_mux` is the only `/cmd_vel` publisher.
+`/navdog/route_cmd` is Route-only. Native SCAN publishes raw intent on
+`/native_scan/raw_cmd`; Runtime passes it through Core `SafetySupervisor` and
+publishes the safe SCAN-only command on `/navdog/scan_cmd`.
+`cmd_vel_owner_mux` is the only `/cmd_vel` publisher.

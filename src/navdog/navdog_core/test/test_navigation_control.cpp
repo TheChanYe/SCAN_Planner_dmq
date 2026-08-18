@@ -731,6 +731,94 @@ TEST(SafetySupervisorTest, InvalidRawCommandStops)
   EXPECT_EQ(cmd.source, CommandSource::SAFETY_STOP);
 }
 
+TEST(SafetySupervisorTest, StalePlannerCommandStops)
+{
+  NavdogConfig config{};
+  config.safety.planner_cmd_timeout_sec = 0.3;
+  SafetySupervisor supervisor(config.safety, config.limits);
+
+  VelocityCommand raw_cmd{};
+  raw_cmd.vx = 0.3;
+  raw_cmd.stamp_sec = 1.0;
+  raw_cmd.valid = true;
+  raw_cmd.source = CommandSource::PLANNER;
+
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 1.4);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 1.4;
+  context.obstacles.front_min = std::numeric_limits<double>::infinity();
+  context.map_valid = true;
+  context.map_stamp_sec = 1.4;
+
+  const VelocityCommand cmd = supervisor.apply(raw_cmd, context, 0.4, 1.4);
+  EXPECT_EQ(cmd.vx, 0.0);
+  EXPECT_EQ(cmd.source, CommandSource::SAFETY_STOP);
+}
+
+TEST(SafetySupervisorTest, LocalPlannerCommandPreservesScanMotionVector)
+{
+  NavdogConfig config{};
+  config.safety.emergency_stop = 0.45;
+  SafetySupervisor supervisor(config.safety, config.limits);
+
+  VelocityCommand raw_cmd{};
+  raw_cmd.vx = 0.3;
+  raw_cmd.vy = 0.1;
+  raw_cmd.yaw_rate = 0.2;
+  raw_cmd.stamp_sec = 2.0;
+  raw_cmd.valid = true;
+  raw_cmd.source = CommandSource::PLANNER;
+
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 2.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 2.0;
+  context.obstacles.front_min = 0.2;
+  context.map_valid = true;
+  context.map_stamp_sec = 2.0;
+
+  VelocityCommand initial_stop{};
+  initial_stop.valid = true;
+  initial_stop.source = CommandSource::TRACKING_STOP;
+  supervisor.apply(initial_stop, context, 0.4, 1.0);
+  const VelocityCommand cmd = supervisor.apply(raw_cmd, context, 0.4, 2.0);
+  EXPECT_DOUBLE_EQ(cmd.vx, raw_cmd.vx);
+  EXPECT_DOUBLE_EQ(cmd.vy, raw_cmd.vy);
+  EXPECT_DOUBLE_EQ(cmd.yaw_rate, raw_cmd.yaw_rate);
+  EXPECT_EQ(cmd.source, CommandSource::PLANNER);
+}
+
+TEST(SafetySupervisorTest, LocalPlannerCommandStillUsesTaskSpeedLimit)
+{
+  NavdogConfig config{};
+  SafetySupervisor supervisor(config.safety, config.limits);
+
+  VelocityCommand raw_cmd{};
+  raw_cmd.vx = -0.3;
+  raw_cmd.vy = 0.1;
+  raw_cmd.stamp_sec = 2.0;
+  raw_cmd.valid = true;
+  raw_cmd.source = CommandSource::PLANNER;
+
+  SafetySupervisor::Context context{};
+  context.robot = makeRobot(0.0, 0.0, 0.0, 2.0);
+  context.obstacles.valid = true;
+  context.obstacles.stamp_sec = 2.0;
+  context.obstacles.front_min = 0.1;
+  context.map_valid = true;
+  context.map_stamp_sec = 2.0;
+
+  VelocityCommand initial_stop{};
+  initial_stop.valid = true;
+  initial_stop.source = CommandSource::TRACKING_STOP;
+  supervisor.apply(initial_stop, context, 0.2, 1.0);
+  const VelocityCommand cmd = supervisor.apply(raw_cmd, context, 0.2, 2.0);
+  EXPECT_DOUBLE_EQ(cmd.vx, -0.2);
+  EXPECT_DOUBLE_EQ(cmd.vy, raw_cmd.vy);
+  EXPECT_EQ(cmd.source, CommandSource::SAFETY_SLOW);
+}
+
 TEST(SafetySupervisorTest, InvalidMapStops)
 {
   NavdogConfig config{};

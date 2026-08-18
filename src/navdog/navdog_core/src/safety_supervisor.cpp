@@ -296,15 +296,11 @@ bool SafetySupervisor::shouldApplyAccelerationLimit(
 //   7. 判断是否为 GOAL_ALIGN 或原地转向（vx=vy=0但yaw_rate非0），
 //      这两种情况强制将 vx/vy 归零（immediate_linear_stop），避免原地转向时有残留平移量；
 //   8. 计算动态最大线速度 effective_max_vx（任务上限与全局上限取较小值）；
-//   9. 前方障碍物减速：用 computeFrontSpeedLimit 限制 limited_vx（不能为负）；
-//  10. 转向惩罚：用 computeYawRateSpeedPenalty 进一步限制 limited_vx；
+//   9. Route类指令执行前方障碍物减速与转向惩罚；PLANNER指令已经由Native SCAN
+//      按完整vx/vy/yaw运动模型检查，不使用Runtime扇区摘要重复改变其运动方向；
 //  11. 侧向速度 limited_vy 直接限幅到 ±max_vy；
 //  12. 角速度 limited_w 限幅到 ±min(max_yaw_rate, 0.65)（硬件安全上限）；
-//  13. 判断前方紧急障碍(front_emergency_stop：距离<=紧急停止阈值)与局部脱困轨迹激活
-//      (local_escape_active：当前轨迹目的为LOCAL_AVOID且属于当前任务)：
-//      全向底盘即使前方紧急也应允许旋转/侧移/沿经碰撞检查过的局部避障轨迹小幅度倒退，
-//      因此局部脱困时允许一个很小的前进封顶(kLocalEscapeForwardCapMps=0.06m/s)，
-//      否则直接归零制止正向前进；
+//  13. Route类指令在前方紧急障碍条件下立即禁止正向前进；
 //  14. 加速度限制（仅当 shouldApplyAccelerationLimit 为 true 且已有历史输出时）：
 //      根据 dt 和最大加速度计算本周期允许的最大变化量，将 vx/vy/yaw_rate 钳制在
 //      [上次输出-最大变化, 上次输出+最大变化] 范围内（原地转向/对齐时不限制 vx/vy）；
@@ -336,6 +332,17 @@ VelocityCommand SafetySupervisor::apply(
   if (!raw_finite)
   {
     return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+  }
+
+  if (raw_cmd.source == CommandSource::PLANNER)
+  {
+    const double planner_cmd_age = now_sec - raw_cmd.stamp_sec;
+    if (!std::isfinite(raw_cmd.stamp_sec) ||
+        planner_cmd_age > safety_config_.planner_cmd_timeout_sec ||
+        planner_cmd_age < -safety_config_.future_tolerance_sec)
+    {
+      return safetyStop(now_sec, CommandSource::SAFETY_STOP);
+    }
   }
 
   // A controller-requested zero remains zero regardless of sensor freshness.
@@ -371,6 +378,8 @@ VelocityCommand SafetySupervisor::apply(
   double limited_vx = raw_cmd.vx;
   double limited_vy = raw_cmd.vy;
   double limited_w = raw_cmd.yaw_rate;
+  const bool planner_command =
+      raw_cmd.source == CommandSource::PLANNER;
   const bool goal_align =
       raw_cmd.source == CommandSource::GOAL_ALIGN;
   const bool turn_in_place =
@@ -387,6 +396,7 @@ VelocityCommand SafetySupervisor::apply(
   // Dynamic max_vx cap.
   const double effective_max_vx =
       std::max(0.0, std::min(max_vx, limit_config_.max_vx));
+  limited_vx = clamp(limited_vx, -effective_max_vx, effective_max_vx);
 
   ObstacleSummary effective_obstacles = context.obstacles;
   if (context.prefer_route_corridor_front && context.corridor.valid &&
@@ -401,19 +411,22 @@ VelocityCommand SafetySupervisor::apply(
   const double front_limit =
       computeFrontSpeedLimit(effective_obstacles);
 
-  if (std::isfinite(front_limit) && front_limit < 1.0)
+  if (!planner_command &&
+      std::isfinite(front_limit) && front_limit < 1.0)
   {
     limited_vx = std::min(limited_vx, front_limit * effective_max_vx);
     limited_vx = std::max(0.0, limited_vx);
   }
 
   // Yaw rate penalty on forward speed.
-  const double yaw_penalty =
-      computeYawRateSpeedPenalty(limited_w, effective_max_vx);
-
-  limited_vx = std::min(
-      limited_vx, yaw_penalty * effective_max_vx);
-  limited_vx = std::max(0.0, limited_vx);
+  if (!planner_command)
+  {
+    const double yaw_penalty =
+        computeYawRateSpeedPenalty(limited_w, effective_max_vx);
+    limited_vx = std::min(
+        limited_vx, yaw_penalty * effective_max_vx);
+    limited_vx = std::max(0.0, limited_vx);
+  }
 
   // Lateral limit.
   const double effective_max_vy =
@@ -426,29 +439,17 @@ VelocityCommand SafetySupervisor::apply(
           std::min(limit_config_.max_yaw_rate, 0.65));
   limited_w = clamp(limited_w, -effective_max_w, effective_max_w);
 
-  // A front emergency obstacle must stop positive forward
-  // motion immediately, but an omnidirectional robot must still
-  // be allowed to rotate, move laterally, or reverse along a
-  // collision-checked LOCAL_AVOID trajectory.
+  // Route commands use the scalar front-distance emergency gate. Native
+  // SCAN commands retain their collision-checked vector direction.
   const bool front_emergency_stop =
       effective_obstacles.valid &&
       std::isfinite(effective_obstacles.front_min) &&
       effective_obstacles.front_min <=
           safety_config_.emergency_stop;
 
-  const bool local_escape_active =
-      context.trajectory.valid &&
-      context.trajectory.purpose ==
-          NavigationMode::LOCAL_AVOID &&
-      context.trajectory.task_sequence != 0;
-
-  constexpr double kLocalEscapeForwardCapMps = 0.06;
-
-  if (front_emergency_stop && raw_cmd.vx > 0.0)
+  if (!planner_command && front_emergency_stop && raw_cmd.vx > 0.0)
   {
-    limited_vx = local_escape_active
-        ? std::min(raw_cmd.vx, kLocalEscapeForwardCapMps)
-        : 0.0;
+    limited_vx = 0.0;
   }
 
   // Acceleration limits.
@@ -483,11 +484,9 @@ VelocityCommand SafetySupervisor::apply(
 
   // Acceleration limiting must never reintroduce positive
   // forward velocity while the front emergency condition exists.
-  if (front_emergency_stop && raw_cmd.vx > 0.0)
+  if (!planner_command && front_emergency_stop && raw_cmd.vx > 0.0)
   {
-    limited_vx = local_escape_active
-        ? std::min(raw_cmd.vx, kLocalEscapeForwardCapMps)
-        : 0.0;
+    limited_vx = 0.0;
   }
 
   VelocityCommand cmd{};
@@ -497,7 +496,7 @@ VelocityCommand SafetySupervisor::apply(
   cmd.stamp_sec = std::isfinite(now_sec) ? now_sec : 0.0;
   cmd.valid = true;
 
-  if (cmd.vx < kEpsilon)
+  if (std::abs(cmd.vx) < kEpsilon)
     cmd.vx = 0.0;
   if (std::abs(cmd.vy) < kEpsilon)
     cmd.vy = 0.0;

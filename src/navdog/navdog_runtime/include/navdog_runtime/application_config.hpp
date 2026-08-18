@@ -23,6 +23,8 @@ struct ApplicationConfig
   {
     std::string odom_topic{"/quad_0/body_pose"};          // 采用的里程计topic
     std::string final_cmd_topic{"/navdog/route_cmd"};     // 最终输出速度指令topic
+    std::string raw_scan_cmd_topic{"/native_scan/raw_cmd"};
+    std::string scan_cmd_topic{"/navdog/scan_cmd"};
     std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
     std::string applied_cmd_feedback_topic{"/dmq_dog/applied_cmd_feedback"};
     std::string external_stop_topic{"/navdog/external_stop"};
