@@ -111,15 +111,16 @@ TEST(RouteManager, GoalAndOutOfRangeInterpolationUseLastPoint)
   EXPECT_FALSE(manager.forwardTarget(0.0, -1.0, point));
 }
 
-TEST(RouteManager, ElevationAssessmentDetectsOnlySignificantAscent)
+TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
 {
-  const auto assess = [](const std::vector<double>& z_values) {
+  const auto assess = [](const std::vector<double>& z_values,
+                         double spacing = 0.5) {
     navdog::RouteManager manager;
     std::vector<navdog_task::RoutePoint> points;
     for (std::size_t i = 0; i < z_values.size(); ++i)
     {
       navdog_task::RoutePoint point;
-      point.x = static_cast<double>(i) * 0.5;
+      point.x = static_cast<double>(i) * spacing;
       point.z = z_values[i];
       points.push_back(point);
     }
@@ -127,13 +128,27 @@ TEST(RouteManager, ElevationAssessmentDetectsOnlySignificantAscent)
     navdog::RouteProgress progress;
     progress.valid = true;
     progress.task_sequence = 1;
+    progress.segment_index = 0;
+    progress.segment_ratio = 0.0;
     progress.arc_length_m = 0.0;
     progress.total_length_m = points.back().x;
-    return manager.assessElevation(progress, navdog::StairUpConfig{});
+    navdog::StairUpConfig config{};
+    config.lookahead_distance_m = 2.20;
+    config.trigger_rise_m = 0.10;
+    config.min_consecutive_rising_points = 4;
+    return manager.assessElevation(progress, config);
   };
 
-  EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.30}).ascending);
-  EXPECT_FALSE(assess({0.30, 0.31, 0.29, 0.32}).ascending);
-  EXPECT_TRUE(assess({0.30, 0.30, 0.45, 0.60, 0.75}).ascending);
-  EXPECT_FALSE(assess({0.75, 0.60, 0.45, 0.30}).ascending);
+  EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.30, 0.30}).ascending);
+  EXPECT_FALSE(assess({0.30, 0.30, 0.50, 0.30, 0.30}).ascending);
+  EXPECT_FALSE(assess({0.30, 0.33, 0.36, 0.39}).ascending);
+  EXPECT_FALSE(assess({0.30, 0.32, 0.34, 0.36, 0.38}).ascending);
+
+  const auto ascent = assess({0.30, 0.33, 0.36, 0.39, 0.42});
+  EXPECT_TRUE(ascent.ascending);
+  EXPECT_EQ(4, ascent.consecutive_rising_points);
+  EXPECT_NEAR(0.12, ascent.rise_m, 1e-9);
+
+  EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.33, 0.36, 0.39, 0.42},
+      0.8).ascending);
 }

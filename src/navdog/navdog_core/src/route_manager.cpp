@@ -149,8 +149,15 @@ RouteElevationAssessment RouteManager::assessElevation(
       progress.task_sequence != task_view_.sequence ||
       !std::isfinite(config.lookahead_distance_m) ||
       config.lookahead_distance_m <= 0.0 ||
-      !std::isfinite(config.sample_step_m) || config.sample_step_m <= 0.0 ||
       !std::isfinite(config.trigger_rise_m) || config.trigger_rise_m <= 0.0)
+  {
+    return assessment;
+  }
+  if (config.min_consecutive_rising_points <= 0)
+    return assessment;
+  if (!std::isfinite(progress.segment_ratio) ||
+      progress.segment_ratio < 0.0 || progress.segment_ratio > 1.0 ||
+      !std::isfinite(progress.arc_length_m))
   {
     return assessment;
   }
@@ -159,30 +166,78 @@ RouteElevationAssessment RouteManager::assessElevation(
   if (!pointAtArcLength(progress.arc_length_m, current))
     return assessment;
 
-  const double checked_until = std::min(
-      progress.total_length_m,
-      progress.arc_length_m + config.lookahead_distance_m);
-  double max_forward_z = current.z;
-  for (double arc = progress.arc_length_m + config.sample_step_m;
-       arc < checked_until; arc += config.sample_step_m)
-  {
-    navdog_task::RoutePoint sample{};
-    if (!pointAtArcLength(arc, sample))
-      return RouteElevationAssessment{};
-    max_forward_z = std::max(max_forward_z, sample.z);
-  }
-
-  navdog_task::RoutePoint final_sample{};
-  if (!pointAtArcLength(checked_until, final_sample))
-    return assessment;
-  max_forward_z = std::max(max_forward_z, final_sample.z);
-
   assessment.valid = true;
   assessment.current_z = current.z;
-  assessment.max_forward_z = max_forward_z;
-  assessment.rise_m = max_forward_z - current.z;
-  assessment.checked_until_arc_m = checked_until;
-  assessment.ascending = assessment.rise_m + 1e-9 >= config.trigger_rise_m;
+  assessment.ascent_end_z = current.z;
+  assessment.checked_until_arc_m = progress.arc_length_m;
+
+  const auto& points = task_view_.points;
+  if (points.size() < 2 || progress.segment_index >= points.size() - 1)
+    return assessment;
+
+  constexpr double kZEpsilon = 1e-9;
+  double distance_ahead = 0.0;
+  double current_arc = progress.arc_length_m;
+  double previous_z = current.z;
+  double run_start_z = previous_z;
+  int consecutive_rising_points = 0;
+
+  const std::size_t first_future_index = progress.segment_index + 1;
+  for (std::size_t i = first_future_index; i < points.size(); ++i)
+  {
+    const auto& point = points[i];
+    double segment_remaining = 0.0;
+    if (i == first_future_index)
+    {
+      const auto& segment_start = points[progress.segment_index];
+      const auto& segment_end = points[progress.segment_index + 1];
+      const double segment_length = std::hypot(
+          segment_end.x - segment_start.x,
+          segment_end.y - segment_start.y);
+      segment_remaining = segment_length *
+          std::max(0.0, 1.0 - progress.segment_ratio);
+    }
+    else
+    {
+      const auto& previous_point = points[i - 1];
+      segment_remaining = std::hypot(
+          point.x - previous_point.x,
+          point.y - previous_point.y);
+    }
+
+    if (!std::isfinite(segment_remaining))
+      return RouteElevationAssessment{};
+    distance_ahead += std::max(0.0, segment_remaining);
+    if (distance_ahead > config.lookahead_distance_m + kZEpsilon)
+      break;
+
+    current_arc += std::max(0.0, segment_remaining);
+    assessment.checked_until_arc_m = current_arc;
+
+    if (point.z > previous_z + kZEpsilon)
+    {
+      ++consecutive_rising_points;
+      if (consecutive_rising_points == 1)
+        run_start_z = previous_z;
+      const double run_rise = point.z - run_start_z;
+      assessment.ascent_end_z = point.z;
+      assessment.rise_m = run_rise;
+      assessment.consecutive_rising_points = consecutive_rising_points;
+      if (consecutive_rising_points >=
+              config.min_consecutive_rising_points &&
+          run_rise + kZEpsilon >= config.trigger_rise_m)
+      {
+        assessment.ascending = true;
+        return assessment;
+      }
+    }
+    else
+    {
+      consecutive_rising_points = 0;
+      run_start_z = point.z;
+    }
+    previous_z = point.z;
+  }
   return assessment;
 }
 

@@ -70,8 +70,9 @@ RouteElevationAssessment elevation(bool ascending, double rise,
   value.valid = true;
   value.ascending = ascending;
   value.current_z = 0.30;
-  value.max_forward_z = 0.30 + rise;
+  value.ascent_end_z = 0.30 + rise;
   value.rise_m = rise;
+  value.consecutive_rising_points = ascending ? 4 : 0;
   value.checked_until_arc_m = checked_until;
   return value;
 }

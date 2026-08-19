@@ -54,10 +54,9 @@ bool NavigationModeManager::isConfigValid() const noexcept
     return false;
   if (!std::isfinite(stair_config_.lookahead_distance_m) ||
       stair_config_.lookahead_distance_m <= 0.0 ||
-      !std::isfinite(stair_config_.sample_step_m) ||
-      stair_config_.sample_step_m <= 0.0 ||
       !std::isfinite(stair_config_.trigger_rise_m) ||
       stair_config_.trigger_rise_m <= 0.0 ||
+      stair_config_.min_consecutive_rising_points <= 0 ||
       !std::isfinite(stair_config_.flat_tolerance_m) ||
       stair_config_.flat_tolerance_m < 0.0 ||
       stair_config_.flat_tolerance_m >= stair_config_.trigger_rise_m ||

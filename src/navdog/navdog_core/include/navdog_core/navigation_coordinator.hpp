@@ -100,8 +100,8 @@ private:
       CommandSource source,
       double now_sec) const noexcept;
 
-  // executeMode：根据当前导航模式分发到 executeRouteFollow/executeLocalAvoid，并处理
-  // “靠近终点但被阻”的超时判完成逻辑。
+  // executeMode：先统一处理最终目标边界，再根据当前导航模式分发到
+  // executeRouteFollow/executeLocalAvoid，并处理“靠近终点但被阻”的超时逻辑。
   VelocityCommand executeMode(
       const NavigationTask& task,
       const RobotState& robot,
@@ -113,8 +113,8 @@ private:
       double max_vx,
       double now_sec);
 
-  // executeRouteFollow：ROUTE_FOLLOW模式执行逻辑，接近终点时递减速度并交接给
-  // GoalController，否则交给RouteFollower。
+  // executeRouteFollow：ROUTE_FOLLOW模式执行逻辑，处理路线阻挡、近终点限速并
+  // 交给RouteFollower；最终目标边界由executeMode统一处理。
   VelocityCommand executeRouteFollow(
       const NavigationTask& task,
       const RobotState& robot,

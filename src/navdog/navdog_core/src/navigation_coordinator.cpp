@@ -320,14 +320,12 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 
 // =============================================================================
 // executeRouteFollow
-// ROUTE_FOLLOW 模式下的执行逻辑：接近终点时递减速度并交接给 GoalController，否则交给 RouteFollower。
+// ROUTE_FOLLOW 模式下的执行逻辑：处理路线阻挡、近终点限速并交给 RouteFollower。
 // 步骤：
 //   1. 若当前路线被判定为靠近终点处被阻挡，直接返回零速度（不绕过阻塞状态）；
-//   2. 计算是否near_goal（距终点小于near_goal_switch_dist）与到终点直线距离 goal_distance；
+//   2. 计算是否near_goal（距终点小于near_goal_switch_dist）；
 //   3. near_goal时根据剩余路程占switch_dist的比例线性插值限速（near_goal_max_v→near_goal_min_v）；
-//   4. 若goal_distance小于等于 finish_dist，交给 GoalController 做终点对齐/判完成，完成则进入SUCCEEDED
-//      并完整清理（避免遗留残留局部轨迹/安全状态），未完成则进入GOAL_ALIGN；
-//   5. 否则交由 RouteFollower 按pure pursuit策略跟随路线。
+//   4. 交由 RouteFollower 按pure pursuit策略跟随路线。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeRouteFollow(
@@ -354,10 +352,6 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
       std::hypot(task.points.back().x - robot.x,
                  task.points.back().y - robot.y) <=
           config_.goal_controller.near_goal_switch_dist;
-  const double goal_distance = task.points.empty()
-      ? std::numeric_limits<double>::infinity()
-      : std::hypot(task.points.back().x - robot.x,
-                   task.points.back().y - robot.y);
 
   double effective_max_vx = max_vx;
 
@@ -386,39 +380,6 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
         std::min(
             config_.goal_controller.near_goal_max_v,
             effective_max_vx));
-  }
-
-  // Only hand over to GoalController for final yaw alignment / finish.
-  if (std::isfinite(goal_distance) &&
-      goal_distance <= config_.goal_controller.finish_dist)
-  {
-    const auto result = goal_controller_.update(
-        task,
-        robot,
-        progress,
-        effective_max_vx,
-        std::min(config_.limits.max_yaw_rate,
-                 config_.goal_controller.near_goal_max_w),
-        now_sec);
-
-    if (result.finished)
-    {
-      state_ = NavState::SUCCEEDED;
-      obstacle_finished_ = false;
-      task_manager_.complete(task_manager_.session().sequence);
-
-      // Full cleanup: do not leave a stale local trajectory / safety state
-      // after the task is successfully completed.
-      resetNearGoalBlockedTimer();
-      navigation_mode_manager_.reset();
-      safety_supervisor_.reset();
-    }
-    else
-    {
-      state_ = NavState::GOAL_ALIGN;
-    }
-
-    return result.command;
   }
 
   return route_follower_.update(
@@ -451,15 +412,16 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
 
 // =============================================================================
 // executeMode
-// 根据当前导航模式（ROUTE_FOLLOW/LOCAL_AVOID）分发到对应的执行函数，并处理“靠近终点但被阻”
-// 的超时判完成逻辑。
+// 根据最终目标边界与当前导航模式（ROUTE_FOLLOW/LOCAL_AVOID）分发执行函数，并处理
+// “靠近终点但被阻”的超时判完成逻辑。
 // 步骤：
-//   1. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
-//   2. 计算到终点距离，判断是否near_goal_blocked（近终点且路线被阻）；
-//   3. 若near_goal_blocked，启动/继续计时，超过obstacle_finish_timeout_sec则判定任务完成
+//   1. 计算到终点距离，若已进入finish_dist，则交给GoalController判定完成或最终对齐；
+//   2. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
+//   3. 判断是否near_goal_blocked（近终点且路线被阻）；
+//   4. 若near_goal_blocked，启动/继续计时，超过obstacle_finish_timeout_sec则判定任务完成
 //      并完整清理，未超时则返回零速度；
-//   4. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
-//   5. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
+//   5. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
+//   6. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeMode(
@@ -475,6 +437,41 @@ VelocityCommand NavigationCoordinator::executeMode(
 {
   (void)obstacles;
   (void)corridor;
+  const double goal_distance = task.points.empty() || !robot.valid ||
+      !std::isfinite(robot.x) || !std::isfinite(robot.y)
+      ? std::numeric_limits<double>::infinity()
+      : std::hypot(task.points.back().x - robot.x,
+                   task.points.back().y - robot.y);
+  if (std::isfinite(goal_distance) &&
+      goal_distance <= config_.goal_controller.finish_dist)
+  {
+    const auto result = goal_controller_.update(
+        task,
+        robot,
+        progress,
+        max_vx,
+        std::min(config_.limits.max_yaw_rate,
+                 config_.goal_controller.near_goal_max_w),
+        now_sec);
+
+    if (result.finished)
+    {
+      state_ = NavState::SUCCEEDED;
+      obstacle_finished_ = false;
+      task_manager_.complete(task_manager_.session().sequence);
+      resetNearGoalBlockedTimer();
+      navigation_mode_manager_.reset();
+      safety_supervisor_.reset();
+    }
+    else
+    {
+      state_ = NavState::GOAL_ALIGN;
+    }
+
+    last_mode_ = mode_status.mode;
+    return result.command;
+  }
+
   // Corridor / robot not ready: do not execute any real controller.
   if (!corridor_available)
   {
@@ -483,10 +480,6 @@ VelocityCommand NavigationCoordinator::executeMode(
         CommandSource::TRACKING_STOP, now_sec);
   }
 
-  const double goal_distance = task.points.empty()
-      ? std::numeric_limits<double>::infinity()
-      : std::hypot(task.points.back().x - robot.x,
-                   task.points.back().y - robot.y);
   const bool near_goal_blocked =
       std::isfinite(goal_distance) &&
       goal_distance <= config_.goal_controller.near_goal_switch_dist &&

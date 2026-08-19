@@ -195,8 +195,8 @@ stair_up:
   # Keep elevation detection ahead of the 2.0m ordinary-block entry range so
   # the route prior wins before the first stair riser is classified as a wall.
   lookahead_distance_m: 2.20
-  sample_step_m: 0.10
   trigger_rise_m: 0.10
+  min_consecutive_rising_points: 4
   flat_tolerance_m: 0.03
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50

@@ -194,8 +194,9 @@ struct RouteElevationAssessment
   bool valid{false};
   bool ascending{false};
   double current_z{0.0};
-  double max_forward_z{0.0};
+  double ascent_end_z{0.0};
   double rise_m{0.0};
+  int consecutive_rising_points{0};
   double checked_until_arc_m{0.0};
 };
 

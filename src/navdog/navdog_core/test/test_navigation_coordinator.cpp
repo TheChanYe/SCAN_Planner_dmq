@@ -16,6 +16,22 @@ public:
     ASSERT_TRUE(coordinator.task_manager_.complete(sequence));
     coordinator.state_ = NavState::SUCCEEDED;
   }
+
+  static VelocityCommand executeMode(
+      NavigationCoordinator& coordinator,
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      const NavigationModeStatus& mode_status,
+      bool corridor_available,
+      double now_sec)
+  {
+    coordinator.state_ = NavState::TRACKING;
+    return coordinator.executeMode(
+        task, robot, progress, mode_status, ObstacleSummary{},
+        RouteCorridorAssessment{}, corridor_available,
+        coordinator.task_manager_.session().max_vx, now_sec);
+  }
 };
 
 namespace
@@ -101,6 +117,39 @@ TEST(NavigationCoordinator, CancelAcknowledgesCompletedTaskAndReturnsIdle)
   EXPECT_EQ(NavState::IDLE, coordinator.state());
   EXPECT_FALSE(coordinator.hasActiveTask());
   EXPECT_FALSE(coordinator.routeManager().hasRoute());
+}
+
+TEST(NavigationCoordinator, LocalAvoidGoalReachedCompletesBeforeCorridorGate)
+{
+  NavigationCoordinator coordinator;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const auto task = coordinator.routeManager().taskView();
+  const std::uint64_t sequence = coordinator.taskSession().sequence;
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 2.0;
+  robot.y = 0.0;
+
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = sequence;
+  progress.segment_index = 0;
+  progress.segment_ratio = 1.0;
+  progress.arc_length_m = 2.0;
+  progress.total_length_m = 2.0;
+  progress.remaining_distance_m = 0.0;
+  progress.route_yaw = 0.0;
+
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::LOCAL_AVOID;
+  mode.task_sequence = sequence;
+
+  const auto command = NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, false, 1.0);
+
+  EXPECT_TRUE(command.valid);
+  EXPECT_EQ(NavState::SUCCEEDED, coordinator.state());
+  EXPECT_FALSE(coordinator.hasActiveTask());
 }
 
 TEST(NavigationCoordinator, MaxVxUpdateKeepsSequenceRouteAndMode)
