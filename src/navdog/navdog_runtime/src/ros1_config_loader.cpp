@@ -53,6 +53,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("stair_up/lookahead_distance_m", c.stair_up.lookahead_distance_m);
   LOAD("stair_up/trigger_rise_m", c.stair_up.trigger_rise_m);
   LOAD("stair_up/min_consecutive_rising_points", c.stair_up.min_consecutive_rising_points);
+  LOAD("stair_up/min_average_slope", c.stair_up.min_average_slope);
   LOAD("stair_up/flat_tolerance_m", c.stair_up.flat_tolerance_m);
   LOAD("stair_up/exit_progress_margin_m", c.stair_up.exit_progress_margin_m);
   LOAD("stair_up/exit_confirm_sec", c.stair_up.exit_confirm_sec);

@@ -57,6 +57,8 @@ bool NavigationModeManager::isConfigValid() const noexcept
       !std::isfinite(stair_config_.trigger_rise_m) ||
       stair_config_.trigger_rise_m <= 0.0 ||
       stair_config_.min_consecutive_rising_points <= 0 ||
+      !std::isfinite(stair_config_.min_average_slope) ||
+      stair_config_.min_average_slope <= 0.0 ||
       !std::isfinite(stair_config_.flat_tolerance_m) ||
       stair_config_.flat_tolerance_m < 0.0 ||
       stair_config_.flat_tolerance_m >= stair_config_.trigger_rise_m ||

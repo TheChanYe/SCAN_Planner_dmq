@@ -196,6 +196,7 @@ struct RouteElevationAssessment
   double current_z{0.0};
   double ascent_end_z{0.0};
   double rise_m{0.0};
+  double average_slope{0.0};
   int consecutive_rising_points{0};
   double checked_until_arc_m{0.0};
 };

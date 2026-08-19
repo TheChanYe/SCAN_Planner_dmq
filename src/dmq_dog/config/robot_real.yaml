@@ -141,7 +141,7 @@ grid_map:
   sliding_map_size_z: 5.0
   map_sliding_thresh: 0.2
   body_height: 0.30
-  double_cylinder_radius: 0.25
+  double_cylinder_radius: 0.30
   double_cylinder_offset: 0.18
   # Remove lidar returns from the physical body only. Inflation outside the
   # body remains untouched, so nearby real obstacles are still preserved.
@@ -197,6 +197,7 @@ stair_up:
   lookahead_distance_m: 2.20
   trigger_rise_m: 0.10
   min_consecutive_rising_points: 4
+  min_average_slope: 0.15
   flat_tolerance_m: 0.03
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50
@@ -265,3 +266,4 @@ goal_controller:
   # Must remain above driver_deadband.zero_threshold_yaw_rate.
   goal_align_min_yaw_rate: 0.03
   finish_yaw_tolerance_deg: 10.0
+ 

@@ -136,6 +136,7 @@ TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
     config.lookahead_distance_m = 2.20;
     config.trigger_rise_m = 0.10;
     config.min_consecutive_rising_points = 4;
+    config.min_average_slope = 0.15;
     return manager.assessElevation(progress, config);
   };
 
@@ -143,12 +144,37 @@ TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
   EXPECT_FALSE(assess({0.30, 0.30, 0.50, 0.30, 0.30}).ascending);
   EXPECT_FALSE(assess({0.30, 0.33, 0.36, 0.39}).ascending);
   EXPECT_FALSE(assess({0.30, 0.32, 0.34, 0.36, 0.38}).ascending);
+  EXPECT_FALSE(assess({0.000, 0.018, 0.036, 0.054, 0.072, 0.090, 0.108},
+      0.25).ascending);
 
-  const auto ascent = assess({0.30, 0.33, 0.36, 0.39, 0.42});
+  const auto ascent = assess({0.00, 0.04, 0.08, 0.12, 0.16}, 0.20);
   EXPECT_TRUE(ascent.ascending);
   EXPECT_EQ(4, ascent.consecutive_rising_points);
-  EXPECT_NEAR(0.12, ascent.rise_m, 1e-9);
+  EXPECT_NEAR(0.16, ascent.rise_m, 1e-9);
+  EXPECT_NEAR(0.20, ascent.average_slope, 1e-9);
 
   EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.33, 0.36, 0.39, 0.42},
       0.8).ascending);
+  EXPECT_FALSE(assess({0.00, 0.03, 0.06, 0.06, 0.09, 0.12, 0.15},
+      0.20).ascending);
+
+  {
+    navdog::RouteManager manager;
+    std::vector<navdog_task::RoutePoint> points(5);
+    points[1].x = 0.0; points[1].z = 0.04;
+    points[2].x = 0.2; points[2].z = 0.08;
+    points[3].x = 0.4; points[3].z = 0.12;
+    points[4].x = 0.6; points[4].z = 0.16;
+    ASSERT_TRUE(manager.acceptRoute(1, points));
+    navdog::RouteProgress progress;
+    progress.valid = true;
+    progress.task_sequence = 1;
+    progress.segment_index = 0;
+    progress.segment_ratio = 0.0;
+    progress.arc_length_m = 0.0;
+    progress.total_length_m = 0.6;
+    navdog::StairUpConfig config{};
+    config.min_average_slope = 0.15;
+    EXPECT_FALSE(manager.assessElevation(progress, config).ascending);
+  }
 }

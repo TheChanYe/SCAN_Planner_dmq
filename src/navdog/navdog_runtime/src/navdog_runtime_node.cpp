@@ -193,12 +193,12 @@ bool NavdogRuntimeNode::initialize()
       scan_takeover_timeout_sec_, scan_recovery_max_attempts_);
   const auto& stair = application_config_.core.stair_up;
   ROS_INFO("STAIR_UP_CONFIG enabled=%d lookahead=%.2f "
-           "trigger_rise=%.2f min_rising_points=%d "
+           "trigger_rise=%.2f min_rising_points=%d min_average_slope=%.2f "
            "flat_tolerance=%.2f exit_margin=%.2f "
            "exit_confirm=%.2f",
       stair.enabled ? 1 : 0, stair.lookahead_distance_m,
       stair.trigger_rise_m, stair.min_consecutive_rising_points,
-      stair.flat_tolerance_m,
+      stair.min_average_slope, stair.flat_tolerance_m,
       stair.exit_progress_margin_m, stair.exit_confirm_sec);
 
   return true;
@@ -519,10 +519,11 @@ void NavdogRuntimeNode::logNavigationChanges(
   if (stair_activated)
   {
     const auto& elevation = output.route_elevation;
-    ROS_INFO("STAIR_UP_TRIGGER rise=%.3f current_z=%.3f ascent_end_z=%.3f "
-             "rising_points=%d robot_z=%.3f arc=%.3f hold_until=%.3f "
-             "mode_transition=%d",
-        elevation.rise_m, elevation.current_z, elevation.ascent_end_z,
+    ROS_INFO("STAIR_UP_TRIGGER rise=%.3f average_slope=%.3f "
+             "current_z=%.3f ascent_end_z=%.3f rising_points=%d "
+             "robot_z=%.3f arc=%.3f hold_until=%.3f mode_transition=%d",
+        elevation.rise_m, elevation.average_slope,
+        elevation.current_z, elevation.ascent_end_z,
         elevation.consecutive_rising_points,
         input.robot.z, output.route_progress.arc_length_m,
         output.navigation_mode.stair_hold_until_arc_m,
