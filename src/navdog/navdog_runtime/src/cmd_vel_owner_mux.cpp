@@ -22,7 +22,7 @@ double scan_cmd_timeout_sec = 0.30;
 double publish_rate_hz = 50.0;
 double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
-double route_follow_linear_speed_mps = 0.30;
+double route_follow_linear_speed_mps = 0.70;
 double local_avoid_linear_speed_mps = 0.30;
 std::string external_stop_topic{"/navdog/external_stop"};
 std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
@@ -39,13 +39,12 @@ geometry_msgs::Twist latest_scan_cmd_{};
 double scan_cmd_stamp_sec_{0.0};
 
 // CommandOwner：当前允许写入/cmd_vel的指令来源方。
-// ROUTE：由StartAlign/GoalAlign阶段的route_cmd控制；TRACKER：由跟踪器
-// （RouteFollower或SCAN本地避障）控制；NONE：无人拥有，必须硬停车。
+// ROUTE：route_cmd（StartAlign/Core RouteFollower/GoalAlign）；SCAN：scan_cmd。
 enum class CommandOwner
 {
   NONE,
   ROUTE,
-  TRACKER
+  SCAN
 };
 
 // MotionClass：用于日志分类的输出运动状态枚举。
@@ -59,7 +58,6 @@ enum class MotionClass
 CommandOwner previous_owner_{CommandOwner::NONE};
 double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
-double route_follow_enter_stamp_sec_{0.0};
 double local_avoid_enter_stamp_sec_{0.0};
 bool scan_takeover_ready{false};
 bool scan_takeover_forward_confirmed{false};
@@ -84,15 +82,15 @@ const char* ownerName(CommandOwner owner)
   switch (owner)
   {
     case CommandOwner::ROUTE: return "ROUTE";
-    case CommandOwner::TRACKER: return "TRACKER";
+    case CommandOwner::SCAN: return "SCAN";
     case CommandOwner::NONE:
     default:                  return "NONE";
   }
 }
 
 // effectiveOwner：根据当前导航状态与模式确定指令权归属于谁：
-// START_ALIGN/GOAL_ALIGN阶段归ROUTE；TRACKING且模式为ROUTE_FOLLOW或
-// LOCAL_AVOID时归TRACKER；TRACKING但模式为NONE时视为过渡期，暂不分配
+// START_ALIGN/GOAL_ALIGN阶段归ROUTE；TRACKING+ROUTE_FOLLOW归ROUTE；
+// TRACKING+LOCAL_AVOID归SCAN；TRACKING但模式为NONE时视为过渡期，暂不分配
 // 所有权；其余所有非运动状态（IDLE/PLANNING/PAUSED/FAILED/SUCCEEDED/
 // RECOVERY/EMERGENCY_STOP）均不分配权限。
 CommandOwner effectiveOwner()
@@ -104,9 +102,10 @@ CommandOwner effectiveOwner()
       return CommandOwner::ROUTE;
 
     case navdog::NavState::TRACKING:
-      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW ||
-          navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
-        return CommandOwner::TRACKER;
+      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+        return CommandOwner::ROUTE;
+      if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+        return CommandOwner::SCAN;
       // mode NONE during TRACKING — grace period.
       return CommandOwner::NONE;
 
@@ -160,18 +159,29 @@ void publishFinalCommand(const geometry_msgs::Twist& command, double now_sec)
 }
 
 void limitModeLinearSpeed(geometry_msgs::Twist& command,
-                          double mode_limit_mps,
                           const char* mode_name)
 {
-  const double effective_limit = navdog_runtime::effectiveLinearSpeedLimit(
-      mode_limit_mps, task_max_vx_, task_max_vx_valid_);
+  double effective_limit = 0.0;
+  double mode_limit_mps = 0.0;
+  if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
+  {
+    mode_limit_mps = route_follow_linear_speed_mps;
+    effective_limit = navdog_runtime::effectiveLinearSpeedLimit(
+        route_follow_linear_speed_mps, task_max_vx_, task_max_vx_valid_);
+  }
+  else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
+  {
+    mode_limit_mps = local_avoid_linear_speed_mps;
+    effective_limit = local_avoid_linear_speed_mps;
+  }
   if (effective_limit <= 0.0)
   {
     command.linear.x = 0.0;
     command.linear.y = 0.0;
     return;
   }
-  if (task_max_vx_valid_)
+  if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW &&
+      task_max_vx_valid_)
   {
     ROS_INFO_THROTTLE(1.0,
         "CMD_SPEED_LIMIT mode=%s task_max_vx=%.3f mode_limit=%.3f effective=%.3f",
@@ -300,18 +310,13 @@ void stateCallback(const std_msgs::UInt8::ConstPtr& msg)
     nav_state_change_stamp_sec_ = ros::Time::now().toSec();
 }
 
-// modeCallback：订阅导航模式。进入ROUTE_FOLLOW时记录进入时刻；进入LOCAL_AVOID时
-// 记录进入时刻并重置SCAN接管就绪/前进确认标志（要求重新确认）。
+// modeCallback：订阅导航模式。进入LOCAL_AVOID时记录进入时刻并重置SCAN接管
+// 就绪/前进确认标志（要求重新确认）。
 void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
 {
   const auto previous = navigation_mode_;
   navigation_mode_ = static_cast<navdog::NavigationMode>(msg->data);
-  if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW &&
-      previous != navdog::NavigationMode::ROUTE_FOLLOW)
-  {
-    route_follow_enter_stamp_sec_ = ros::Time::now().toSec();
-  }
-  else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID &&
+  if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID &&
       previous != navdog::NavigationMode::LOCAL_AVOID)
   {
     local_avoid_enter_stamp_sec_ = ros::Time::now().toSec();
@@ -350,14 +355,13 @@ void maxVxLimitCallback(const std_msgs::Float64::ConstPtr& msg)
 //    EMERGENCY_STOP等非运动状态），若成立则立即重置限速器并发布零速度（不经
 //    过限速处理），直接返回；
 // 4. 否则根据权归属方选择目标指令：
-//    - ROUTE：若route_cmd新鲜则使用，否则告警过时；
-//    - TRACKER：若处于ROUTE_FOLLOW模式，要求SCAN指令必须晚于本次交接/
-//      进入ROUTE_FOLLOW的时刻且仍处于新鲜期才采用；若处于LOCAL_AVOID模式，
-//      需要接管就绪且SCAN指令晚于进入LOCAL_AVOID的时刻且新鲜才采用，
+//    - ROUTE：只读取route_cmd，若新鲜则使用，否则告警过时；
+//    - SCAN：只读取scan_cmd，需要接管就绪且SCAN指令晚于进入LOCAL_AVOID
+//      的时刻且新鲜才采用，
 //      并对首次接管后的负向纵向速度做安全阻断（等待确认前进轨迹）；
 //      若尚未就绪，在短暂交接宽限内沿用上一帧实际输出，超出宽限则输出零速；
 //    - NONE：不处理（保持默认零目标）；
-// 5. 若目标有效且属于TRACKER，根据当前模式对线速度做上限限制；
+// 5. 若目标有效，根据当前模式对线速度做上限限制；
 // 6. 计算dt并调用限速器推进得到实际输出；
 // 7. 记录日志、发布最终指令，更新last_output_cmd_与时间戳。
 void timerCallback(const ros::TimerEvent&)
@@ -394,12 +398,12 @@ void timerCallback(const ros::TimerEvent&)
         last_output_cmd_.angular.z);
     limiter_initialized_ = true;
 
-    if (old_owner == CommandOwner::ROUTE && owner == CommandOwner::TRACKER)
+    if (old_owner == CommandOwner::ROUTE && owner == CommandOwner::SCAN)
     {
       scan_takeover_ready = false;
       scan_takeover_forward_confirmed = false;
     }
-    else if (owner != CommandOwner::TRACKER)
+    else if (owner != CommandOwner::SCAN)
     {
       scan_takeover_ready = false;
       scan_takeover_forward_confirmed = false;
@@ -471,31 +475,10 @@ void timerCallback(const ros::TimerEvent&)
       }
       break;
 
-    case CommandOwner::TRACKER:
+    case CommandOwner::SCAN:
     {
       const bool scan_cmd_fresh =
           isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec);
-      if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-      {
-        const bool route_track_cmd_after_handoff =
-            scan_cmd_stamp_sec_ >
-                std::max(owner_change_stamp_sec_,
-                         route_follow_enter_stamp_sec_) + kEpsilon;
-        if (route_track_cmd_after_handoff && scan_cmd_fresh)
-        {
-          target_cmd = latest_scan_cmd_;
-          target_valid = true;
-          selection_reason = "ROUTE_TRACK_FRESH";
-        }
-        else
-        {
-          selection_reason = route_track_cmd_after_handoff
-              ? "ROUTE_TRACK_STALE" : "ROUTE_TRACK_WAITING_COMMAND";
-          ROS_WARN_THROTTLE(1.0, "%s", selection_reason);
-        }
-        break;
-      }
-
       const bool scan_cmd_after_handoff =
           scan_cmd_stamp_sec_ > local_avoid_enter_stamp_sec_ + kEpsilon;
       if (scan_takeover_ready && scan_cmd_after_handoff && scan_cmd_fresh)
@@ -564,14 +547,12 @@ void timerCallback(const ros::TimerEvent&)
       break;
   }
 
-  if (target_valid && owner == CommandOwner::TRACKER)
+  if (target_valid && nav_state_ == navdog::NavState::TRACKING)
   {
     if (navigation_mode_ == navdog::NavigationMode::ROUTE_FOLLOW)
-      limitModeLinearSpeed(target_cmd, route_follow_linear_speed_mps,
-          "ROUTE_FOLLOW");
+      limitModeLinearSpeed(target_cmd, "ROUTE_FOLLOW");
     else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
-      limitModeLinearSpeed(target_cmd, local_avoid_linear_speed_mps,
-          "LOCAL_AVOID");
+      limitModeLinearSpeed(target_cmd, "LOCAL_AVOID");
   }
 
   // --- Apply velocity slew limiting ---
@@ -622,7 +603,7 @@ int main(int argc, char** argv)
   private_nh.param("max_vx_limit_topic", max_vx_limit_topic,
       std::string("/navdog/max_vx_limit"));
   private_nh.param("speed_limits/route_follow_linear_mps",
-      route_follow_linear_speed_mps, 0.30);
+      route_follow_linear_speed_mps, 0.70);
   private_nh.param("speed_limits/local_avoid_linear_mps",
       local_avoid_linear_speed_mps, 0.30);
 

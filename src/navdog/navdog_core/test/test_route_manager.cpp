@@ -191,3 +191,70 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
     EXPECT_FALSE(manager.assessElevation(progress, config).ascending);
   }
 }
+
+TEST(RouteManager, ElevationAssessmentRejectsBaselineValleys)
+{
+  const auto assess = [](const std::vector<double>& z_values,
+                         std::size_t segment_index,
+                         double segment_ratio,
+                         double spacing = 0.2) {
+    navdog::RouteManager manager;
+    std::vector<navdog_task::RoutePoint> points;
+    for (std::size_t i = 0; i < z_values.size(); ++i)
+    {
+      navdog_task::RoutePoint point;
+      point.x = static_cast<double>(i) * spacing;
+      point.z = z_values[i];
+      points.push_back(point);
+    }
+    EXPECT_TRUE(manager.acceptRoute(1, points));
+    navdog::RouteProgress progress;
+    progress.valid = true;
+    progress.task_sequence = 1;
+    progress.segment_index = segment_index;
+    progress.segment_ratio = segment_ratio;
+    progress.arc_length_m =
+        (static_cast<double>(segment_index) + segment_ratio) * spacing;
+    progress.total_length_m = points.back().x;
+    navdog::StairUpConfig config{};
+    config.lookahead_distance_m = 2.20;
+    config.trigger_rise_m = 0.10;
+    config.min_consecutive_rising_points = 4;
+    config.min_average_slope = 0.15;
+    config.flat_tolerance_m = 0.03;
+    config.baseline_lookback_distance_m = 1.00;
+    config.baseline_drop_tolerance_m = 0.06;
+    return manager.assessElevation(progress, config);
+  };
+
+  EXPECT_FALSE(assess({0.05, 0.05, -0.14, -0.15, -0.10, -0.04, 0.02, 0.06},
+      0, 0.0).ascending);
+
+  const auto inside_valley =
+      assess({0.06, 0.05, -0.15, -0.12, -0.07, -0.02, 0.04, 0.07},
+          2, 0.5);
+  EXPECT_FALSE(inside_valley.ascending);
+  EXPECT_LT(inside_valley.current_z, -0.10);
+  EXPECT_NEAR(0.05, inside_valley.baseline_z, 0.011);
+  EXPECT_GT(inside_valley.baseline_drop_m, 0.06);
+  EXPECT_FALSE(inside_valley.baseline_consistent);
+
+  EXPECT_FALSE(assess({0.09, -0.13, 0.09, 0.10, 0.103, 0.109},
+      1, 0.7).ascending);
+  EXPECT_FALSE(assess({-0.10, -0.31, -0.095, -0.087, -0.059, -0.053},
+      1, 0.4).ascending);
+  EXPECT_FALSE(assess({0.05, 0.04, -0.08, -0.14, -0.13, -0.09,
+      -0.04, 0.02, 0.06}, 3, 0.3).ascending);
+
+  const auto true_stair =
+      assess({0.00, 0.00, 0.04, 0.08, 0.12, 0.16}, 0, 0.0);
+  EXPECT_TRUE(true_stair.baseline_consistent);
+  EXPECT_NEAR(0.0, true_stair.baseline_z, 1e-9);
+  EXPECT_TRUE(true_stair.ascending);
+  EXPECT_GE(true_stair.consecutive_rising_points, 4);
+  EXPECT_GE(true_stair.rise_m, 0.10);
+  EXPECT_GE(true_stair.average_slope, 0.15);
+
+  EXPECT_TRUE(assess({0.002, -0.005, 0.038, 0.079, 0.118, 0.161},
+      0, 0.0).ascending);
+}

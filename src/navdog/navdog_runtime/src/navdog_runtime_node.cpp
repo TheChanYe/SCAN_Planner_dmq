@@ -514,16 +514,49 @@ void NavdogRuntimeNode::handleScanRecovery(
 void NavdogRuntimeNode::logNavigationChanges(
     const navdog::CoreOutput& output, const navdog::CoreInput& input)
 {
+  const auto& elevation = output.route_elevation;
+  const auto& stair_config = application_config_.core.stair_up;
+  if (stair_config.enabled && elevation.valid &&
+      !elevation.baseline_consistent)
+  {
+    ROS_WARN_THROTTLE(1.0,
+        "STAIR_UP_REJECT reason=ROUTE_Z_BASELINE_DROP "
+        "current_z=%.3f baseline_z=%.3f baseline_drop=%.3f "
+        "allowed=%.3f arc=%.3f",
+        elevation.current_z,
+        elevation.baseline_z,
+        elevation.baseline_drop_m,
+        stair_config.baseline_drop_tolerance_m,
+        output.route_progress.arc_length_m);
+  }
+  const bool robot_z_valid = input.robot.valid && std::isfinite(input.robot.z);
+  const double route_robot_z_error = robot_z_valid
+      ? std::fabs(elevation.current_z - input.robot.z)
+      : 0.0;
+  if (stair_config.enabled && elevation.valid && elevation.ascending &&
+      elevation.baseline_consistent &&
+      (!robot_z_valid ||
+       route_robot_z_error > stair_config.max_robot_route_z_error_m))
+  {
+    ROS_WARN_THROTTLE(1.0,
+        "STAIR_UP_REJECT reason=ROUTE_ROBOT_Z_MISMATCH "
+        "route_z=%.3f robot_z=%.3f error=%.3f allowed=%.3f arc=%.3f",
+        elevation.current_z,
+        input.robot.z,
+        route_robot_z_error,
+        stair_config.max_robot_route_z_error_m,
+        output.route_progress.arc_length_m);
+  }
+
   const bool stair_activated = !last_logged_stair_up_active_ &&
       output.navigation_mode.stair_up_active;
   if (stair_activated)
   {
-    const auto& elevation = output.route_elevation;
     ROS_INFO("STAIR_UP_TRIGGER rise=%.3f average_slope=%.3f "
-             "current_z=%.3f ascent_end_z=%.3f rising_points=%d "
+             "current_z=%.3f baseline_z=%.3f ascent_end_z=%.3f rising_points=%d "
              "robot_z=%.3f arc=%.3f hold_until=%.3f mode_transition=%d",
         elevation.rise_m, elevation.average_slope,
-        elevation.current_z, elevation.ascent_end_z,
+        elevation.current_z, elevation.baseline_z, elevation.ascent_end_z,
         elevation.consecutive_rising_points,
         input.robot.z, output.route_progress.arc_length_m,
         output.navigation_mode.stair_hold_until_arc_m,

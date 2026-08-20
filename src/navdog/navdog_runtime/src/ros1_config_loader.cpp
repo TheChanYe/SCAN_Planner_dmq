@@ -55,6 +55,9 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("stair_up/min_consecutive_rising_points", c.stair_up.min_consecutive_rising_points);
   LOAD("stair_up/min_average_slope", c.stair_up.min_average_slope);
   LOAD("stair_up/flat_tolerance_m", c.stair_up.flat_tolerance_m);
+  LOAD("stair_up/baseline_lookback_distance_m", c.stair_up.baseline_lookback_distance_m);
+  LOAD("stair_up/baseline_drop_tolerance_m", c.stair_up.baseline_drop_tolerance_m);
+  LOAD("stair_up/max_robot_route_z_error_m", c.stair_up.max_robot_route_z_error_m);
   LOAD("stair_up/exit_progress_margin_m", c.stair_up.exit_progress_margin_m);
   LOAD("stair_up/exit_confirm_sec", c.stair_up.exit_confirm_sec);
   LOAD("limits/max_vx", c.limits.max_vx);
@@ -71,7 +74,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("route_follower/kp_yaw", c.route_follower.kp_yaw);
   LOAD("route_follower/heading_slowdown_start_rad", c.route_follower.heading_slowdown_start_rad);
   LOAD("route_follower/heading_turn_only_threshold_rad", c.route_follower.heading_turn_only_threshold_rad);
-  LOAD("route_follower/max_vx", c.route_follower.max_vx);
+  LOAD("speed_limits/route_follow_linear_mps", c.route_follower.max_vx);
   LOAD("goal_controller/near_goal_switch_dist", c.goal_controller.near_goal_switch_dist);
   LOAD("goal_controller/near_goal_kp_v", c.goal_controller.near_goal_kp_v);
   LOAD("goal_controller/near_goal_min_v", c.goal_controller.near_goal_min_v);

@@ -2,14 +2,12 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
-#include <memory>
 #include <string>
 #include <utility>
 
 #include <Eigen/Eigen>
 #include <geometry_msgs/Twist.h>
 #include <nav_msgs/Odometry.h>
-#include <nav_msgs/Path.h>
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
@@ -17,7 +15,6 @@
 #include <tf/tf.h>
 
 #include "bspline_opt/uniform_bspline.h"
-#include "plan_manage_dmq/route_path_tracker.h"
 #include "scan_planner/Bspline.h"
 
 namespace
@@ -36,7 +33,6 @@ ros::Subscriber bspline_sub;
 ros::Subscriber odom_sub;
 ros::Subscriber reset_sub;
 ros::Subscriber takeover_sync_sub;
-ros::Subscriber route_path_sub;
 ros::Subscriber navigation_mode_sub;
 ros::Timer cmd_timer;
 
@@ -66,8 +62,6 @@ double max_vyaw;
 double finish_dist;
 std::string body_pose_topic;
 std::uint8_t navigation_mode = 0;
-scan_planner_dmq::RoutePathTrackerConfig route_tracker_config;
-std::unique_ptr<scan_planner_dmq::RoutePathTracker> route_tracker;
 
 // Mode transition linear blending state.  When the navigation mode
 // changes (ROUTE_FOLLOW <-> LOCAL_AVOID), the controller linearly
@@ -90,7 +84,7 @@ bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, doubl
 }
 
 // loadParams：加载并校验闭环控制器全部参数（前矢时间/比例增益/速度上限/完成距离、
-// 接管锚点容差、路径跟踪器参数）。每个必需参数缺失或非法均记录ok=false，最后对
+// 接管锚点容差）。每个必需参数缺失或非法均记录ok=false，最后对
 // max_vyaw做安全上限截断并输出配置日志。任一项无效则返回false。
 bool loadParams(const ros::NodeHandle &nh)
 {
@@ -138,33 +132,6 @@ bool loadParams(const ros::NodeHandle &nh)
       finish_dist);
   nh.param("takeover_anchor_tolerance", takeover_anchor_tolerance, 0.25);
   nh.param("mode_transition_duration_sec", mode_transition_duration_sec, 0.5);
-  nh.param("route_tracking/lookahead_distance_m",
-      route_tracker_config.lookahead_distance_m,
-      route_tracker_config.lookahead_distance_m);
-  nh.param("route_tracking/heading_lookahead_m",
-      route_tracker_config.heading_lookahead_m,
-      route_tracker_config.heading_lookahead_m);
-  nh.param("route_tracking/max_forward_search_m",
-      route_tracker_config.max_forward_search_m,
-      route_tracker_config.max_forward_search_m);
-  nh.param("route_tracking/near_goal_slowdown_m",
-      route_tracker_config.near_goal_slowdown_m,
-      route_tracker_config.near_goal_slowdown_m);
-  nh.param("route_tracking/kp_position",
-      route_tracker_config.kp_position,
-      route_tracker_config.kp_position);
-  nh.param("route_tracking/kp_yaw",
-      route_tracker_config.kp_yaw,
-      route_tracker_config.kp_yaw);
-  nh.param("route_tracking/max_vx",
-      route_tracker_config.max_vx,
-      route_tracker_config.max_vx);
-  nh.param("speed_limits/route_follow_linear_mps",
-      route_tracker_config.max_vx,
-      route_tracker_config.max_vx);
-  nh.param("route_tracking/max_yaw_rate",
-      route_tracker_config.max_yaw_rate,
-      route_tracker_config.max_yaw_rate);
 
   if (!ok)
     return false;
@@ -224,17 +191,6 @@ bool loadParams(const ros::NodeHandle &nh)
     ROS_ERROR("[closed_loop_controller_dmq] takeover_anchor_tolerance must be finite and >= 0");
     ok = false;
   }
-  if (!std::isfinite(route_tracker_config.lookahead_distance_m) ||
-      route_tracker_config.lookahead_distance_m <= 0.0 ||
-      !std::isfinite(route_tracker_config.max_vx) ||
-      route_tracker_config.max_vx <= 0.0 ||
-      !std::isfinite(route_tracker_config.max_yaw_rate) ||
-      route_tracker_config.max_yaw_rate <= 0.0)
-  {
-    ROS_ERROR("[closed_loop_controller_dmq] invalid route_tracking configuration");
-    ok = false;
-  }
-
   if (!ok)
     return false;
 
@@ -264,17 +220,6 @@ bool loadParams(const ros::NodeHandle &nh)
       max_vx,
       max_vy,
       max_vyaw);
-
-  ROS_INFO(
-      "[closed_loop_controller_dmq] ROUTE_TRACK_CONFIG "
-      "lookahead=%.3f heading_lookahead=%.3f kp_pos=%.3f kp_yaw=%.3f "
-      "max_vx=%.3f max_yaw_rate=%.3f",
-      route_tracker_config.lookahead_distance_m,
-      route_tracker_config.heading_lookahead_m,
-      route_tracker_config.kp_position,
-      route_tracker_config.kp_yaw,
-      route_tracker_config.max_vx,
-      route_tracker_config.max_yaw_rate);
 
   return true;
 }
@@ -391,7 +336,7 @@ void publishTakeoverReady(bool ready)
 }
 
 // resetCallback：接收外部重置信号，清空当前轨迹/执行状态/接管等全部临时状态，
-// 重置路径跟踪器并发布停止指令。
+// 并发布停止指令。
 void resetCallback(const std_msgs::EmptyConstPtr&)
 {
   receive_traj = false;
@@ -410,47 +355,13 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   publishTakeoverReady(false);
   mode_transition_active = false;
   publishStop();
-  if (route_tracker) route_tracker->reset();
 
   ROS_WARN(
       "[closed_loop_controller_dmq] "
       "NATIVE_SCAN_CONTROLLER_RESET");
 }
 
-// routePathCallback：接收Native SCAN发布的Route阶段参考路径，转换为点列后
-// 设置给路径跟踪器。路径为空、少于2个点或跟踪器不存在则拒绝。
-void routePathCallback(const nav_msgs::PathConstPtr& msg)
-{
-  if (!msg || msg->poses.size() < 2 || !route_tracker)
-  {
-    ROS_WARN_THROTTLE(1.0,
-        "[closed_loop_controller_dmq] reject empty route path");
-    return;
-  }
-
-  std::vector<Eigen::Vector3d> points;
-  points.reserve(msg->poses.size());
-  for (const auto& pose : msg->poses)
-  {
-    points.emplace_back(
-        pose.pose.position.x,
-        pose.pose.position.y,
-        pose.pose.position.z);
-  }
-
-  if (!route_tracker->setPath(points))
-  {
-    ROS_ERROR("[closed_loop_controller_dmq] ROUTE_TRACK_PATH_REJECTED points=%zu",
-        points.size());
-    return;
-  }
-
-  ROS_INFO("[closed_loop_controller_dmq] ROUTE_TRACK_PATH_ACCEPTED points=%zu",
-      points.size());
-}
-
-// navigationModeCallback：订阅导航模式。若刚刚进入ROUTE_FOLLOW模式，要求路径
-// 跟踪器下一次重新全路径搜索投影点（避免错误匹配到旧进度）。
+// navigationModeCallback：订阅导航模式并在模式变化时启动线性速度过渡。
 void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
 {
   if (!msg) return;
@@ -468,12 +379,6 @@ void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
         mode_transition_duration_sec);
   }
   navigation_mode = new_mode;
-  if (navigation_mode == kModeRouteFollow &&
-      previous_mode != kModeRouteFollow && route_tracker)
-  {
-    route_tracker->requestReacquire();
-    ROS_INFO("[closed_loop_controller_dmq] ROUTE_TRACK_REACQUIRE");
-  }
 }
 
 // takeoverSyncCallback：接收接管同步信号。清空当前轨迹并进入“等待接管轨迹”
@@ -619,8 +524,7 @@ void odomCallback(const nav_msgs::OdometryConstPtr &msg)
 
 // cmdCallback：固定频率（默认100Hz）的主控制循环，根据当前导航模式分支处理：
 // 1. 无里程计时：不冻结且发布停车；
-// 2. ROUTE_FOLLOW模式：冻结SCAN规划时间推进，交由RoutePathTracker计算纯几何跟踪
-//    速度并发布（vy固定为0）；若距径无效/未就绪则发布停车；
+// 2. ROUTE_FOLLOW模式：SCAN不拥有速度控制权，冻结规划时间并发布零scan_cmd；
 // 3. 非LOCAL_AVOID模式或尚未收到轨迹：不冻结且发布停车；
 // 4. LOCAL_AVOID且为静止轨迹（EmergencyStop）：不对该轨迹做位置反馈跟踪（防止
 //    里程计漂移后被拉回旧停止点），直接发布停车；
@@ -644,32 +548,7 @@ void cmdCallback(const ros::TimerEvent &)
   if (navigation_mode == kModeRouteFollow)
   {
     publishExecutionFrozen(true);
-    if (!route_tracker)
-    {
-      publishStop();
-      return;
-    }
-
-    const auto route_output = route_tracker->update(odom_pos, odom_yaw);
-    if (!route_output.valid)
-    {
-      ROS_WARN_THROTTLE(1.0,
-          "[closed_loop_controller_dmq] ROUTE_TRACK_WAITING_PATH");
-      publishStop();
-      return;
-    }
-
-    geometry_msgs::Twist cmd;
-    cmd.linear.x = route_output.vx;
-    cmd.linear.y = 0.0;
-    cmd.angular.z = route_output.yaw_rate;
-    publishBlended(cmd);
-    ROS_DEBUG_THROTTLE(1.0,
-        "ROUTE_TRACK_CONTROL progress=%.3f remaining=%.3f "
-        "target=(%.3f,%.3f) cmd=(%.3f,0.000,%.3f)",
-        route_output.progress_m, route_output.remaining_m,
-        route_output.target_x, route_output.target_y,
-        route_output.vx, route_output.yaw_rate);
+    publishStop();
     return;
   }
 
@@ -780,9 +659,9 @@ void cmdCallback(const ros::TimerEvent &)
 }
 } // namespace
 
-// main：closed_loop_controller_dmq节点入口。加载参数失败则退出；创建路径
-// 跟踪器实例；注册全部订阅/发布者（B样条、里程计、重置、接管同步、Route参考
-// 路径、导航模式）与发布者（速度指令、执行冻结、接管就绪）；创建100Hz控制定时器；
+// main：closed_loop_controller_dmq节点入口。加载参数失败则退出；注册全部订阅/
+// 发布者（B样条、里程计、重置、接管同步、导航模式）与发布者（速度指令、
+// 执行冻结、接管就绪）；创建100Hz控制定时器；
 // 最后进入ros::spin()。
 int main(int argc, char **argv)
 {
@@ -792,16 +671,12 @@ int main(int argc, char **argv)
 
   if (!loadParams(nh))
     return 1;
-  route_tracker.reset(
-      new scan_planner_dmq::RoutePathTracker(route_tracker_config));
 
   bspline_sub = node.subscribe("/native_scan/planning/bspline", 10, bsplineCallback);
   odom_sub = node.subscribe(body_pose_topic, 20, odomCallback, ros::TransportHints().tcpNoDelay());
   reset_sub = node.subscribe("/native_scan/reset", 10, resetCallback);
   takeover_sync_sub = node.subscribe("/native_scan/takeover_sync", 10,
       takeoverSyncCallback);
-  route_path_sub = node.subscribe("/native_scan/initial_path", 1,
-      routePathCallback);
   navigation_mode_sub = node.subscribe("/navdog/navigation_mode", 10,
       navigationModeCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("/navdog/scan_cmd", 20);

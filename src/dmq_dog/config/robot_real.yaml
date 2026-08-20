@@ -68,18 +68,22 @@ turn_voice:
   message: "正在转弯请注意"
 
 limits:
-  max_vx: 0.50
+  max_vx: 0.70
   max_vy: 0.12
   max_yaw_rate: 0.65
   max_accel_x: 0.50
   max_accel_y: 0.25
   max_accel_yaw: 0.80
 
-# Final planar speed caps selected by navigation mode. These are applied by
-# cmd_vel_owner_mux immediately before /cmd_vel is published.
 speed_limits:
+  # ROUTE_FOLLOW 的模式最高速度。
+  # 实际速度还受 MQTT task max_vx 控制。
   route_follow_linear_mps: 0.70
-  local_avoid_linear_mps: 0.52
+
+  # LOCAL_AVOID 唯一速度上限。
+  # 普通避障和楼梯避障完全共用。
+  # 不受 MQTT task max_vx 影响。
+  local_avoid_linear_mps: 0.30
 
 # Hard limits applied immediately before publishing to the physical dog.
 driver_limits:
@@ -199,6 +203,9 @@ stair_up:
   min_consecutive_rising_points: 4
   min_average_slope: 0.15
   flat_tolerance_m: 0.03
+  baseline_lookback_distance_m: 1.00
+  baseline_drop_tolerance_m: 0.06
+  max_robot_route_z_error_m: 0.12
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50
 
@@ -217,19 +224,6 @@ route_follower:
   # Physical turn-only hysteresis is owned by dmq_bridge. This higher guard is
   # retained only for a route target that is genuinely behind the dog.
   heading_turn_only_threshold_rad: 0.80
-  max_vx: 0.40
-
-# Continuous controller for the original MQTT polyline. It publishes forward
-# velocity plus one yaw correction; lateral velocity is intentionally zero.
-route_tracking:
-  lookahead_distance_m: 0.60
-  heading_lookahead_m: 0.40
-  max_forward_search_m: 2.50
-  near_goal_slowdown_m: 0.80
-  kp_position: 0.70
-  kp_yaw: 1.50
-  max_vx: 0.30
-  max_yaw_rate: 0.65
 
 route_corridor_observation:
   map_timeout_sec: 1.50
@@ -266,4 +260,3 @@ goal_controller:
   # Must remain above driver_deadband.zero_threshold_yaw_rate.
   goal_align_min_yaw_rate: 0.03
   finish_yaw_tolerance_deg: 10.0
- 

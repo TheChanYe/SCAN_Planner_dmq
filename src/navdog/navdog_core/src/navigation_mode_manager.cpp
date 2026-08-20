@@ -62,6 +62,12 @@ bool NavigationModeManager::isConfigValid() const noexcept
       !std::isfinite(stair_config_.flat_tolerance_m) ||
       stair_config_.flat_tolerance_m < 0.0 ||
       stair_config_.flat_tolerance_m >= stair_config_.trigger_rise_m ||
+      !std::isfinite(stair_config_.baseline_lookback_distance_m) ||
+      stair_config_.baseline_lookback_distance_m <= 0.0 ||
+      !std::isfinite(stair_config_.baseline_drop_tolerance_m) ||
+      stair_config_.baseline_drop_tolerance_m < 0.0 ||
+      !std::isfinite(stair_config_.max_robot_route_z_error_m) ||
+      stair_config_.max_robot_route_z_error_m < 0.0 ||
       !std::isfinite(stair_config_.exit_progress_margin_m) ||
       stair_config_.exit_progress_margin_m < 0.0 ||
       !std::isfinite(stair_config_.exit_confirm_sec) ||
@@ -270,8 +276,13 @@ NavigationModeOutput NavigationModeManager::update(
     return output;
   }
 
+  const bool robot_z_valid = robot.valid && std::isfinite(robot.z);
+  const bool route_robot_z_consistent = robot_z_valid &&
+      std::fabs(route_elevation.current_z - robot.z) <=
+          stair_config_.max_robot_route_z_error_m;
   const bool route_ascending = stair_config_.enabled &&
-      route_elevation.valid && route_elevation.ascending;
+      route_elevation.valid && route_elevation.ascending &&
+      route_elevation.baseline_consistent && route_robot_z_consistent;
   const bool stair_activated_this_update = route_ascending &&
       status_.avoidance_allowed && !status_.stair_up_active;
   if (route_ascending && status_.avoidance_allowed)

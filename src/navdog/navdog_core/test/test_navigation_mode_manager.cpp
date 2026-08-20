@@ -70,6 +70,8 @@ RouteElevationAssessment elevation(bool ascending, double rise,
   value.valid = true;
   value.ascending = ascending;
   value.current_z = 0.30;
+  value.baseline_z = 0.30;
+  value.baseline_consistent = true;
   value.ascent_end_z = 0.30 + rise;
   value.rise_m = rise;
   value.consecutive_rising_points = ascending ? 4 : 0;
@@ -345,12 +347,47 @@ TEST(NavigationModeManagerTest, CandidateTimerResets)
 TEST(NavigationModeManagerTest, RouteAscentEntersAvoidImmediatelyWithPriority)
 {
   NavigationModeManager manager;
-  const auto output = manager.update(task(), robot(), progress(),
+  auto r = robot();
+  r.z = 0.32;
+  const auto output = manager.update(task(), r, progress(),
       elevation(true, 0.15, 1.5), corridor(true, 0.2), obstacles(), 1.0);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_EQ(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
   EXPECT_TRUE(output.status.stair_up_active);
   EXPECT_DOUBLE_EQ(output.status.stair_hold_until_arc_m, 1.5);
+}
+
+TEST(NavigationModeManagerTest, RouteAscentRequiresRobotZConsistency)
+{
+  NavigationModeManager manager;
+  auto r = robot();
+  r.z = 0.32;
+  auto output = manager.update(task(), r, progress(),
+      elevation(true, 0.15, 1.5), corridor(false), obstacles(), 1.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
+  EXPECT_TRUE(output.status.stair_up_active);
+
+  NavigationModeManager mismatch_manager;
+  r.z = 0.05;
+  navdog::RouteElevationAssessment route_ascent =
+      elevation(true, 0.15, 1.5);
+  route_ascent.current_z = -0.15;
+  route_ascent.baseline_z = -0.15;
+  output = mismatch_manager.update(task(), r, progress(),
+      route_ascent, corridor(false), obstacles(), 1.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
+  EXPECT_NE(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
+  EXPECT_FALSE(output.status.stair_up_active);
+
+  NavigationModeConfig mode_config;
+  mode_config.enter_confirm_sec = 0.0;
+  NavigationModeManager blocked_manager(mode_config, StairUpConfig{});
+  output = blocked_manager.update(task(), r, progress(),
+      route_ascent, corridor(true, 1.0), obstacles(), 1.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_FALSE(output.status.stair_up_active);
+  EXPECT_NE(output.status.reason, NavigationModeReason::ROUTE_ASCENDING);
 }
 
 TEST(NavigationModeManagerTest, RouteAscentLatchesAfterOrdinaryAvoidEntry)
@@ -359,13 +396,15 @@ TEST(NavigationModeManagerTest, RouteAscentLatchesAfterOrdinaryAvoidEntry)
   mode_config.enter_confirm_sec = 0.0;
   NavigationModeManager manager(mode_config, StairUpConfig{});
 
-  auto output = manager.update(task(), robot(), progress(),
+  auto r = robot();
+  r.z = 0.32;
+  auto output = manager.update(task(), r, progress(),
       elevation(false, 0.0, 1.5), corridor(true, 1.0), obstacles(), 1.0);
   ASSERT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   ASSERT_EQ(output.status.reason, NavigationModeReason::BLOCK_CONFIRMED);
   ASSERT_FALSE(output.status.stair_up_active);
 
-  output = manager.update(task(), robot(), progress(),
+  output = manager.update(task(), r, progress(),
       elevation(true, 0.15, 2.0), corridor(true, 0.5), obstacles(), 1.1);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_FALSE(output.status.transitioned);
@@ -383,16 +422,18 @@ TEST(NavigationModeManagerTest, StairAvoidStaysLatchedBeforeTop)
   stair_config.exit_confirm_sec = 0.5;
   NavigationModeManager manager(mode_config, stair_config);
   RouteProgress p = progress();
-  manager.update(task(), robot(), p, elevation(true, 0.15, 1.5),
+  auto r = robot();
+  r.z = 0.32;
+  manager.update(task(), r, p, elevation(true, 0.15, 1.5),
       corridor(false), obstacles(), 1.0);
 
   p.arc_length_m = 0.5;
-  manager.update(task(), robot(), p, elevation(true, 0.15, 2.0),
+  manager.update(task(), r, p, elevation(true, 0.15, 2.0),
       corridor(false), obstacles(), 1.5);
   EXPECT_DOUBLE_EQ(manager.status().stair_hold_until_arc_m, 2.0);
 
   p.arc_length_m = 1.0;
-  auto output = manager.update(task(), robot(), p,
+  auto output = manager.update(task(), r, p,
       elevation(false, 0.0, 2.5), corridor(false), obstacles(), 2.0);
   EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
   EXPECT_TRUE(output.status.stair_up_active);
@@ -406,11 +447,13 @@ TEST(NavigationModeManagerTest, StairAvoidExitsOnFlatTopAfterConfirmation)
   stair_config.exit_confirm_sec = 0.5;
   NavigationModeManager manager(mode_config, stair_config);
   RouteProgress p = progress();
-  manager.update(task(), robot(), p, elevation(true, 0.15, 1.5),
+  auto r = robot();
+  r.z = 0.32;
+  manager.update(task(), r, p, elevation(true, 0.15, 1.5),
       corridor(false), obstacles(), 1.0);
 
   p.arc_length_m = 1.35;
-  manager.update(task(), robot(), p, elevation(false, 0.02, 2.85),
+  manager.update(task(), r, p, elevation(false, 0.02, 2.85),
       corridor(false), obstacles(), 2.0);
   const auto output = manager.update(task(), robot(), p,
       elevation(false, 0.02, 2.85), corridor(false), obstacles(), 2.5);

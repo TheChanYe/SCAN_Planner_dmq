@@ -170,6 +170,9 @@ struct StairUpConfig
   int min_consecutive_rising_points{4};
   double min_average_slope{0.15};
   double flat_tolerance_m{0.03};
+  double baseline_lookback_distance_m{1.00};
+  double baseline_drop_tolerance_m{0.06};
+  double max_robot_route_z_error_m{0.12};
   double exit_progress_margin_m{0.15};
   double exit_confirm_sec{0.50};
 };
@@ -192,7 +195,7 @@ struct RouteFollowerConfig
   double heading_turn_only_threshold_rad{
       0.8};
 
-  double max_vx{0.8};
+  double max_vx{0.70};
 };
 
 // =============================================================================

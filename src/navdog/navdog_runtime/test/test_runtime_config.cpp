@@ -63,6 +63,9 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
   nh.setParam("stair_up/min_consecutive_rising_points", 5);
   nh.setParam("stair_up/min_average_slope", 0.18);
   nh.setParam("stair_up/flat_tolerance_m", 0.02);
+  nh.setParam("stair_up/baseline_lookback_distance_m", 1.4);
+  nh.setParam("stair_up/baseline_drop_tolerance_m", 0.05);
+  nh.setParam("stair_up/max_robot_route_z_error_m", 0.11);
   nh.setParam("stair_up/exit_progress_margin_m", 0.20);
   nh.setParam("stair_up/exit_confirm_sec", 0.60);
 
@@ -73,6 +76,9 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
   EXPECT_EQ(config.stair_up.min_consecutive_rising_points, 5);
   EXPECT_DOUBLE_EQ(config.stair_up.min_average_slope, 0.18);
   EXPECT_DOUBLE_EQ(config.stair_up.flat_tolerance_m, 0.02);
+  EXPECT_DOUBLE_EQ(config.stair_up.baseline_lookback_distance_m, 1.4);
+  EXPECT_DOUBLE_EQ(config.stair_up.baseline_drop_tolerance_m, 0.05);
+  EXPECT_DOUBLE_EQ(config.stair_up.max_robot_route_z_error_m, 0.11);
   EXPECT_DOUBLE_EQ(config.stair_up.exit_progress_margin_m, 0.20);
   EXPECT_DOUBLE_EQ(config.stair_up.exit_confirm_sec, 0.60);
 }
@@ -123,7 +129,7 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
   nh.setParam("route_follower/kp_x", 0.9);
   nh.setParam("route_follower/kp_yaw", 1.3);
   nh.setParam("route_follower/heading_slowdown_start_rad", 0.25);
-  nh.setParam("route_follower/max_vx", 0.85);
+  nh.setParam("speed_limits/route_follow_linear_mps", 0.85);
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
 

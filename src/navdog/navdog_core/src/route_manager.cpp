@@ -152,7 +152,11 @@ RouteElevationAssessment RouteManager::assessElevation(
       !std::isfinite(config.trigger_rise_m) ||
       config.trigger_rise_m <= 0.0 ||
       !std::isfinite(config.min_average_slope) ||
-      config.min_average_slope <= 0.0)
+      config.min_average_slope <= 0.0 ||
+      !std::isfinite(config.baseline_lookback_distance_m) ||
+      config.baseline_lookback_distance_m <= 0.0 ||
+      !std::isfinite(config.baseline_drop_tolerance_m) ||
+      config.baseline_drop_tolerance_m < 0.0)
   {
     return assessment;
   }
@@ -197,10 +201,50 @@ RouteElevationAssessment RouteManager::assessElevation(
 
   assessment.valid = true;
   assessment.current_z = current_z;
+  assessment.baseline_z = current_z;
   assessment.ascent_end_z = current_z;
   assessment.checked_until_arc_m = progress.arc_length_m;
 
   constexpr double kZEpsilon = 1e-9;
+  double baseline_z = current_z;
+  double lookback_distance = 0.0;
+  std::size_t lookback_index = progress.segment_index;
+  double lookback_ratio = progress.segment_ratio;
+  while (lookback_distance <= config.baseline_lookback_distance_m + kZEpsilon)
+  {
+    if (lookback_index >= points.size())
+      break;
+    const double previous_z_sample = elevation_z(lookback_index);
+    if (!std::isfinite(previous_z_sample))
+      return RouteElevationAssessment{};
+    baseline_z = std::max(baseline_z, previous_z_sample);
+    if (lookback_index == 0)
+      break;
+
+    const auto& segment_start = points[lookback_index - 1];
+    const auto& segment_end = points[lookback_index];
+    const double segment_length = std::hypot(
+        segment_end.x - segment_start.x,
+        segment_end.y - segment_start.y);
+    if (!std::isfinite(segment_length))
+      return RouteElevationAssessment{};
+    lookback_distance += segment_length * std::max(0.0, lookback_ratio);
+    if (lookback_distance > config.baseline_lookback_distance_m + kZEpsilon)
+      break;
+    --lookback_index;
+    lookback_ratio = 1.0;
+  }
+
+  assessment.baseline_z = baseline_z;
+  assessment.baseline_drop_m = std::max(0.0, baseline_z - current_z);
+  assessment.baseline_consistent =
+      assessment.baseline_drop_m <= config.baseline_drop_tolerance_m;
+  if (!assessment.baseline_consistent)
+  {
+    assessment.ascending = false;
+    return assessment;
+  }
+
   double distance_ahead = 0.0;
   double current_arc = progress.arc_length_m;
   double previous_arc = current_arc;
@@ -277,7 +321,7 @@ RouteElevationAssessment RouteManager::assessElevation(
               config.min_consecutive_rising_points &&
           run_rise + kZEpsilon >= config.trigger_rise_m &&
           average_slope + kZEpsilon >= config.min_average_slope &&
-          sample_z - assessment.current_z + kZEpsilon >=
+          sample_z - baseline_z + kZEpsilon >=
               config.trigger_rise_m)
       {
         assessment.ascending = true;

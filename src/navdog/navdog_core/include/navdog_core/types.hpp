@@ -194,6 +194,9 @@ struct RouteElevationAssessment
   bool valid{false};
   bool ascending{false};
   double current_z{0.0};
+  double baseline_z{0.0};
+  double baseline_drop_m{0.0};
+  bool baseline_consistent{false};
   double ascent_end_z{0.0};
   double rise_m{0.0};
   double average_slope{0.0};
