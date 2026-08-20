@@ -146,6 +146,8 @@ TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
   EXPECT_FALSE(assess({0.30, 0.32, 0.34, 0.36, 0.38}).ascending);
   EXPECT_FALSE(assess({0.000, 0.018, 0.036, 0.054, 0.072, 0.090, 0.108},
       0.25).ascending);
+  EXPECT_FALSE(assess({0.00, -0.10, -0.15, -0.12, -0.07, -0.02, 0.04},
+      0.20).ascending);
 
   const auto ascent = assess({0.00, 0.04, 0.08, 0.12, 0.16}, 0.20);
   EXPECT_TRUE(ascent.ascending);
@@ -157,6 +159,12 @@ TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
       0.8).ascending);
   EXPECT_FALSE(assess({0.00, 0.03, 0.06, 0.06, 0.09, 0.12, 0.15},
       0.20).ascending);
+
+  const auto interrupted = assess({0.00, 0.04, 0.08, 0.12, 0.12}, 0.20);
+  EXPECT_FALSE(interrupted.ascending);
+  EXPECT_DOUBLE_EQ(0.0, interrupted.rise_m);
+  EXPECT_DOUBLE_EQ(0.0, interrupted.average_slope);
+  EXPECT_EQ(0, interrupted.consecutive_rising_points);
 
   {
     navdog::RouteManager manager;
