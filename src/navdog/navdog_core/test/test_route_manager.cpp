@@ -111,7 +111,7 @@ TEST(RouteManager, GoalAndOutOfRangeInterpolationUseLastPoint)
   EXPECT_FALSE(manager.forwardTarget(0.0, -1.0, point));
 }
 
-TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
+TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
 {
   const auto assess = [](const std::vector<double>& z_values,
                          double spacing = 0.5) {

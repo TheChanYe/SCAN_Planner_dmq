@@ -764,7 +764,6 @@ namespace scan_planner
     next_target_retry_time_ = ros::Time(0);
     planning_in_progress_ = false;
     emergency_stop_active_ = false;
-    takeover_sync_pending_.store(false, std::memory_order_release);
     force_takeover_poly_init_ = true;
     changeFSMExecState(GEN_NEW_TRAJ, "TAKEOVER_SYNC");
     ROS_INFO("SCAN_TAKEOVER_LOCAL_RESET start=(%.3f,%.3f) velocity=(%.3f,%.3f) global_target=(%.3f,%.3f)",
@@ -953,12 +952,13 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
-    if (takeover_sync_pending_.load(std::memory_order_acquire) &&
-        have_odom_ && have_target_ &&
-        planner_manager_ && navi_mode_ == NAVI_MODE::REFERENCE_PATH)
+    if (have_odom_ && have_target_ && planner_manager_ &&
+        navi_mode_ == NAVI_MODE::REFERENCE_PATH &&
+        takeover_sync_pending_.exchange(false, std::memory_order_acq_rel))
     {
-      // Deferred synchronization is completed as soon as both odometry and
-      // the retained reference-path target are available.
+      // Consume the queued takeover edge only after odometry and the retained
+      // reference-path target are ready; otherwise the atomic flag remains set
+      // for the next FSM tick.
       processTakeoverSync();
     }
 
