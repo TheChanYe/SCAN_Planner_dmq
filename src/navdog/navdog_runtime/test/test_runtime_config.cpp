@@ -83,6 +83,16 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
   EXPECT_DOUBLE_EQ(config.stair_up.exit_confirm_sec, 0.60);
 }
 
+TEST(NavdogConfigLoadingTest, LoadsHandoffSpeedFromLocalAvoidSpeedLimit)
+{
+  ros::NodeHandle nh("~");
+  nh.setParam("speed_limits/local_avoid_linear_mps", 0.27);
+
+  const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
+
+  EXPECT_DOUBLE_EQ(config.navigation_mode.handoff_linear_speed_mps, 0.27);
+}
+
 // DISABLED: planner_trigger config loading removed (LOCAL_AVOID refactor)
 TEST(NavdogConfigLoadingTest, DISABLED_LoadsPlannerTriggerFromParams)
 {

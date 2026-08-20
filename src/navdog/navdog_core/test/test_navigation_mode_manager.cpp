@@ -110,6 +110,16 @@ TEST(NavigationModeManagerTest, RouteOnlyDoesNotEnterAvoid)
   EXPECT_EQ(output.status.mode, NavigationMode::ROUTE_FOLLOW);
 }
 
+TEST(NavigationModeManagerTest, ImmediateBlockStillEntersAvoidImmediately)
+{
+  NavigationModeManager manager;
+  const auto output = manager.update(
+      task(), robot(), progress(), corridor(true, 0.20), obstacles(), 1.0);
+  EXPECT_EQ(output.status.mode, NavigationMode::LOCAL_AVOID);
+  EXPECT_EQ(output.status.reason, NavigationModeReason::BLOCK_IMMEDIATE);
+  EXPECT_FALSE(output.status.stair_up_active);
+}
+
 TEST(NavigationModeManagerTest, ResetReturnsToNone)
 {
   NavigationModeManager manager;

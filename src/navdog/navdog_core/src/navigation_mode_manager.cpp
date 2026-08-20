@@ -52,6 +52,9 @@ bool NavigationModeManager::isConfigValid() const noexcept
     return false;
   if (config_.exit_right_clearance_m < 0.0)
     return false;
+  if (!std::isfinite(config_.handoff_linear_speed_mps) ||
+      config_.handoff_linear_speed_mps <= 0.0)
+    return false;
   if (!std::isfinite(stair_config_.lookahead_distance_m) ||
       stair_config_.lookahead_distance_m <= 0.0 ||
       !std::isfinite(stair_config_.trigger_rise_m) ||

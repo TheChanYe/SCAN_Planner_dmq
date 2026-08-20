@@ -322,7 +322,7 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 // executeRouteFollow
 // ROUTE_FOLLOW 模式下的执行逻辑：处理路线阻挡、近终点限速并交给 RouteFollower。
 // 步骤：
-//   1. 若当前路线被判定为靠近终点处被阻挡，直接返回零速度（不绕过阻塞状态）；
+//   1. ROUTE_ONLY阻塞必须停车；普通避障确认期继续跟随但限速到SCAN交接速度；
 //   2. 计算是否near_goal（距终点小于near_goal_switch_dist）；
 //   3. near_goal时根据剩余路程占switch_dist的比例线性插值限速（near_goal_max_v→near_goal_min_v）；
 //   4. 交由 RouteFollower 按pure pursuit策略跟随路线。
@@ -338,9 +338,7 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
 {
   (void)now_sec;
 
-  // Do not bypass corridor blocking state away from the finish region.
-  if (mode_status.route_blocked_near ||
-      mode_status.reason == NavigationModeReason::ROUTE_ONLY_BLOCKED)
+  if (mode_status.reason == NavigationModeReason::ROUTE_ONLY_BLOCKED)
   {
     return makeZeroCommand(
         CommandSource::TRACKING_STOP, now_sec);
@@ -354,6 +352,14 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
           config_.goal_controller.near_goal_switch_dist;
 
   double effective_max_vx = max_vx;
+  if (mode_status.mode == NavigationMode::ROUTE_FOLLOW &&
+      mode_status.route_blocked_near &&
+      mode_status.avoidance_allowed)
+  {
+    effective_max_vx = std::min(
+        effective_max_vx,
+        config_.navigation_mode.handoff_linear_speed_mps);
+  }
 
   if (near_goal)
   {

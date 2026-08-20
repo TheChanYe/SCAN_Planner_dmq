@@ -68,6 +68,7 @@ namespace scan_planner
     nh.param("fsm/replan_retry_interval_sec", replan_retry_interval_sec_, 0.10);
     nh.param("fsm/replan_lead_time_sec", replan_lead_time_sec_, 0.40);
     nh.param("fsm/emergency_retry_interval_sec", emergency_retry_interval_sec_, 0.50);
+    nh.param("speed_limits/local_avoid_linear_mps", local_avoid_linear_speed_mps_, 0.30);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
@@ -152,7 +153,7 @@ namespace scan_planner
         "/navdog/stair_up_active", 1,
         &SCANReplanFSM::stairUpActiveCallback, this);
     takeover_sync_sub_ = control_edge_node_.subscribe(
-        "/native_scan/takeover_sync", 1,
+        "/native_scan/takeover_replan", 1,
         &SCANReplanFSM::takeoverSyncCallback, this);
     control_edge_spinner_.reset(
         new ros::AsyncSpinner(1, &control_edge_callback_queue_));
@@ -165,6 +166,10 @@ namespace scan_planner
     std::string body_pose_topic;
     ros::param::param<std::string>("/body_pose_topic", body_pose_topic, std::string("/quad_0/body_pose"));
     odom_sub_ = nh.subscribe(body_pose_topic, 1, &SCANReplanFSM::odometryCallback, this);
+    final_cmd_feedback_sub_ = nh.subscribe(
+        "/navdog/final_cmd_feedback", 10,
+        &SCANReplanFSM::finalCmdFeedbackCallback, this,
+        ros::TransportHints().tcpNoDelay());
     go2_execution_frozen_sub_ = nh.subscribe("/planning/go2_execution_frozen", 10, &SCANReplanFSM::go2ExecutionFrozenCallback, this);
     reset_sub_ = nh.subscribe("/native_scan/reset", 1, &SCANReplanFSM::resetCallback, this);
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
@@ -642,7 +647,9 @@ namespace scan_planner
     last_replan_robot_position_ = odom_pos_;
     planning_in_progress_ = false;
     takeover_sync_pending_.store(false, std::memory_order_release);
+    pending_takeover_generation_.store(0, std::memory_order_release);
     force_takeover_poly_init_ = false;
+    have_final_cmd_ = false;
     last_freeze_update_time_ = ros::Time::now();
     next_emergency_retry_time_ = ros::Time(0);
     next_target_retry_time_ = ros::Time(0);
@@ -720,12 +727,70 @@ namespace scan_planner
     ROS_INFO("SCAN_STAIR_CONSTRAINT active=%d", msg->data ? 1 : 0);
   }
 
+  void SCANReplanFSM::finalCmdFeedbackCallback(
+      const geometry_msgs::TwistStampedConstPtr &msg)
+  {
+    if (!msg || !std::isfinite(msg->twist.linear.x) ||
+        !std::isfinite(msg->twist.linear.y))
+      return;
+    latest_final_cmd_ = *msg;
+    have_final_cmd_ = true;
+  }
+
   // takeoverSyncCallback：只接收Native SCAN接管同步边沿。真正的FSM/规划器
   // 状态修改由execFSMCallback在线程内串行调用processTakeoverSync完成。
-  void SCANReplanFSM::takeoverSyncCallback(const std_msgs::EmptyConstPtr &)
+  void SCANReplanFSM::takeoverSyncCallback(const std_msgs::UInt32ConstPtr &msg)
   {
+    if (!msg || msg->data == 0)
+      return;
+    pending_takeover_generation_.store(msg->data, std::memory_order_release);
     takeover_sync_pending_.store(true, std::memory_order_release);
-    ROS_INFO("SCAN_TAKEOVER_SYNC_RECEIVED");
+    ROS_INFO("SCAN_TAKEOVER_REPLAN_RECEIVED generation=%u", msg->data);
+  }
+
+  Eigen::Vector3d SCANReplanFSM::resolveTakeoverStartVelocity(
+      const ros::Time& now, std::uint32_t generation)
+  {
+    constexpr double kMovingEpsilon = 0.03;
+    Eigen::Vector3d selected = odom_vel_;
+    const char* source = "ODOM";
+    double final_age = -1.0;
+    Eigen::Vector2d final_body(0.0, 0.0);
+    if (have_final_cmd_)
+    {
+      final_age = (now - latest_final_cmd_.header.stamp).toSec();
+      final_body(0) = latest_final_cmd_.twist.linear.x;
+      final_body(1) = latest_final_cmd_.twist.linear.y;
+      const double final_norm = final_body.norm();
+      if (odom_vel_.head<2>().norm() < kMovingEpsilon &&
+          std::isfinite(final_age) && final_age >= 0.0 &&
+          final_age <= 0.20 && final_norm > kMovingEpsilon)
+      {
+        const double yaw = getOdomYaw();
+        const double c = std::cos(yaw);
+        const double s = std::sin(yaw);
+        selected(0) = c * final_body(0) - s * final_body(1);
+        selected(1) = s * final_body(0) + c * final_body(1);
+        selected(2) = odom_vel_(2);
+        source = "FINAL_CMD";
+      }
+    }
+
+    const double xy_norm = selected.head<2>().norm();
+    if (std::isfinite(xy_norm) &&
+        std::isfinite(local_avoid_linear_speed_mps_) &&
+        local_avoid_linear_speed_mps_ > 0.0 &&
+        xy_norm > local_avoid_linear_speed_mps_)
+    {
+      selected.head<2>() *= local_avoid_linear_speed_mps_ / xy_norm;
+    }
+    ROS_INFO("SCAN_TAKEOVER_START_VELOCITY generation=%u source=%s "
+             "odom=[%.3f %.3f] final=[%.3f %.3f] "
+             "selected_world=[%.3f %.3f] final_age=%.3f limit=%.3f",
+        generation, source, odom_vel_(0), odom_vel_(1),
+        final_body(0), final_body(1), selected(0), selected(1),
+        final_age, local_avoid_linear_speed_mps_);
+    return selected;
   }
 
   // processTakeoverSync：在主FSM线程消费takeover边沿。保留global_data_/
@@ -751,7 +816,9 @@ namespace scan_planner
     // locally prewarmed, never-executed B-spline is invalid at handoff.
     planner_manager_->local_data_.reset();
     start_pt_ = odom_pos_;
-    start_vel_ = odom_vel_;
+    const std::uint32_t generation =
+        pending_takeover_generation_.load(std::memory_order_acquire);
+    start_vel_ = resolveTakeoverStartVelocity(ros::Time::now(), generation);
     start_acc_.setZero();
     continuation_failure_count_ = 0;
     initial_plan_attempt_count_ = 0;
@@ -766,8 +833,8 @@ namespace scan_planner
     emergency_stop_active_ = false;
     force_takeover_poly_init_ = true;
     changeFSMExecState(GEN_NEW_TRAJ, "TAKEOVER_SYNC");
-    ROS_INFO("SCAN_TAKEOVER_LOCAL_RESET start=(%.3f,%.3f) velocity=(%.3f,%.3f) global_target=(%.3f,%.3f)",
-        start_pt_(0), start_pt_(1), start_vel_(0), start_vel_(1),
+    ROS_INFO("SCAN_TAKEOVER_LOCAL_RESET generation=%u start=(%.3f,%.3f) velocity=(%.3f,%.3f) global_target=(%.3f,%.3f)",
+        generation, start_pt_(0), start_pt_(1), start_vel_(0), start_vel_(1),
         end_pt_(0), end_pt_(1));
   }
 
@@ -952,8 +1019,10 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
-    if (have_odom_ && have_target_ && planner_manager_ &&
-        navi_mode_ == NAVI_MODE::REFERENCE_PATH &&
+    const bool takeover_ready_to_consume =
+        have_odom_ && have_target_ && planner_manager_ &&
+        navi_mode_ == NAVI_MODE::REFERENCE_PATH;
+    if (takeover_ready_to_consume &&
         takeover_sync_pending_.exchange(false, std::memory_order_acq_rel))
     {
       // Consume the queued takeover edge only after odometry and the retained

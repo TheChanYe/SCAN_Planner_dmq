@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace navdog_runtime
 {
@@ -35,6 +36,14 @@ inline double proportionalMotionScale(
   if (speed <= max_linear_speed_mps || speed <= kEpsilon)
     return 1.0;
   return max_linear_speed_mps / speed;
+}
+
+inline bool takeoverGenerationReady(
+    std::uint32_t expected_generation,
+    std::uint32_t ready_generation) noexcept
+{
+  return expected_generation != 0 &&
+      ready_generation == expected_generation;
 }
 
 }  // namespace navdog_runtime

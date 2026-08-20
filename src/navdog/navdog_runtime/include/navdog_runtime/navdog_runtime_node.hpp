@@ -16,6 +16,7 @@
 #include <std_msgs/Empty.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float64.h>
+#include <std_msgs/UInt32.h>
 #include <std_msgs/UInt8.h>
 
 #include <memory>
@@ -55,8 +56,8 @@ public:
 private:
   /** @brief ROS 回调：将里程计转换为世界系 m/rad 的 RobotState 并互斥保存。 */
   void odomCallback(const nav_msgs::Odometry::ConstPtr& message);
-  // scanTakeoverReadyCallback：接收SCAN接管就绪信号，更新scan_takeover_ready_标志。
-  void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& message);
+  // scanTakeoverReadyCallback：接收SCAN接管就绪generation。
+  void scanTakeoverReadyCallback(const std_msgs::UInt32::ConstPtr& message);
   void finalCmdFeedbackCallback(const geometry_msgs::TwistStamped::ConstPtr& message);
   /**
    * @brief 固定 50 Hz 控制顺序：事件、输入快照、SCAN 观察、Core、SCAN 副作用、发布。
@@ -88,9 +89,9 @@ private:
   void updateDynamicObstacleStop(const navdog::CoreOutput& output,
       bool map_error, double now_sec);
   bool shouldPublishTurnVoice(const navdog::CoreOutput& output) const;
-  // publishTakeoverSync：发布与Native SCAN接管同步相关的信息。
-  void publishTakeoverSync(const navdog::CoreInput& input,
-      const navdog::CoreOutput& output);
+  std::uint32_t beginScanTakeover(const char* reason,
+      const navdog::CoreInput& input, const navdog::CoreOutput& output,
+      double now_sec);
   /** @brief Reset native SCAN exactly once when the coordinator enters a terminal task state. */
   void handleTerminalTransition(const navdog::CoreOutput& output);
   // logNavigationChanges：对比本周期与上一次的导航状态/模式/进度，仅在发生变化时打印日志。
@@ -157,6 +158,8 @@ private:
   bool pending_native_scan_path_{false};          // 是否待发布Native SCAN参考路径
   bool pending_takeover_sync_{false};             // 是否待发布接管同步信息
   bool scan_takeover_ready_{false};               // SCAN接管是否就绪
+  std::uint32_t scan_takeover_generation_{0};
+  std::uint32_t scan_takeover_ready_generation_{0};
   double scan_takeover_request_sec_{0.0};         // 发起接管请求的时刻
   double scan_takeover_timeout_sec_{1.5};         // 接管就绪等待超时
   int scan_recovery_attempts_{0};                 // 当前已尝试的SCAN恢复次数

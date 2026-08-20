@@ -50,6 +50,24 @@ TEST(CmdSpeedLimit, LocalAvoidLimitIgnoresTaskLimit)
   EXPECT_DOUBLE_EQ(0.18, raw_scan_vx * scale);
 }
 
+TEST(CmdSpeedLimit, TakeoverGenerationMustMatch)
+{
+  EXPECT_TRUE(navdog_runtime::takeoverGenerationReady(5, 5));
+  EXPECT_FALSE(navdog_runtime::takeoverGenerationReady(5, 4));
+  EXPECT_FALSE(navdog_runtime::takeoverGenerationReady(5, 6));
+  EXPECT_FALSE(navdog_runtime::takeoverGenerationReady(0, 0));
+}
+
+TEST(CmdSpeedLimit, ReadyBeforeModeOrderingKeepsGenerationUsable)
+{
+  std::uint32_t expected = 5;
+  std::uint32_t ready = 5;
+  EXPECT_TRUE(navdog_runtime::takeoverGenerationReady(expected, ready));
+
+  // Navigation mode arrival must not clear generation state in the mux.
+  EXPECT_TRUE(navdog_runtime::takeoverGenerationReady(expected, ready));
+}
+
 TEST(CmdSpeedLimit, MotionScalePreservesCurvatureWhenLimited)
 {
   const double scale =

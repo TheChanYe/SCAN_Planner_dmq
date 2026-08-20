@@ -4,7 +4,9 @@
 #include <Eigen/Eigen>
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/TwistStamped.h>
 #include <iostream>
 #include <memory>
 #include <nav_msgs/Odometry.h>
@@ -15,6 +17,7 @@
 #include <ros/spinner.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/UInt32.h>
 #include <vector>
 #include <visualization_msgs/Marker.h>
 
@@ -95,7 +98,11 @@ namespace scan_planner
     Eigen::Vector3d last_replan_robot_position_{Eigen::Vector3d::Zero()};
     bool planning_in_progress_{false};
     std::atomic<bool> takeover_sync_pending_{false};
+    std::atomic<std::uint32_t> pending_takeover_generation_{0};
     bool force_takeover_poly_init_{false};
+    double local_avoid_linear_speed_mps_{0.30};
+    geometry_msgs::TwistStamped latest_final_cmd_;
+    bool have_final_cmd_{false};
     double nominal_replan_period_sec_{0.20};
     double min_replan_progress_m_{0.05};
     double replan_retry_interval_sec_{0.10};
@@ -131,7 +138,7 @@ namespace scan_planner
     ros::CallbackQueue control_edge_callback_queue_;
     std::unique_ptr<ros::AsyncSpinner> control_edge_spinner_;
     ros::Timer exec_timer_, safety_timer_;
-    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_, stair_up_active_sub_;
+    ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_, stair_up_active_sub_, final_cmd_feedback_sub_;
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
 
     enum class ReplanResult
@@ -168,6 +175,8 @@ namespace scan_planner
     void printFSMExecState();
     // processTakeoverSync：在主FSM线程消费takeover边沿，串行重置本地轨迹并触发重规划。
     void processTakeoverSync();
+    Eigen::Vector3d resolveTakeoverStartVelocity(
+        const ros::Time& now, std::uint32_t generation);
 
     // planGlobalTrajbyGivenWps：使用预设路点集规划一条完整全局轨迹。
     void planGlobalTrajbyGivenWps();
@@ -219,7 +228,8 @@ namespace scan_planner
     // resetCallback：接收外部重置信号，清空当前任务状态。
     void resetCallback(const std_msgs::EmptyConstPtr &msg);
     // takeoverSyncCallback：接收接管同步信号，标记待处理接管。
-    void takeoverSyncCallback(const std_msgs::EmptyConstPtr &msg);
+    void takeoverSyncCallback(const std_msgs::UInt32ConstPtr &msg);
+    void finalCmdFeedbackCallback(const geometry_msgs::TwistStampedConstPtr &msg);
     // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，只切换规划占用约束。
     void stairUpActiveCallback(const std_msgs::BoolConstPtr &msg);
 

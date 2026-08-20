@@ -161,7 +161,7 @@ bool NavdogRuntimeNode::initialize()
   native_scan_reset_publisher_ =
       nh_.advertise<std_msgs::Empty>(
           "/native_scan/reset", 1, false);
-  native_scan_takeover_sync_publisher_ = nh_.advertise<std_msgs::Empty>(
+  native_scan_takeover_sync_publisher_ = nh_.advertise<std_msgs::UInt32>(
       "/native_scan/takeover_sync", 1, false);
   state_publisher_ = nh_.advertise<std_msgs::UInt8>("/navdog/state", 1);
   mode_publisher_ =
@@ -204,12 +204,20 @@ bool NavdogRuntimeNode::initialize()
   return true;
 }
 
-// scanTakeoverReadyCallback：接收Native SCAN接管就绪信号，
-// 更新scan_takeover_ready_标志（消息为空或data为false时视为未就绪）。
+// scanTakeoverReadyCallback：接收Native SCAN接管就绪generation。
 void NavdogRuntimeNode::scanTakeoverReadyCallback(
-    const std_msgs::Bool::ConstPtr& msg)
+    const std_msgs::UInt32::ConstPtr& msg)
 {
-  scan_takeover_ready_ = msg && msg->data;
+  if (!msg) return;
+  scan_takeover_ready_generation_ = msg->data;
+  scan_takeover_ready_ = msg->data != 0 &&
+      msg->data == scan_takeover_generation_;
+  if (msg->data != 0 && msg->data != scan_takeover_generation_)
+  {
+    ROS_WARN_THROTTLE(1.0,
+        "SCAN_TAKEOVER_READY_STALE expected=%u received=%u",
+        scan_takeover_generation_, msg->data);
+  }
 }
 
 void NavdogRuntimeNode::finalCmdFeedbackCallback(
@@ -400,9 +408,7 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   {
     if (output.navigation_mode.mode == navdog::NavigationMode::LOCAL_AVOID)
     {
-      publishTakeoverSync(input, output);
-      scan_takeover_ready_ = false;
-      scan_takeover_request_sec_ = now_sec;
+      beginScanTakeover("MODE_ENTER", input, output, now_sec);
       scan_recovery_attempts_ = 0;
       ROS_INFO("SCAN_HANDOFF_ENTER prewarmed=1 scan_ready=%d",
           pending_native_scan_path_ ? 0 : 1);
@@ -438,15 +444,26 @@ void NavdogRuntimeNode::controlCallback(const ros::TimerEvent&)
   }
 }
 
-// publishTakeoverSync：向Native SCAN发布接管同步信号（带上当前机器人位置/速度日志），
-// 用于提示Native SCAN即将接管。
-void NavdogRuntimeNode::publishTakeoverSync(
-    const navdog::CoreInput& input, const navdog::CoreOutput& output)
+std::uint32_t NavdogRuntimeNode::beginScanTakeover(const char* reason,
+    const navdog::CoreInput& input, const navdog::CoreOutput& output,
+    double now_sec)
 {
-  native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
-  ROS_INFO("SCAN_TAKEOVER_SYNC_REQUEST sequence=%lu robot_x=%.3f robot_y=%.3f robot_vx=%.3f robot_vy=%.3f",
+  ++scan_takeover_generation_;
+  if (scan_takeover_generation_ == 0)
+    ++scan_takeover_generation_;
+  scan_takeover_ready_generation_ = 0;
+  scan_takeover_ready_ = false;
+  scan_takeover_request_sec_ = now_sec;
+  pending_takeover_sync_ = false;
+  std_msgs::UInt32 generation;
+  generation.data = scan_takeover_generation_;
+  native_scan_takeover_sync_publisher_.publish(generation);
+  ROS_INFO("SCAN_TAKEOVER_SYNC_REQUEST generation=%u reason=%s sequence=%lu "
+           "robot_x=%.3f robot_y=%.3f robot_vx=%.3f robot_vy=%.3f",
+      scan_takeover_generation_, reason ? reason : "UNKNOWN",
       static_cast<unsigned long>(output.task_sequence), input.robot.x,
       input.robot.y, input.robot.vx, input.robot.vy);
+  return scan_takeover_generation_;
 }
 
 // handleScanRecovery：当处于LOCAL_AVOID模式且SCAN接管迟迟未就绪时，按次数限制重试：
@@ -903,9 +920,14 @@ void NavdogRuntimeNode::scheduleNativeScanReferencePath()
     pending_native_scan_path_ = false;
     if (pending_takeover_sync_)
     {
-      native_scan_takeover_sync_publisher_.publish(std_msgs::Empty{});
+      navdog::CoreInput input{};
+      input.robot = robot_;
+      navdog::CoreOutput output{};
+      output.task_sequence = coordinator_ && coordinator_->hasActiveTask()
+          ? coordinator_->taskSession().sequence : 0;
+      beginScanTakeover("RECOVERY_RETRY", input, output,
+          ros::Time::now().toSec());
       pending_takeover_sync_ = false;
-      scan_takeover_request_sec_ = ros::Time::now().toSec();
       ROS_INFO("SCAN_RECOVERY_SYNC_REQUEST attempt=%d",
           scan_recovery_attempts_);
     }

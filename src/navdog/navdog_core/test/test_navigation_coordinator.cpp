@@ -32,6 +32,19 @@ public:
         RouteCorridorAssessment{}, corridor_available,
         coordinator.task_manager_.session().max_vx, now_sec);
   }
+
+  static VelocityCommand executeRouteFollow(
+      NavigationCoordinator& coordinator,
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      const NavigationModeStatus& mode_status,
+      double max_vx,
+      double now_sec)
+  {
+    return coordinator.executeRouteFollow(
+        task, robot, progress, mode_status, max_vx, now_sec);
+  }
 };
 
 namespace
@@ -150,6 +163,61 @@ TEST(NavigationCoordinator, LocalAvoidGoalReachedCompletesBeforeCorridorGate)
   EXPECT_TRUE(command.valid);
   EXPECT_EQ(NavState::SUCCEEDED, coordinator.state());
   EXPECT_FALSE(coordinator.hasActiveTask());
+}
+
+TEST(NavigationCoordinator, PendingBlockContinuesRouteAtHandoffSpeed)
+{
+  NavdogConfig config{};
+  config.navigation_mode.handoff_linear_speed_mps = 0.30;
+  NavigationCoordinator coordinator(config);
+  NavigationTask task = startEvent().task;
+  task.sequence = 1;
+  RobotState robot = robotInput(1.0).robot;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = task.sequence;
+  progress.arc_length_m = 0.0;
+  progress.remaining_distance_m = 2.0;
+  progress.total_length_m = 2.0;
+
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  mode.route_blocked_near = true;
+  mode.avoidance_allowed = true;
+
+  auto command = NavigationCoordinatorTestPeer::executeRouteFollow(
+      coordinator, task, robot, progress, mode, 0.60, 1.0);
+  EXPECT_NE(command.source, CommandSource::TRACKING_STOP);
+  EXPECT_GT(command.vx, 0.0);
+  EXPECT_LE(std::hypot(command.vx, command.vy), 0.30 + 1e-9);
+
+  command = NavigationCoordinatorTestPeer::executeRouteFollow(
+      coordinator, task, robot, progress, mode, 0.15, 1.0);
+  EXPECT_GT(command.vx, 0.0);
+  EXPECT_LE(std::hypot(command.vx, command.vy), 0.15 + 1e-9);
+}
+
+TEST(NavigationCoordinator, RouteOnlyBlockedStillStops)
+{
+  NavigationCoordinator coordinator;
+  NavigationTask task = startEvent().task;
+  task.sequence = 1;
+  task.mode = TaskMode::ROUTE_ONLY;
+  RobotState robot = robotInput(1.0).robot;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = task.sequence;
+  progress.remaining_distance_m = 2.0;
+
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  mode.route_blocked_near = true;
+  mode.reason = NavigationModeReason::ROUTE_ONLY_BLOCKED;
+
+  const auto command = NavigationCoordinatorTestPeer::executeRouteFollow(
+      coordinator, task, robot, progress, mode, 0.60, 1.0);
+  EXPECT_EQ(command.source, CommandSource::TRACKING_STOP);
+  EXPECT_DOUBLE_EQ(command.vx, 0.0);
 }
 
 TEST(NavigationCoordinator, MaxVxUpdateKeepsSequenceRouteAndMode)

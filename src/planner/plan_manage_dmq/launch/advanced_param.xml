@@ -185,6 +185,5 @@
   <param name="closed_loop_controller/max_vy" value="0.18" type="double"/>
   <param name="closed_loop_controller/max_vyaw" value="0.65" type="double"/>
   <param name="closed_loop_controller/finish_dist" value="0.15" type="double"/>
-  <param name="closed_loop_controller/mode_transition_duration_sec" value="0.5" type="double"/>
 
 </launch>

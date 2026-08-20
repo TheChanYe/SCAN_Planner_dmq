@@ -156,6 +156,10 @@ struct NavigationModeConfig
 
   // 退出SCAN时要求右侧障碍距离。
   double exit_right_clearance_m{0.60};
+
+  // ROUTE->SCAN 交接确认期间的路线跟随速度上限。
+  // Runtime 必须从 speed_limits/local_avoid_linear_mps 加载，避免第二份0.30来源。
+  double handoff_linear_speed_mps{0.30};
 };
 
 // =============================================================================

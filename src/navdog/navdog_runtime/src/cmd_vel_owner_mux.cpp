@@ -2,6 +2,7 @@
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <std_msgs/UInt8.h>
+#include <std_msgs/UInt32.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float64.h>
 #include <navdog_core/types.hpp>
@@ -9,6 +10,7 @@
 #include <navdog_runtime/velocity_slew_limiter.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 namespace
@@ -59,8 +61,10 @@ CommandOwner previous_owner_{CommandOwner::NONE};
 double owner_change_stamp_sec_{0.0};
 double nav_state_change_stamp_sec_{0.0};
 double local_avoid_enter_stamp_sec_{0.0};
-bool scan_takeover_ready{false};
-bool scan_takeover_forward_confirmed{false};
+std::uint32_t expected_takeover_generation_{0};
+std::uint32_t ready_takeover_generation_{0};
+std::uint32_t logged_handoff_generation_{0};
+geometry_msgs::Twist handoff_route_last_cmd_{};
 bool external_stop_{false};
 double task_max_vx_{0.0};
 bool task_max_vx_valid_{false};
@@ -273,7 +277,9 @@ void logOutputCommand(const geometry_msgs::Twist& output,
       reason ? reason : "UNKNOWN", target_valid ? 1 : 0,
       target.linear.x, target.linear.y, target.angular.z,
       output.linear.x, output.linear.y, output.angular.z,
-      route_age, scan_age, scan_takeover_ready ? 1 : 0);
+      route_age, scan_age,
+      navdog_runtime::takeoverGenerationReady(
+          expected_takeover_generation_, ready_takeover_generation_) ? 1 : 0);
 }
 
 // routeCmdCallback：订阅Route阶段的速度指令，校验有限性后保存最新指令与时间戳。
@@ -320,14 +326,19 @@ void modeCallback(const std_msgs::UInt8::ConstPtr& msg)
       previous != navdog::NavigationMode::LOCAL_AVOID)
   {
     local_avoid_enter_stamp_sec_ = ros::Time::now().toSec();
-    scan_takeover_ready = false;
-    scan_takeover_forward_confirmed = false;
   }
 }
 
-// scanTakeoverReadyCallback：订阅Native SCAN接管就绪信号。
-void scanTakeoverReadyCallback(const std_msgs::Bool::ConstPtr& msg)
-{ scan_takeover_ready = msg && msg->data; }
+void scanTakeoverSyncCallback(const std_msgs::UInt32::ConstPtr& msg)
+{
+  if (!msg) return;
+  expected_takeover_generation_ = msg->data;
+  logged_handoff_generation_ = 0;
+}
+
+// scanTakeoverReadyCallback：订阅Native SCAN接管就绪generation。
+void scanTakeoverReadyCallback(const std_msgs::UInt32::ConstPtr& msg)
+{ ready_takeover_generation_ = msg ? msg->data : 0; }
 
 void externalStopCallback(const std_msgs::Bool::ConstPtr& msg)
 { external_stop_ = msg && msg->data; }
@@ -399,15 +410,7 @@ void timerCallback(const ros::TimerEvent&)
     limiter_initialized_ = true;
 
     if (old_owner == CommandOwner::ROUTE && owner == CommandOwner::SCAN)
-    {
-      scan_takeover_ready = false;
-      scan_takeover_forward_confirmed = false;
-    }
-    else if (owner != CommandOwner::SCAN)
-    {
-      scan_takeover_ready = false;
-      scan_takeover_forward_confirmed = false;
-    }
+      handoff_route_last_cmd_ = last_output_cmd_;
 
     ROS_INFO("CMD_OWNER prev=%s next=%s state=%s mode=%s",
         ownerName(old_owner),
@@ -436,8 +439,6 @@ void timerCallback(const ros::TimerEvent&)
   {
     // Immediate zero — reset the limiter so it doesn't try to
     // slew from a stale velocity on the next handoff.
-    scan_takeover_ready = false;
-    scan_takeover_forward_confirmed = false;
     slew_limiter_.reset();
     last_output_cmd_ = zeroCommand();
     logOutputCommand(last_output_cmd_, target_cmd, owner, false,
@@ -449,7 +450,6 @@ void timerCallback(const ros::TimerEvent&)
 
   if (external_stop_)
   {
-    scan_takeover_forward_confirmed = false;
     slew_limiter_.reset();
     last_output_cmd_ = zeroCommand();
     logOutputCommand(last_output_cmd_, target_cmd, owner, false,
@@ -481,32 +481,32 @@ void timerCallback(const ros::TimerEvent&)
           isFresh(scan_cmd_stamp_sec_, now_sec, scan_cmd_timeout_sec);
       const bool scan_cmd_after_handoff =
           scan_cmd_stamp_sec_ > local_avoid_enter_stamp_sec_ + kEpsilon;
-      if (scan_takeover_ready && scan_cmd_after_handoff && scan_cmd_fresh)
+      const bool generation_ready = navdog_runtime::takeoverGenerationReady(
+          expected_takeover_generation_, ready_takeover_generation_);
+      if (generation_ready && scan_cmd_after_handoff && scan_cmd_fresh)
       {
         target_cmd = latest_scan_cmd_;
         target_valid = true;
         selection_reason = "SCAN_FRESH";
-        if (!scan_takeover_forward_confirmed)
+        if (logged_handoff_generation_ != expected_takeover_generation_)
         {
-          if (target_cmd.linear.x >= 0.0)
-          {
-            scan_takeover_forward_confirmed = true;
-            ROS_INFO("SCAN_TAKEOVER_FORWARD_CONFIRMED scan_vx=%.3f",
-                target_cmd.linear.x);
-          }
-          else
-          {
-            const double raw_scan_vx = target_cmd.linear.x;
-            // Until a trajectory regenerated from odom proves it commands
-            // forward motion, do not pass a longitudinal reverse command.
-            target_cmd.linear.x = 0.0;
-            ROS_WARN_THROTTLE(1.0,
-                "SCAN_TAKEOVER_NEGATIVE_BLOCKED raw_vx=%.3f action=WAIT_FORWARD_TRAJECTORY",
-                raw_scan_vx);
-          }
+          const double gap_ms =
+              std::max(0.0, now_sec - local_avoid_enter_stamp_sec_) * 1000.0;
+          ROS_INFO("SCAN_HANDOFF_COMPLETE generation=%u gap_ms=%.0f "
+                   "route_last=[%.3f %.3f %.3f] scan_first=[%.3f %.3f %.3f] "
+                   "output=[%.3f %.3f %.3f]",
+              expected_takeover_generation_, gap_ms,
+              handoff_route_last_cmd_.linear.x,
+              handoff_route_last_cmd_.linear.y,
+              handoff_route_last_cmd_.angular.z,
+              target_cmd.linear.x, target_cmd.linear.y, target_cmd.angular.z,
+              last_output_cmd_.linear.x,
+              last_output_cmd_.linear.y,
+              last_output_cmd_.angular.z);
+          logged_handoff_generation_ = expected_takeover_generation_;
         }
       }
-      else if (!scan_takeover_ready)
+      else if (!generation_ready)
       {
         const double handoff_age = now_sec - local_avoid_enter_stamp_sec_;
         if (handoff_age < scan_handoff_hold_sec)
@@ -524,7 +524,10 @@ void timerCallback(const ros::TimerEvent&)
           target_valid = true;
           selection_reason = "SCAN_WAITING_READY";
         }
-        ROS_WARN_THROTTLE(1.0, "SCAN_TAKEOVER_WAITING_READY handoff_age=%.3f", handoff_age);
+        ROS_WARN_THROTTLE(1.0,
+            "SCAN_TAKEOVER_WAITING_READY expected_generation=%u ready_generation=%u handoff_age=%.3f",
+            expected_takeover_generation_, ready_takeover_generation_,
+            handoff_age);
       }
       else if (!scan_cmd_after_handoff)
       {
@@ -639,6 +642,8 @@ int main(int argc, char** argv)
       modeCallback);
   ros::Subscriber state_sub = nh.subscribe("/navdog/state", 10,
       stateCallback);
+  ros::Subscriber scan_takeover_sync_sub = nh.subscribe(
+      "/native_scan/takeover_sync", 10, scanTakeoverSyncCallback);
   ros::Subscriber scan_takeover_ready_sub = nh.subscribe(
       "/native_scan/takeover_ready", 10, scanTakeoverReadyCallback);
   ros::Subscriber external_stop_sub = nh.subscribe(

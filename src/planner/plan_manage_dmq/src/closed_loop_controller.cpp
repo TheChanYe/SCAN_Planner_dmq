@@ -11,6 +11,7 @@
 #include <ros/ros.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Empty.h>
+#include <std_msgs/UInt32.h>
 #include <std_msgs/UInt8.h>
 #include <tf/tf.h>
 
@@ -29,6 +30,7 @@ constexpr std::uint8_t kModeLocalAvoid = 2;
 ros::Publisher cmd_vel_pub;
 ros::Publisher execution_frozen_pub;
 ros::Publisher takeover_ready_pub;
+ros::Publisher takeover_replan_pub;
 ros::Subscriber bspline_sub;
 ros::Subscriber odom_sub;
 ros::Subscriber reset_sub;
@@ -42,6 +44,8 @@ bool waiting_takeover_trajectory = false;
 bool stationary_trajectory = false;
 double takeover_anchor_tolerance = 0.25;
 ros::Time takeover_sync_time;
+std::uint32_t takeover_generation = 0;
+std::uint32_t ready_generation = 0;
 std::vector<UniformBspline> traj;
 double traj_duration = 0.0;
 int traj_id = 0;
@@ -62,16 +66,6 @@ double max_vyaw;
 double finish_dist;
 std::string body_pose_topic;
 std::uint8_t navigation_mode = 0;
-
-// Mode transition linear blending state.  When the navigation mode
-// changes (ROUTE_FOLLOW <-> LOCAL_AVOID), the controller linearly
-// ramps from the last published velocity to the new mode's velocity
-// over mode_transition_duration_sec to avoid abrupt velocity jumps.
-double mode_transition_duration_sec = 0.5;
-bool mode_transition_active = false;
-ros::Time mode_transition_start_time;
-geometry_msgs::Twist pre_transition_cmd;
-geometry_msgs::Twist last_published_cmd;
 
 // loadRequiredParam：从私有参数服务器读取必需参数，若不存在则打印错误并返回false。
 bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, double &value)
@@ -131,7 +125,6 @@ bool loadParams(const ros::NodeHandle &nh)
       "finish_dist",
       finish_dist);
   nh.param("takeover_anchor_tolerance", takeover_anchor_tolerance, 0.25);
-  nh.param("mode_transition_duration_sec", mode_transition_duration_sec, 0.5);
 
   if (!ok)
     return false;
@@ -277,45 +270,15 @@ double estimateDesiredYaw(double t_cur, const Eigen::Vector3d &pos_des)
   return std::atan2(dir(1), dir(0));
 }
 
-// publishBlended：在模式切换过渡期对速度指令做线性混合后发布。
-// 当 mode_transition_active 时，在 mode_transition_duration_sec 内将
-// pre_transition_cmd 线性渐变到当前 cmd，避免模式切换时速度跳变。
-void publishBlended(const geometry_msgs::Twist& cmd)
-{
-  geometry_msgs::Twist final_cmd = cmd;
-  if (mode_transition_active)
-  {
-    const double elapsed =
-        (ros::Time::now() - mode_transition_start_time).toSec();
-    const double alpha =
-        std::min(1.0, elapsed / mode_transition_duration_sec);
-    if (alpha >= 1.0)
-    {
-      mode_transition_active = false;
-    }
-    else
-    {
-      final_cmd.linear.x =
-          pre_transition_cmd.linear.x * (1.0 - alpha) +
-          cmd.linear.x * alpha;
-      final_cmd.linear.y =
-          pre_transition_cmd.linear.y * (1.0 - alpha) +
-          cmd.linear.y * alpha;
-      final_cmd.angular.z =
-          pre_transition_cmd.angular.z * (1.0 - alpha) +
-          cmd.angular.z * alpha;
-    }
-  }
-  cmd_vel_pub.publish(final_cmd);
-  last_published_cmd = final_cmd;
-}
+void publishCommand(const geometry_msgs::Twist& cmd)
+{ cmd_vel_pub.publish(cmd); }
 
 // publishStop：发布零线速度、仅保留角速度（限幅后）的停车指令，默认角速度为0。
 void publishStop(double vyaw = 0.0)
 {
   geometry_msgs::Twist cmd;
   cmd.angular.z = clamp(vyaw, -max_vyaw, max_vyaw);
-  publishBlended(cmd);
+  publishCommand(cmd);
 }
 
 // publishExecutionFrozen：发布Go2执行冻结状态信号（告诉SCAN规划端是否暂停
@@ -327,11 +290,12 @@ void publishExecutionFrozen(bool frozen)
   execution_frozen_pub.publish(msg);
 }
 
-// publishTakeoverReady：发布接管就绪信号。
-void publishTakeoverReady(bool ready)
+// publishTakeoverReady：发布接管就绪generation，0表示未就绪。
+void publishTakeoverReady(std::uint32_t generation)
 {
-  std_msgs::Bool msg;
-  msg.data = ready;
+  std_msgs::UInt32 msg;
+  msg.data = generation;
+  ready_generation = generation;
   takeover_ready_pub.publish(msg);
 }
 
@@ -352,8 +316,8 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   publishExecutionFrozen(false);
   waiting_takeover_trajectory = false;
   takeover_sync_time = ros::Time();
-  publishTakeoverReady(false);
-  mode_transition_active = false;
+  takeover_generation = 0;
+  publishTakeoverReady(0);
   publishStop();
 
   ROS_WARN(
@@ -361,42 +325,27 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
       "NATIVE_SCAN_CONTROLLER_RESET");
 }
 
-// navigationModeCallback：订阅导航模式并在模式变化时启动线性速度过渡。
+// navigationModeCallback：订阅导航模式。
 void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
 {
   if (!msg) return;
-  const std::uint8_t previous_mode = navigation_mode;
-  const std::uint8_t new_mode = msg->data;
-  if (new_mode != previous_mode && previous_mode != 0)
-  {
-    // Start linear blending: ramp from the last published velocity
-    // to the new mode's velocity over mode_transition_duration_sec.
-    mode_transition_active = true;
-    mode_transition_start_time = ros::Time::now();
-    pre_transition_cmd = last_published_cmd;
-    ROS_INFO("[closed_loop_controller_dmq] MODE_TRANSITION %d->%d blend_sec=%.3f",
-        static_cast<int>(previous_mode), static_cast<int>(new_mode),
-        mode_transition_duration_sec);
-  }
-  navigation_mode = new_mode;
+  navigation_mode = msg->data;
 }
 
 // takeoverSyncCallback：接收接管同步信号。清空当前轨迹并进入“等待接管轨迹”
 // 状态，记录同步时刻供后续bsplineCallback判断轨迹时效性，并发布停车。
-void takeoverSyncCallback(const std_msgs::EmptyConstPtr&)
+void takeoverSyncCallback(const std_msgs::UInt32ConstPtr& msg)
 {
-  receive_traj = false;
-  stationary_trajectory = false;
+  if (!msg || msg->data == 0)
+    return;
   waiting_takeover_trajectory = true;
+  takeover_generation = msg->data;
   takeover_sync_time = ros::Time::now();
-  traj.clear();
-  traj_duration = 0.0;
-  traj_id = 0;
-  exec_time = 0.0;
-  last_update_time = ros::Time::now();
-  publishTakeoverReady(false);
-  publishStop();
-  ROS_INFO("SCAN_TAKEOVER_CONTROLLER_FLUSH");
+  publishTakeoverReady(0);
+  std_msgs::UInt32 replan;
+  replan.data = takeover_generation;
+  takeover_replan_pub.publish(replan);
+  ROS_INFO("SCAN_TAKEOVER_CONTROLLER_ARM generation=%u", takeover_generation);
 }
 
 // bsplineCallback：接收SCAN规划器发布的B样条轨迹消息。
@@ -504,9 +453,9 @@ void bsplineCallback(const scan_planner::BsplineConstPtr &msg)
   {
     waiting_takeover_trajectory = false;
     takeover_sync_time = ros::Time();
-    publishTakeoverReady(true);
-    ROS_INFO("SCAN_TAKEOVER_TRAJ_READY traj_id=%d anchor_error=%.3f exec_time=%.3f",
-        traj_id, anchor_error, exec_time);
+    publishTakeoverReady(takeover_generation);
+    ROS_INFO("SCAN_TAKEOVER_TRAJ_READY generation=%u traj_id=%d anchor_error=%.3f exec_time=%.3f",
+        takeover_generation, traj_id, anchor_error, exec_time);
   }
 
   ROS_DEBUG("[closed_loop_controller_dmq] received bspline traj_id=%d duration=%.3f", traj_id, traj_duration);
@@ -655,7 +604,7 @@ void cmdCallback(const ros::TimerEvent &)
     exec_time,
     traj_duration);
 
-  publishBlended(cmd);
+  publishCommand(cmd);
 }
 } // namespace
 
@@ -681,8 +630,10 @@ int main(int argc, char **argv)
       navigationModeCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("/navdog/scan_cmd", 20);
   execution_frozen_pub = node.advertise<std_msgs::Bool>("/native_scan/planning/go2_execution_frozen", 10);
-  takeover_ready_pub = node.advertise<std_msgs::Bool>("/native_scan/takeover_ready", 1, true);
-  publishTakeoverReady(false);
+  takeover_replan_pub = node.advertise<std_msgs::UInt32>(
+      "/native_scan/takeover_replan", 1, false);
+  takeover_ready_pub = node.advertise<std_msgs::UInt32>("/native_scan/takeover_ready", 1, true);
+  publishTakeoverReady(0);
   cmd_timer = node.createTimer(ros::Duration(0.01), cmdCallback);
 
   last_update_time = ros::Time::now();
