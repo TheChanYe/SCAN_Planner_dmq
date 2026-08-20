@@ -143,17 +143,20 @@ namespace scan_planner
     planner_manager_.reset(new SCANPlannerManager);
     planner_manager_->initPlanModules(nh, visualization_);
 
-    // Stair state is a tiny, atomic planning constraint. Give it an isolated
-    // callback queue so long GridMap/A*/B-spline callbacks on the main
-    // ros::spin() thread cannot delay a Core state edge for several seconds.
-    stair_state_node_ = ros::NodeHandle(nh);
-    stair_state_node_.setCallbackQueue(&stair_state_callback_queue_);
-    stair_up_active_sub_ = stair_state_node_.subscribe(
+    // Control edges are tiny atomic flags. Give them an isolated callback
+    // queue so long GridMap/A*/B-spline callbacks on the main ros::spin()
+    // thread cannot delay a Core state edge for several seconds.
+    control_edge_node_ = ros::NodeHandle(nh);
+    control_edge_node_.setCallbackQueue(&control_edge_callback_queue_);
+    stair_up_active_sub_ = control_edge_node_.subscribe(
         "/navdog/stair_up_active", 1,
         &SCANReplanFSM::stairUpActiveCallback, this);
-    stair_state_spinner_.reset(
-        new ros::AsyncSpinner(1, &stair_state_callback_queue_));
-    stair_state_spinner_->start();
+    takeover_sync_sub_ = control_edge_node_.subscribe(
+        "/native_scan/takeover_sync", 1,
+        &SCANReplanFSM::takeoverSyncCallback, this);
+    control_edge_spinner_.reset(
+        new ros::AsyncSpinner(1, &control_edge_callback_queue_));
+    control_edge_spinner_->start();
 
     /* callback */
     exec_timer_ = nh.createTimer(ros::Duration(0.01), &SCANReplanFSM::execFSMCallback, this);
@@ -164,9 +167,6 @@ namespace scan_planner
     odom_sub_ = nh.subscribe(body_pose_topic, 1, &SCANReplanFSM::odometryCallback, this);
     go2_execution_frozen_sub_ = nh.subscribe("/planning/go2_execution_frozen", 10, &SCANReplanFSM::go2ExecutionFrozenCallback, this);
     reset_sub_ = nh.subscribe("/native_scan/reset", 1, &SCANReplanFSM::resetCallback, this);
-    takeover_sync_sub_ = nh.subscribe("/native_scan/takeover_sync", 1,
-        &SCANReplanFSM::takeoverSyncCallback, this);
-
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
     data_disp_pub_ = nh.advertise<scan_planner::DataDisp>("/planning/data_display", 100);
     self_inflation_pub_ = nh.advertise<visualization_msgs::Marker>("self_inflation", 10, true);
@@ -641,7 +641,7 @@ namespace scan_planner
     last_nominal_replan_attempt_time_ = ros::Time(0);
     last_replan_robot_position_ = odom_pos_;
     planning_in_progress_ = false;
-    takeover_sync_pending_ = false;
+    takeover_sync_pending_.store(false, std::memory_order_release);
     force_takeover_poly_init_ = false;
     last_freeze_update_time_ = ros::Time::now();
     next_emergency_retry_time_ = ros::Time(0);
@@ -720,20 +720,28 @@ namespace scan_planner
     ROS_INFO("SCAN_STAIR_CONSTRAINT active=%d", msg->data ? 1 : 0);
   }
 
-  // takeoverSyncCallback：接收Native SCAN接管同步信号（从手动/其他控制模式
-  // 切换回到本规划器控制）。仅在REFERENCE_PATH模式下生效。若里程计或目标尚未
-  // 就绪则置位takeover_sync_pending_延迟处理。正常流程：保留global_data_/
-  // end_pt_与MQTT参考路径，仅重置尚未执行过的局部B样条轨迹；以里程计当前
-  // 位置/速度作为新起点，清零全部重规划失败计数与时间戳，置位
-  // force_takeover_poly_init_要求下一次重规划强制多项式初始化，并立即触发
-  // GEN_NEW_TRAJ重规划。
+  // takeoverSyncCallback：只接收Native SCAN接管同步边沿。真正的FSM/规划器
+  // 状态修改由execFSMCallback在线程内串行调用processTakeoverSync完成。
   void SCANReplanFSM::takeoverSyncCallback(const std_msgs::EmptyConstPtr &)
   {
+    takeover_sync_pending_.store(true, std::memory_order_release);
+    ROS_INFO("SCAN_TAKEOVER_SYNC_RECEIVED");
+  }
+
+  // processTakeoverSync：在主FSM线程消费takeover边沿。保留global_data_/
+  // end_pt_与MQTT参考路径，仅重置尚未执行过的局部B样条轨迹；以里程计当前
+  // 位置/速度作为新起点，清零重规划失败计数与时间戳，置位
+  // force_takeover_poly_init_要求下一次重规划强制多项式初始化，并触发
+  // GEN_NEW_TRAJ重规划。
+  void SCANReplanFSM::processTakeoverSync()
+  {
     if (navi_mode_ != NAVI_MODE::REFERENCE_PATH)
+    {
+      takeover_sync_pending_.store(false, std::memory_order_release);
       return;
+    }
     if (!have_odom_ || !have_target_ || !planner_manager_)
     {
-      takeover_sync_pending_ = true;
       ROS_WARN("SCAN_TAKEOVER_SYNC_DEFERRED have_odom=%d have_target=%d",
           have_odom_ ? 1 : 0, have_target_ ? 1 : 0);
       return;
@@ -756,7 +764,7 @@ namespace scan_planner
     next_target_retry_time_ = ros::Time(0);
     planning_in_progress_ = false;
     emergency_stop_active_ = false;
-    takeover_sync_pending_ = false;
+    takeover_sync_pending_.store(false, std::memory_order_release);
     force_takeover_poly_init_ = true;
     changeFSMExecState(GEN_NEW_TRAJ, "TAKEOVER_SYNC");
     ROS_INFO("SCAN_TAKEOVER_LOCAL_RESET start=(%.3f,%.3f) velocity=(%.3f,%.3f) global_target=(%.3f,%.3f)",
@@ -945,12 +953,13 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
-    if (takeover_sync_pending_ && have_odom_ && have_target_ &&
+    if (takeover_sync_pending_.load(std::memory_order_acquire) &&
+        have_odom_ && have_target_ &&
         planner_manager_ && navi_mode_ == NAVI_MODE::REFERENCE_PATH)
     {
       // Deferred synchronization is completed as soon as both odometry and
       // the retained reference-path target are available.
-      takeoverSyncCallback(std_msgs::EmptyConstPtr());
+      processTakeoverSync();
     }
 
     static const char* state_names[] = {

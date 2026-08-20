@@ -94,7 +94,7 @@ namespace scan_planner
     ros::Time last_nominal_replan_attempt_time_;
     Eigen::Vector3d last_replan_robot_position_{Eigen::Vector3d::Zero()};
     bool planning_in_progress_{false};
-    bool takeover_sync_pending_{false};
+    std::atomic<bool> takeover_sync_pending_{false};
     bool force_takeover_poly_init_{false};
     double nominal_replan_period_sec_{0.20};
     double min_replan_progress_m_{0.05};
@@ -127,9 +127,9 @@ namespace scan_planner
 
     /* ROS utils */
     ros::NodeHandle node_;
-    ros::NodeHandle stair_state_node_;
-    ros::CallbackQueue stair_state_callback_queue_;
-    std::unique_ptr<ros::AsyncSpinner> stair_state_spinner_;
+    ros::NodeHandle control_edge_node_;
+    ros::CallbackQueue control_edge_callback_queue_;
+    std::unique_ptr<ros::AsyncSpinner> control_edge_spinner_;
     ros::Timer exec_timer_, safety_timer_;
     ros::Subscriber goal_sub_, odom_sub_, path_sub_, go2_execution_frozen_sub_, reset_sub_, takeover_sync_sub_, stair_up_active_sub_;
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_, self_inflation_pub_;
@@ -166,6 +166,8 @@ namespace scan_planner
     std::pair<int, SCANReplanFSM::FSM_EXEC_STATE> timesOfConsecutiveStateCalls();
     // printFSMExecState：打印当前执行状态日志。
     void printFSMExecState();
+    // processTakeoverSync：在主FSM线程消费takeover边沿，串行重置本地轨迹并触发重规划。
+    void processTakeoverSync();
 
     // planGlobalTrajbyGivenWps：使用预设路点集规划一条完整全局轨迹。
     void planGlobalTrajbyGivenWps();

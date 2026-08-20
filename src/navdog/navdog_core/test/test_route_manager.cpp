@@ -146,6 +146,11 @@ TEST(RouteManager, ElevationAssessmentRequiresConsecutiveRawRisingPoints)
   EXPECT_FALSE(assess({0.30, 0.32, 0.34, 0.36, 0.38}).ascending);
   EXPECT_FALSE(assess({0.000, 0.018, 0.036, 0.054, 0.072, 0.090, 0.108},
       0.25).ascending);
+  EXPECT_FALSE(assess({0.0921, -0.1324, 0.0911, 0.1019, 0.1028, 0.1089},
+      0.20).ascending);
+  EXPECT_FALSE(assess({-0.1065, -0.3157, -0.0947, -0.0867, -0.0590, -0.0534},
+      0.20).ascending);
+  EXPECT_FALSE(assess({0.00, 0.00, 0.20, 0.00, 0.00}).ascending);
   EXPECT_FALSE(assess({0.00, -0.10, -0.15, -0.12, -0.07, -0.02, 0.04},
       0.20).ascending);
 

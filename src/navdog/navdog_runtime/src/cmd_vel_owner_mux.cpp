@@ -159,21 +159,6 @@ void publishFinalCommand(const geometry_msgs::Twist& command, double now_sec)
   final_cmd_feedback_pub_.publish(feedback);
 }
 
-// limitLinearSpeed：若指令线速度模超过max_speed，按比例缩放至上限并记录日志。
-void limitLinearSpeed(geometry_msgs::Twist& command, double max_speed,
-                      const char* mode_name)
-{
-  const double speed = std::hypot(command.linear.x, command.linear.y);
-  if (speed <= max_speed || speed <= kEpsilon) return;
-
-  const double scale = max_speed / speed;
-  command.linear.x *= scale;
-  command.linear.y *= scale;
-  ROS_INFO_THROTTLE(1.0,
-      "CMD_LINEAR_LIMIT mode=%s requested=%.3f limited=%.3f",
-      mode_name, speed, max_speed);
-}
-
 void limitModeLinearSpeed(geometry_msgs::Twist& command,
                           double mode_limit_mps,
                           const char* mode_name)
@@ -192,7 +177,26 @@ void limitModeLinearSpeed(geometry_msgs::Twist& command,
         "CMD_SPEED_LIMIT mode=%s task_max_vx=%.3f mode_limit=%.3f effective=%.3f",
         mode_name, task_max_vx_, mode_limit_mps, effective_limit);
   }
-  limitLinearSpeed(command, effective_limit, mode_name);
+  const double requested_linear =
+      std::hypot(command.linear.x, command.linear.y);
+  const double scale = navdog_runtime::proportionalMotionScale(
+      command.linear.x, command.linear.y, effective_limit);
+  if (scale <= 0.0)
+  {
+    command.linear.x = 0.0;
+    command.linear.y = 0.0;
+    command.angular.z = 0.0;
+    return;
+  }
+  if (scale >= 1.0)
+    return;
+
+  command.linear.x *= scale;
+  command.linear.y *= scale;
+  command.angular.z *= scale;
+  ROS_INFO_THROTTLE(1.0,
+      "CMD_MOTION_LIMIT mode=%s requested_linear=%.3f limited_linear=%.3f scale=%.3f",
+      mode_name, requested_linear, effective_limit, scale);
 }
 
 // classifyMotion：根据输出指令粗略判断运动状态，仅用于日志分类。

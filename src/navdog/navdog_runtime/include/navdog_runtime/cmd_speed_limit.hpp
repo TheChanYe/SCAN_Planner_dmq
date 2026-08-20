@@ -19,4 +19,22 @@ inline double effectiveLinearSpeedLimit(
   return std::min(mode_limit_mps, task_max_vx_mps);
 }
 
+inline double proportionalMotionScale(
+    double vx,
+    double vy,
+    double max_linear_speed_mps) noexcept
+{
+  constexpr double kEpsilon = 1e-9;
+  const double speed = std::hypot(vx, vy);
+  if (!std::isfinite(speed) ||
+      !std::isfinite(max_linear_speed_mps) ||
+      max_linear_speed_mps <= 0.0)
+  {
+    return 0.0;
+  }
+  if (speed <= max_linear_speed_mps || speed <= kEpsilon)
+    return 1.0;
+  return max_linear_speed_mps / speed;
+}
+
 }  // namespace navdog_runtime

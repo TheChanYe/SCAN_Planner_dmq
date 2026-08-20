@@ -165,24 +165,46 @@ RouteElevationAssessment RouteManager::assessElevation(
     return assessment;
   }
 
-  navdog_task::RoutePoint current{};
-  if (!pointAtArcLength(progress.arc_length_m, current))
-    return assessment;
-
-  assessment.valid = true;
-  assessment.current_z = current.z;
-  assessment.ascent_end_z = current.z;
-  assessment.checked_until_arc_m = progress.arc_length_m;
-
   const auto& points = task_view_.points;
   if (points.size() < 2 || progress.segment_index >= points.size() - 1)
     return assessment;
+
+  const auto elevation_z = [&](std::size_t index) noexcept -> double {
+    const double raw_z = points[index].z;
+    if (!std::isfinite(raw_z) || index == 0 || index + 1 >= points.size())
+      return raw_z;
+
+    const double prev_z = points[index - 1].z;
+    const double next_z = points[index + 1].z;
+    if (!std::isfinite(prev_z) || !std::isfinite(next_z))
+      return raw_z;
+
+    const double baseline_z = 0.5 * (prev_z + next_z);
+    if (std::fabs(prev_z - next_z) <= config.flat_tolerance_m &&
+        std::fabs(raw_z - baseline_z) >= config.trigger_rise_m)
+    {
+      return baseline_z;
+    }
+    return raw_z;
+  };
+
+  const double z0 = elevation_z(progress.segment_index);
+  const double z1 = elevation_z(progress.segment_index + 1);
+  if (!std::isfinite(z0) || !std::isfinite(z1))
+    return assessment;
+  const double current_z =
+      z0 + progress.segment_ratio * (z1 - z0);
+
+  assessment.valid = true;
+  assessment.current_z = current_z;
+  assessment.ascent_end_z = current_z;
+  assessment.checked_until_arc_m = progress.arc_length_m;
 
   constexpr double kZEpsilon = 1e-9;
   double distance_ahead = 0.0;
   double current_arc = progress.arc_length_m;
   double previous_arc = current_arc;
-  double previous_z = current.z;
+  double previous_z = current_z;
   double run_start_z = previous_z;
   double run_start_arc = current_arc;
   int consecutive_rising_points = 0;
@@ -191,6 +213,9 @@ RouteElevationAssessment RouteManager::assessElevation(
   for (std::size_t i = first_future_index; i < points.size(); ++i)
   {
     const auto& point = points[i];
+    const double sample_z = elevation_z(i);
+    if (!std::isfinite(sample_z))
+      return RouteElevationAssessment{};
     double segment_remaining = 0.0;
     if (i == first_future_index)
     {
@@ -215,13 +240,13 @@ RouteElevationAssessment RouteManager::assessElevation(
     if (segment_remaining <= kZEpsilon)
     {
       consecutive_rising_points = 0;
-      run_start_z = point.z;
+      run_start_z = sample_z;
       run_start_arc = current_arc;
-      assessment.ascent_end_z = point.z;
+      assessment.ascent_end_z = sample_z;
       assessment.rise_m = 0.0;
       assessment.average_slope = 0.0;
       assessment.consecutive_rising_points = 0;
-      previous_z = point.z;
+      previous_z = sample_z;
       previous_arc = current_arc;
       continue;
     }
@@ -232,7 +257,7 @@ RouteElevationAssessment RouteManager::assessElevation(
     current_arc += std::max(0.0, segment_remaining);
     assessment.checked_until_arc_m = current_arc;
 
-    if (point.z > previous_z + kZEpsilon)
+    if (sample_z > previous_z + kZEpsilon)
     {
       ++consecutive_rising_points;
       if (consecutive_rising_points == 1)
@@ -240,11 +265,11 @@ RouteElevationAssessment RouteManager::assessElevation(
         run_start_z = previous_z;
         run_start_arc = previous_arc;
       }
-      const double run_rise = point.z - run_start_z;
+      const double run_rise = sample_z - run_start_z;
       const double run_length = current_arc - run_start_arc;
       const double average_slope =
           run_length > kZEpsilon ? run_rise / run_length : 0.0;
-      assessment.ascent_end_z = point.z;
+      assessment.ascent_end_z = sample_z;
       assessment.rise_m = run_rise;
       assessment.average_slope = average_slope;
       assessment.consecutive_rising_points = consecutive_rising_points;
@@ -252,7 +277,7 @@ RouteElevationAssessment RouteManager::assessElevation(
               config.min_consecutive_rising_points &&
           run_rise + kZEpsilon >= config.trigger_rise_m &&
           average_slope + kZEpsilon >= config.min_average_slope &&
-          point.z - assessment.current_z + kZEpsilon >=
+          sample_z - assessment.current_z + kZEpsilon >=
               config.trigger_rise_m)
       {
         assessment.ascending = true;
@@ -262,14 +287,14 @@ RouteElevationAssessment RouteManager::assessElevation(
     else
     {
       consecutive_rising_points = 0;
-      run_start_z = point.z;
+      run_start_z = sample_z;
       run_start_arc = current_arc;
-      assessment.ascent_end_z = point.z;
+      assessment.ascent_end_z = sample_z;
       assessment.rise_m = 0.0;
       assessment.average_slope = 0.0;
       assessment.consecutive_rising_points = 0;
     }
-    previous_z = point.z;
+    previous_z = sample_z;
     previous_arc = current_arc;
   }
   return assessment;
