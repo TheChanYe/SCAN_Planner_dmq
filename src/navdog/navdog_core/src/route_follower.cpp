@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <utility>
 
 namespace navdog
 {
@@ -13,6 +15,13 @@ namespace
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
 
+struct RawTrackingPoint
+{
+  double arc_m{0.0};
+  double x{0.0};
+  double y{0.0};
+};
+
 // normalizeAngle：将任意弧度角归一化到 (-pi, pi]，避免转向时绕远路。
 double normalizeAngle(double angle) noexcept
 {
@@ -21,6 +30,20 @@ double normalizeAngle(double angle) noexcept
   while (angle < -kPi)
     angle += 2.0 * kPi;
   return angle;
+}
+
+double perpendicularDistance(
+    const RawTrackingPoint& p,
+    const RawTrackingPoint& a,
+    const RawTrackingPoint& b) noexcept
+{
+  const double dx = b.x - a.x;
+  const double dy = b.y - a.y;
+  const double length = std::hypot(dx, dy);
+  if (length < kEpsilon)
+    return std::hypot(p.x - a.x, p.y - a.y);
+  return std::abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) /
+      length;
 }
 
 }  // namespace
@@ -35,60 +58,150 @@ RouteFollower::RouteFollower(
 {
 }
 
-// interpolateRoutePoint：根据目标累积弧长，在任务的折线路线上插值出对应位置。
-// 步骤：
-//   1. 若路线点数少于2个，无法构成线段，直接返回失败；
-//   2. 若目标弧长<=0，直接返回起点位置；
-//   3. 沿着路线逐段累加段长，一旦累加长度超过目标弧长，说明目标点落在这一段内，
-//      按比例 ratio 在该段两端点之间线性插值出 x/y；
-//   4. 若遍历完所有段仍未达到目标弧长（目标点超出路线总长），则钳到路线终点。
-// 输入：task - 路线点列；target_arc_length_m - 目标累积弧长（米）
-// 输出：out_x/out_y - 插值结果；返回值表示是否成功。
-bool RouteFollower::interpolateRoutePoint(
-    const NavigationTask& task,
-    double target_arc_length_m,
+void RouteFollower::rebuildTrackingPath(
+    const NavigationTask& task)
+{
+  tracking_path_ready_ = true;
+  tracking_task_sequence_ = task.sequence;
+  tracking_path_.clear();
+
+  std::vector<RawTrackingPoint> raw;
+  raw.reserve(task.points.size());
+  double raw_arc = 0.0;
+  bool have_last = false;
+  double last_x = 0.0;
+  double last_y = 0.0;
+
+  for (const RoutePoint& point : task.points)
+  {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y))
+      continue;
+    if (have_last)
+      raw_arc += std::hypot(point.x - last_x, point.y - last_y);
+
+    if (raw.empty() ||
+        std::hypot(point.x - raw.back().x, point.y - raw.back().y) >=
+            kEpsilon)
+    {
+      RawTrackingPoint raw_point{};
+      raw_point.arc_m = raw_arc;
+      raw_point.x = point.x;
+      raw_point.y = point.y;
+      raw.push_back(raw_point);
+    }
+
+    last_x = point.x;
+    last_y = point.y;
+    have_last = true;
+  }
+
+  if (raw.empty())
+    return;
+
+  if (raw.size() <= 2 || config_.simplify_tolerance_m <= 0.0 ||
+      !std::isfinite(config_.simplify_tolerance_m))
+  {
+    tracking_path_.reserve(raw.size());
+    for (const RawTrackingPoint& point : raw)
+    {
+      TrackingPoint tracking_point{};
+      tracking_point.arc_m = point.arc_m;
+      tracking_point.x = point.x;
+      tracking_point.y = point.y;
+      tracking_path_.push_back(tracking_point);
+    }
+    return;
+  }
+
+  std::vector<bool> keep(raw.size(), false);
+  keep.front() = true;
+  keep.back() = true;
+  std::vector<std::pair<std::size_t, std::size_t>> stack;
+  stack.emplace_back(0, raw.size() - 1);
+  while (!stack.empty())
+  {
+    const auto range = stack.back();
+    stack.pop_back();
+    const std::size_t first = range.first;
+    const std::size_t last = range.second;
+    if (last <= first + 1)
+      continue;
+
+    double max_distance = -1.0;
+    std::size_t max_index = first;
+    for (std::size_t i = first + 1; i < last; ++i)
+    {
+      const double distance =
+          perpendicularDistance(raw[i], raw[first], raw[last]);
+      if (distance > max_distance)
+      {
+        max_distance = distance;
+        max_index = i;
+      }
+    }
+
+    if (max_distance > config_.simplify_tolerance_m)
+    {
+      keep[max_index] = true;
+      stack.emplace_back(first, max_index);
+      stack.emplace_back(max_index, last);
+    }
+  }
+
+  tracking_path_.reserve(raw.size());
+  for (std::size_t i = 0; i < raw.size(); ++i)
+  {
+    if (keep[i])
+    {
+      TrackingPoint tracking_point{};
+      tracking_point.arc_m = raw[i].arc_m;
+      tracking_point.x = raw[i].x;
+      tracking_point.y = raw[i].y;
+      tracking_path_.push_back(tracking_point);
+    }
+  }
+}
+
+// interpolateTrackingPoint：根据目标原始弧长，在派生tracking path上插值出对应位置。
+bool RouteFollower::interpolateTrackingPoint(
+    double target_arc_m,
     double& out_x,
     double& out_y) const noexcept
 {
   out_x = 0.0;
   out_y = 0.0;
 
-  const auto& points = task.points;
-  if (points.size() < 2)
+  if (tracking_path_.size() < 2)
     return false;
 
-  if (target_arc_length_m <= 0.0)
+  if (target_arc_m <= tracking_path_.front().arc_m)
   {
-    out_x = points.front().x;
-    out_y = points.front().y;
+    out_x = tracking_path_.front().x;
+    out_y = tracking_path_.front().y;
     return true;
   }
 
-  double accumulated = 0.0;
-  for (std::size_t i = 1; i < points.size(); ++i)
+  for (std::size_t i = 1; i < tracking_path_.size(); ++i)
   {
-    const double dx = points[i].x - points[i - 1].x;
-    const double dy = points[i].y - points[i - 1].y;
-    const double seg_len = std::hypot(dx, dy);
+    const TrackingPoint& prev = tracking_path_[i - 1];
+    const TrackingPoint& next = tracking_path_[i];
+    const double arc_delta = next.arc_m - prev.arc_m;
 
-    if (seg_len < kEpsilon)
+    if (arc_delta < kEpsilon)
       continue;
 
-    if (accumulated + seg_len >= target_arc_length_m)
+    if (target_arc_m <= next.arc_m)
     {
       const double ratio =
-          (target_arc_length_m - accumulated) / seg_len;
-      out_x = points[i - 1].x + ratio * dx;
-      out_y = points[i - 1].y + ratio * dy;
+          (target_arc_m - prev.arc_m) / arc_delta;
+      out_x = prev.x + ratio * (next.x - prev.x);
+      out_y = prev.y + ratio * (next.y - prev.y);
       return true;
     }
-
-    accumulated += seg_len;
   }
 
-  // target_arc_length_m beyond route end.
-  out_x = points.back().x;
-  out_y = points.back().y;
+  out_x = tracking_path_.back().x;
+  out_y = tracking_path_.back().y;
   return true;
 }
 
@@ -163,7 +276,7 @@ VelocityCommand RouteFollower::updatePointGoal(
 //   2. 若只有单个点或路线总长度接近零，退化为 updatePointGoal 直达模式；
 //   3. 根据当前可执行速度计算动态前瞻距离 dynamic_lookahead：
 //      基础前瞻 + 速度*前瞻时间，并限幅到 max_lookahead_distance_m（跑得越快看得越远）；
-//   4. 用"已走弧长 + 前瞻距离"作为目标弧长，调用 interpolateRoutePoint 求出前瞻点；
+//   4. 用"已走弧长 + 前瞻距离"作为目标弧长，在tracking path上求出前瞻点；
 //      若插值失败（点数不足）则返回 TRACKING_STOP；
 //   5. 直接朝向前瞻点位置行驶（而不是用该点所在段的切线方向），
 //      这样可以避免在每个路径拐点处因切线方向突变而停下对齐（轰磨现象）；
@@ -197,6 +310,10 @@ VelocityCommand RouteFollower::update(
   if (task.points.size() == 1 || progress.total_length_m <= 1e-6)
     return updatePointGoal(task, robot, progress, max_vx, now_sec);
 
+  if (!tracking_path_ready_ ||
+      task.sequence != tracking_task_sequence_)
+    rebuildTrackingPath(task);
+
   const double effective_max_vx =
       std::max(0.0, std::min(max_vx, config_.max_vx));
 
@@ -215,8 +332,7 @@ VelocityCommand RouteFollower::update(
   double look_x = 0.0;
   double look_y = 0.0;
 
-  if (!interpolateRoutePoint(
-          task, target_arc, look_x, look_y))
+  if (!interpolateTrackingPoint(target_arc, look_x, look_y))
   {
     cmd.valid = false;
     cmd.source = CommandSource::TRACKING_STOP;

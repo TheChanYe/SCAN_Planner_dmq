@@ -121,13 +121,14 @@ private:
   ProjectionCandidate findForwardProjection(
       const RobotState& robot) const noexcept;
 
-  // projectToSegment：将机器人投影到指定直线段上，并且返回的弧长不得小于 minimum_arc_length_m
-  // （用于强制向前搜索，防止回退）。
+  // projectToSegment：将机器人投影到指定直线段上，并且返回的弧长必须落在
+  // [minimum_arc_length_m, maximum_arc_length_m] 内。
   ProjectionCandidate projectToSegment(
       const Segment& segment,
       std::size_t segment_vector_index,
       const RobotState& robot,
-      double minimum_arc_length_m) const noexcept;
+      double minimum_arc_length_m,
+      double maximum_arc_length_m) const noexcept;
 
   // isBetterCandidate：比较两个投影候选，判断 candidate 是否优于当前最优 best
   // （主要按距离平方比较）。

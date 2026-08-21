@@ -3,6 +3,9 @@
 #include "navdog_core/config.hpp"
 #include "navdog_core/types.hpp"
 
+#include <cstdint>
+#include <vector>
+
 namespace navdog
 {
 
@@ -40,6 +43,13 @@ public:
       double now_sec);
 
 private:
+  struct TrackingPoint
+  {
+    double arc_m{0.0};
+    double x{0.0};
+    double y{0.0};
+  };
+
   // updatePointGoal：单点/极短路线的直达模式，直接朝向任务最后一个点行驶，
   // 不使用前瞻点插值。目标在前半平面时边走边转，后半平面时原地转向。
   VelocityCommand updatePointGoal(
@@ -49,17 +59,22 @@ private:
       double max_vx,
       double now_sec) const;
 
-  // interpolateRoutePoint：根据目标弧长在折线路线上插值出对应位置。
-  // 输入：task - 路线点列；target_arc_length_m - 目标累积弧长（米）
+  void rebuildTrackingPath(
+      const NavigationTask& task);
+
+  // interpolateTrackingPoint：根据原始路线弧长在派生tracking path上插值位置。
+  // 输入：target_arc_m - 原始路线累计弧长（米）
   // 输出：out_x/out_y - 插值得到的坐标；返回值表示是否插值成功
   // （点数少于2个时失败）。若目标弧长超出路线总长，则钳到终点。
-  bool interpolateRoutePoint(
-      const NavigationTask& task,
-      double target_arc_length_m,
+  bool interpolateTrackingPoint(
+      double target_arc_m,
       double& out_x,
       double& out_y) const noexcept;
 
   RouteFollowerConfig config_{};    // 跟踪控制配置参数
+  bool tracking_path_ready_{false};
+  std::uint64_t tracking_task_sequence_{0};
+  std::vector<TrackingPoint> tracking_path_;
 };
 
 }  // namespace navdog

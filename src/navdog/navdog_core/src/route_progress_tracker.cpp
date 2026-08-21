@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace navdog
 {
@@ -223,10 +224,8 @@ double RouteProgressTracker::clamp(
 // =============================================================================
 // projectToSegment
 // 将机器人投影到指定直线段上。
-// 步骤：1.计算投影比例ratio并限幅到[0,1]；2.根据ratio求出对应弧长arc_length_m；
-// 3.强制单调性：若计算出的弧长低于 minimum_arc_length_m（当前已达到的最小弧长），
-// 则强行推进到minimum或直接到该段终点（防止定位噪声导致进度回退）；
-// 4.重新计算投影点坐标与机器人到该点的平方距离以及段方向角，汇成候选结果。
+// 步骤：1.将弧长上下限映射到该段允许的ratio范围；2.计算原始投影ratio并限幅
+// 到允许范围；3.重新计算投影点坐标、弧长、平方距离以及段方向角，汇成候选结果。
 // =============================================================================
 
 RouteProgressTracker::ProjectionCandidate
@@ -234,7 +233,8 @@ RouteProgressTracker::projectToSegment(
     const Segment& segment,
     std::size_t segment_vector_index,
     const RobotState& robot,
-    double minimum_arc_length_m) const noexcept
+    double minimum_arc_length_m,
+    double maximum_arc_length_m) const noexcept
 {
   ProjectionCandidate candidate{};
   candidate.valid = false;
@@ -253,42 +253,28 @@ RouteProgressTracker::projectToSegment(
        (robot.y - segment.y0) * segment.dy) /
       length_sq;
 
-  ratio = clamp(ratio, 0.0, 1.0);
+  const double segment_start_arc = segment.cumulative_start_m;
+  const double segment_end_arc = segment.cumulative_start_m + segment.length;
+  const double allowed_min_arc = clamp(
+      minimum_arc_length_m,
+      segment_start_arc,
+      segment_end_arc);
+  const double allowed_max_arc = std::isfinite(maximum_arc_length_m)
+      ? clamp(maximum_arc_length_m, segment_start_arc, segment_end_arc)
+      : segment_end_arc;
 
-  double arc_length_m =
+  if (allowed_max_arc < allowed_min_arc)
+    return candidate;
+
+  const double min_ratio =
+      (allowed_min_arc - segment_start_arc) / segment.length;
+  const double max_ratio =
+      (allowed_max_arc - segment_start_arc) / segment.length;
+  ratio = clamp(ratio, min_ratio, max_ratio);
+
+  const double arc_length_m =
       segment.cumulative_start_m +
       ratio * segment.length;
-
-  // Enforce monotonic progress: do not allow arc length
-  // below the minimum for this update.
-  if (arc_length_m < minimum_arc_length_m)
-  {
-    if (minimum_arc_length_m >
-        segment.cumulative_start_m + segment.length)
-    {
-      // The minimum is beyond this segment; clamp to end.
-      arc_length_m =
-          segment.cumulative_start_m + segment.length;
-      ratio = 1.0;
-    }
-    else
-    {
-      arc_length_m = minimum_arc_length_m;
-      if (segment.length > 0.0)
-      {
-        ratio = clamp(
-            (arc_length_m -
-             segment.cumulative_start_m) /
-                segment.length,
-            0.0,
-            1.0);
-      }
-      else
-      {
-        ratio = 0.0;
-      }
-    }
-  }
 
   const double projected_x =
       segment.x0 + ratio * segment.dx;
@@ -372,7 +358,8 @@ RouteProgressTracker::findInitialProjection(
             segments_[i],
             i,
             robot,
-            0.0);
+            0.0,
+            std::numeric_limits<double>::infinity());
 
     if (isBetterCandidate(candidate, best))
     {
@@ -442,7 +429,8 @@ RouteProgressTracker::findForwardProjection(
             seg,
             i,
             robot,
-            minimum_arc_length_m);
+            minimum_arc_length_m,
+            max_arc);
 
     if (isBetterCandidate(candidate, best))
     {
@@ -478,7 +466,8 @@ RouteProgressTracker::findForwardProjection(
         seg,
         current_segment_vector_index_,
         robot,
-        minimum_arc_length_m);
+        minimum_arc_length_m,
+        max_arc);
   }
 
   return best;

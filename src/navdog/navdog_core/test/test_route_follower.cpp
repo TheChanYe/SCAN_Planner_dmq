@@ -88,6 +88,29 @@ NavigationTask makeDiagonalTask(double y)
   return task;
 }
 
+NavigationTask makeNoisyStraightTask()
+{
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.70;
+  const double xy[][2] = {
+      {0.0, 0.00},
+      {0.2, 0.02},
+      {0.4, -0.02},
+      {0.6, 0.01},
+      {0.8, 0.00},
+      {1.0, 0.00},
+  };
+  for (const auto& p : xy)
+  {
+    RoutePoint point{};
+    point.x = p[0];
+    point.y = p[1];
+    task.points.push_back(point);
+  }
+  return task;
+}
+
 }  // namespace
 
 TEST(RouteFollowerTest, OutputsForwardOnlyStraightCommand)
@@ -184,6 +207,76 @@ TEST(RouteFollowerTest, EffectiveSpeedExtendsLookaheadAcrossCorner)
   EXPECT_NEAR(slow_cmd.yaw_rate, 0.0, 1e-12);
   EXPECT_GT(route_cmd.yaw_rate, 0.0);
   EXPECT_DOUBLE_EQ(route_cmd.vy, 0.0);
+}
+
+TEST(RouteFollowerTest, SimplifiesSmallZigzagIntoStraightTrackingPath)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.simplify_tolerance_m = 0.05;
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      makeNoisyStraightTask(), makeRobot(), makeProgress(1, 0.0, 1.0),
+      0.50, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_NEAR(cmd.yaw_rate, 0.0, 1e-9);
+}
+
+TEST(RouteFollowerTest, PreservesRealNinetyDegreeCorner)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.40;
+  config.max_lookahead_distance_m = 0.40;
+  config.lookahead_time_sec = 0.0;
+  config.simplify_tolerance_m = 0.05;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 1.0;
+  p2.y = 1.0;
+  task.points = {p0, p1, p2};
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.8, 0.0, 0.0), makeProgress(1, 0.7, 1.3),
+      0.50, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
+}
+
+TEST(RouteFollowerTest, TrackingSimplificationKeepsFinalWaypoint)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 2.0;
+  config.max_lookahead_distance_m = 2.0;
+  config.lookahead_time_sec = 0.0;
+  config.simplify_tolerance_m = 0.05;
+
+  NavigationTask task = makeNoisyStraightTask();
+  task.points.back().x = 1.0;
+  task.points.back().y = 0.4;
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.8, 0.0, 0.0), makeProgress(1, 0.9, 0.5),
+      0.50, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
 }
 
 TEST(RouteFollowerTest, RightTurnUsesNegativeYawWithoutLateralVelocity)

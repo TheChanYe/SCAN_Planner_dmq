@@ -99,16 +99,19 @@ stair_up:
   enabled: true
   linear_speed_mps: 0.40
   lookahead_distance_m: 2.20
-  trigger_rise_m: 0.20
+  trigger_rise_m: 0.30
   min_consecutive_rising_points: 4
-  min_average_slope: 0.25
+  min_average_slope: 0.30
   flat_tolerance_m: 0.03
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50
+route_progress:
+  max_forward_search_m: 0.40
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8
   kp_yaw: 1.2
+  simplify_tolerance_m: 0.05
   max_vx: 0.5
 route_corridor_observation:
   map_timeout_sec: 1.5

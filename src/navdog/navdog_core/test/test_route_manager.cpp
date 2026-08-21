@@ -44,6 +44,45 @@ TEST(RouteManager, ProgressNeverMovesBackwardAndQueriesForward)
   EXPECT_NEAR(1.5, point.x, 1e-9);
 }
 
+TEST(RouteManager, ForwardProjectionCannotJumpBeyondSearchArc)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 0.40;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(6);
+  points[1].x = 1.0;
+  points[2].x = 1.0; points[2].y = 0.10;
+  points[3].x = 0.0; points[3].y = 0.10;
+  points[4].x = -1.0; points[4].y = 0.10;
+  points[5].x = -2.0; points[5].y = 0.10;
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto initial = manager.updateProgress(robot(0.20, 0.0), 1.0);
+  ASSERT_TRUE(initial.progress.valid);
+
+  const auto next = manager.updateProgress(robot(0.20, 0.10), 2.0);
+  ASSERT_TRUE(next.progress.valid);
+  EXPECT_GE(next.progress.arc_length_m, initial.progress.arc_length_m);
+  EXPECT_LE(next.progress.arc_length_m - initial.progress.arc_length_m,
+      config.max_forward_search_m + 1e-9);
+}
+
+TEST(RouteManager, InitialProjectionStillSearchesWholeRoute)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 0.40;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(4);
+  points[1].x = 1.0;
+  points[2].x = 2.0;
+  points[3].x = 3.0;
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto output = manager.updateProgress(robot(2.45, 0.0), 1.0);
+  ASSERT_TRUE(output.progress.valid);
+  EXPECT_GT(output.progress.arc_length_m, 2.0);
+}
+
 TEST(RouteManager, HandlesSingleAndRepeatedPointsAndReset)
 {
   navdog::RouteManager manager;
@@ -134,9 +173,9 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
     progress.total_length_m = points.back().x;
     navdog::StairUpConfig config{};
     config.lookahead_distance_m = 2.20;
-    config.trigger_rise_m = 0.20;
+    config.trigger_rise_m = 0.30;
     config.min_consecutive_rising_points = 4;
-    config.min_average_slope = 0.25;
+    config.min_average_slope = 0.30;
     return manager.assessElevation(progress, config);
   };
 
@@ -157,19 +196,20 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
   const auto ascent = assess({0.00, 0.08, 0.16, 0.25, 0.34, 0.42}, 0.17);
   EXPECT_TRUE(ascent.ascending);
   EXPECT_GE(ascent.consecutive_rising_points, 4);
-  EXPECT_GT(ascent.rise_m, 0.20);
-  EXPECT_GT(ascent.average_slope, 0.25);
+  EXPECT_GT(ascent.rise_m, 0.30);
+  EXPECT_GT(ascent.average_slope, 0.30);
 
-  const auto false_stair = assess({0.000, 0.040, 0.080, 0.119, 0.159}, 0.243);
+  const auto false_stair =
+      assess({0.000, 0.071, 0.142, 0.213, 0.284}, 0.283);
   EXPECT_FALSE(false_stair.ascending);
-  EXPECT_LT(false_stair.rise_m, 0.20);
-  EXPECT_LT(false_stair.average_slope, 0.25);
+  EXPECT_LT(false_stair.rise_m, 0.30);
+  EXPECT_LT(false_stair.average_slope, 0.30);
 
   const auto logged_true_stair =
       assess({0.000, 0.106, 0.212, 0.318, 0.422}, 0.213);
   EXPECT_TRUE(logged_true_stair.ascending);
-  EXPECT_GT(logged_true_stair.rise_m, 0.20);
-  EXPECT_GT(logged_true_stair.average_slope, 0.25);
+  EXPECT_GT(logged_true_stair.rise_m, 0.30);
+  EXPECT_GT(logged_true_stair.average_slope, 0.30);
 
   EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.33, 0.36, 0.39, 0.42},
       0.8).ascending);
@@ -198,7 +238,7 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
     progress.arc_length_m = 0.0;
     progress.total_length_m = 0.6;
     navdog::StairUpConfig config{};
-    config.min_average_slope = 0.25;
+    config.min_average_slope = 0.30;
     EXPECT_FALSE(manager.assessElevation(progress, config).ascending);
   }
 }
@@ -229,9 +269,9 @@ TEST(RouteManager, ElevationAssessmentRejectsBaselineValleys)
     progress.total_length_m = points.back().x;
     navdog::StairUpConfig config{};
     config.lookahead_distance_m = 2.20;
-    config.trigger_rise_m = 0.20;
+    config.trigger_rise_m = 0.30;
     config.min_consecutive_rising_points = 4;
-    config.min_average_slope = 0.25;
+    config.min_average_slope = 0.30;
     config.flat_tolerance_m = 0.03;
     config.baseline_lookback_distance_m = 1.00;
     config.baseline_drop_tolerance_m = 0.06;

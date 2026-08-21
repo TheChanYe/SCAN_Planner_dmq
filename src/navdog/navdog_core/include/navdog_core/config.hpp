@@ -45,7 +45,7 @@ struct RouteProgressConfig
 
   // 每次更新最多允许从当前进度向前搜索的路线距离。
   // 防止闭环、交叉路线中直接跳到很远的未来路线段。
-  double max_forward_search_m{3.0};
+  double max_forward_search_m{0.40};
 
   // 仅用于输出 on_route 诊断，不参与路线进度有效性判断。
   double on_route_lateral_tolerance_m{0.30};
@@ -171,9 +171,9 @@ struct StairUpConfig
   bool enabled{true};
   double linear_speed_mps{0.40};
   double lookahead_distance_m{2.20};
-  double trigger_rise_m{0.20};
+  double trigger_rise_m{0.30};
   int min_consecutive_rising_points{4};
-  double min_average_slope{0.25};
+  double min_average_slope{0.30};
   double flat_tolerance_m{0.03};
   double baseline_lookback_distance_m{1.00};
   double baseline_drop_tolerance_m{0.06};
@@ -193,6 +193,7 @@ struct RouteFollowerConfig
   double lookahead_time_sec{1.20};
   double kp_x{0.8};
   double kp_yaw{1.2};
+  double simplify_tolerance_m{0.05};
 
   double max_vx{0.70};
   double max_yaw_rate{0.65};
