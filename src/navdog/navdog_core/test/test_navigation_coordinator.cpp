@@ -259,4 +259,38 @@ TEST(NavigationCoordinator, InvalidTimeFailsDuringPlanningHandshake)
   EXPECT_EQ(NavState::PLANNING, output.state);
 }
 
+TEST(NavigationCoordinator, FailActiveTaskEntersFailedAndClosesCoreSession)
+{
+  NavigationCoordinator coordinator;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const std::uint64_t sequence = coordinator.taskSession().sequence;
+  ASSERT_TRUE(coordinator.hasActiveTask());
+
+  EXPECT_TRUE(coordinator.failActiveTask());
+  EXPECT_EQ(NavState::FAILED, coordinator.state());
+  EXPECT_FALSE(coordinator.hasActiveTask());
+  EXPECT_EQ(sequence, coordinator.taskSession().sequence);
+
+  EXPECT_FALSE(coordinator.failActiveTask());
+}
+
+TEST(NavigationCoordinator, PlannerFailureClosesCoreSession)
+{
+  NavigationCoordinator coordinator;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const std::uint64_t sequence = coordinator.taskSession().sequence;
+  coordinator.update(CoreInput{}, 1.0);
+
+  CoreInput feedback{};
+  feedback.planner.state = PlannerState::FAILED;
+  feedback.planner.trajectory_id = sequence;
+  feedback.planner.stamp_sec = 1.1;
+  feedback.planner.valid = true;
+  const CoreOutput output = coordinator.update(feedback, 1.1);
+
+  EXPECT_EQ(NavState::FAILED, output.state);
+  EXPECT_FALSE(coordinator.hasActiveTask());
+  EXPECT_EQ(sequence, coordinator.taskSession().sequence);
+}
+
 }  // namespace navdog

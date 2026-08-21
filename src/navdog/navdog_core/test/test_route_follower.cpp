@@ -188,6 +188,39 @@ TEST(RouteFollowerTest, LookaheadBehindRobotTurnsOnly)
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
+TEST(RouteFollowerTest, RearTargetUsesPointHeadingInsteadOfTangentHeading)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.kp_yaw = 1.2;
+  config.max_yaw_rate = 0.65;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.70;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 2.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 1.40, 0.60);
+  progress.total_length_m = 2.0;
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(2.30, 0.0, 0.0), progress, 0.50, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_NEAR(std::abs(cmd.yaw_rate), config.max_yaw_rate, 1e-9);
+}
+
 TEST(RouteFollowerTest, ForwardHalfPlaneDrivesAndTurnsContinuously)
 {
   RouteFollowerConfig config{};

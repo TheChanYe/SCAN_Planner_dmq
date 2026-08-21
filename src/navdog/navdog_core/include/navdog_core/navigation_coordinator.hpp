@@ -64,6 +64,13 @@ public:
   /** @brief 返回当前使用的全部配置。 */
   const NavdogConfig& config() const noexcept;
 
+  /**
+   * @brief 外部执行后端出现不可恢复故障时，将当前活动导航任务终止为FAILED。
+   *
+   * Core 不知道 ROS/SCAN/MQTT 失败来源，只表达当前导航执行已经不可继续。
+   */
+  bool failActiveTask() noexcept;
+
 private:
   friend class NavigationCoordinatorTestPeer;
 

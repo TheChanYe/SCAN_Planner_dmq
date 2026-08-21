@@ -471,7 +471,7 @@ std::uint32_t NavdogRuntimeNode::beginScanTakeover(const char* reason,
 // 1. 若不处于LOCAL_AVOID，清空计时/计数并在需要时取消待发布标志，直接返回；
 // 2. 若已就绪，清空计时并返回；
 // 3. 若尚未开始计时，记录请求时刻并返回；
-// 4. 若超过接管超时时长，判断重试次数是否已用尽：已用尽则仅告警不再重试（安全停车）；
+// 4. 若超过接管超时时长，判断重试次数是否已用尽：已用尽则终止Core任务为FAILED；
 // 5. 否则增加重试计数、主动重置Native SCAN并标记待重新发布参考路径/接管同步，
 //    并重置请求计时以开始下一轮超时等待。
 void NavdogRuntimeNode::handleScanRecovery(
@@ -505,10 +505,16 @@ void NavdogRuntimeNode::handleScanRecovery(
 
   if (scan_recovery_attempts_ >= scan_recovery_max_attempts_)
   {
-    ROS_ERROR_THROTTLE(2.0,
-        "SCAN_RECOVERY_EXHAUSTED sequence=%lu attempts=%d action=SAFE_STOP",
+    ROS_ERROR(
+        "SCAN_RECOVERY_EXHAUSTED sequence=%lu attempts=%d action=FAIL_TASK",
         static_cast<unsigned long>(output.task_sequence),
         scan_recovery_attempts_);
+    if (coordinator_)
+      coordinator_->failActiveTask();
+    scan_takeover_ready_ = false;
+    scan_takeover_request_sec_ = 0.0;
+    pending_takeover_sync_ = false;
+    pending_native_scan_path_ = false;
     return;
   }
 

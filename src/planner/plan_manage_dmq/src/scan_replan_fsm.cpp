@@ -167,6 +167,10 @@ namespace scan_planner
     takeover_sync_sub_ = control_edge_node_.subscribe(
         "/native_scan/takeover_replan", 1,
         &SCANReplanFSM::takeoverSyncCallback, this);
+    final_cmd_feedback_sub_ = control_edge_node_.subscribe(
+        "/navdog/final_cmd_feedback", 10,
+        &SCANReplanFSM::finalCmdFeedbackCallback, this,
+        ros::TransportHints().tcpNoDelay());
     control_edge_spinner_.reset(
         new ros::AsyncSpinner(1, &control_edge_callback_queue_));
     control_edge_spinner_->start();
@@ -178,10 +182,6 @@ namespace scan_planner
     std::string body_pose_topic;
     ros::param::param<std::string>("/body_pose_topic", body_pose_topic, std::string("/quad_0/body_pose"));
     odom_sub_ = nh.subscribe(body_pose_topic, 1, &SCANReplanFSM::odometryCallback, this);
-    final_cmd_feedback_sub_ = nh.subscribe(
-        "/navdog/final_cmd_feedback", 10,
-        &SCANReplanFSM::finalCmdFeedbackCallback, this,
-        ros::TransportHints().tcpNoDelay());
     go2_execution_frozen_sub_ = nh.subscribe("/planning/go2_execution_frozen", 10, &SCANReplanFSM::go2ExecutionFrozenCallback, this);
     reset_sub_ = nh.subscribe("/native_scan/reset", 1, &SCANReplanFSM::resetCallback, this);
     bspline_pub_ = nh.advertise<scan_planner::Bspline>("/planning/bspline", 10);
@@ -1044,11 +1044,11 @@ namespace scan_planner
   //     callReboundReplan尝试重规划；成功则进入EXEC_TRAJ并清零各项计数；
   //     目标不可用则仅设置重试定时器不累加失败计数；优化失败则回滚局部轨迹并
   //     累加失败计数；
-  //   - EXEC_TRAJ：先处理预设多航点到达切换；然后根据周期性重规划条件（距
-  //     上次重规划时间/移动距离/剩余时长接近前瞬时间）判断是否需要滚动重规划
-  //     （planFromCurrentTraj），失败但旧轨迹仍安全且未到期则继续使用旧轨迹，
-  //     否则强制回到GEN_NEW_TRAJ重新规划；若已接近终点则进入WAIT_TARGET；若
-  //     轨迹已过期则切换到下一个预设航点或强制重新规划；
+  //   - EXEC_TRAJ：冻结时仅保留预热轨迹/参考路径并跳过滚动重规划；非冻结时
+  //     根据周期性重规划条件（距上次重规划时间/移动距离/剩余时长接近前瞬时间）
+  //     判断是否需要滚动重规划（planFromCurrentTraj），失败但旧轨迹仍安全且
+  //     未到期则继续使用旧轨迹，否则强制回到GEN_NEW_TRAJ重新规划；若已接近
+  //     终点则进入WAIT_TARGET；若轨迹已过期则切换到下一个预设航点或强制重规划；
   //   - EMERGENCY_STOP：刚进入时发布一次静止轨迹（仅一次，不重复生成）；
   //     后续周期在机体静止后尝试重新规划或退回WAIT_TARGET。
   // 5.最后调用finishProcess检查是否需要进入应急停止，并发布数据展示。
@@ -1220,6 +1220,14 @@ namespace scan_planner
       double t_cur = (time_now - info->start_time_).toSec();
       t_cur = min(info->duration_, t_cur);
 
+      if (go2_execution_frozen_)
+      {
+        // SCAN currently does not own robot execution. Keep the prewarmed
+        // trajectory/reference state and freeze its clock, but skip rolling
+        // and safety replanning until takeover sync regenerates from odom.
+        return;
+      }
+
       if (isWaypointSequenceMode() &&
           current_wp_ + 1 < (int)active_waypoints_.size() &&
           (end_pt_ - odom_pos_).norm() < 0.5)
@@ -1251,8 +1259,9 @@ namespace scan_planner
       // Waypoint mode (navi_mode=2) uses pure path tracking: the initial
       // B-spline is executed to completion without rolling replanning.
       // A fresh trajectory is generated from odom only when the current
-      // one expires (see TRAJECTORY_EXPIRED below).  Safety replanning
-      // via checkCollisionCallback remains fully active.
+      // one expires (see TRAJECTORY_EXPIRED below).  When SCAN owns
+      // execution, safety replanning via checkCollisionCallback remains
+      // active.
       // All other modes (manual target, reference path) keep the original
       // rolling replanning behaviour.
       if (!isWaypointSequenceMode() &&
@@ -1603,6 +1612,9 @@ namespace scan_planner
   {
     updateLocalTrajTimeFreeze();
 
+    if (go2_execution_frozen_)
+      return;
+
     LocalTrajData *info = &planner_manager_->local_data_;
     auto map = planner_manager_->grid_map_;
 
@@ -1795,18 +1807,24 @@ namespace scan_planner
     const LocalTrajData previous_local_trajectory =
         planner_manager_->local_data_;
     const ros::WallTime replan_started = ros::WallTime::now();
-    ROS_DEBUG("SCAN_REPLAN_BEGIN start=(%.3f,%.3f) target=(%.3f,%.3f)",
-        start_pt_(0), start_pt_(1), local_target_pt_(0), local_target_pt_(1));
+    ROS_INFO_THROTTLE(
+        2.0,
+        "SCAN_REPLAN_BEGIN poly=%d random=%d cap=%.2f",
+        flag_use_poly_init ? 1 : 0,
+        flag_randomPolyTraj ? 1 : 0,
+        target_distance_cap_m);
     syncPlannerLinearSpeed();
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     const double replan_elapsed_ms =
         (ros::WallTime::now() - replan_started).toSec() * 1000.0;
+    ROS_INFO_THROTTLE(
+        2.0,
+        "SCAN_REPLAN_END success=%d elapsed_ms=%.1f",
+        plan_success ? 1 : 0,
+        replan_elapsed_ms);
     if (replan_elapsed_ms >= 200.0)
       ROS_WARN("SCAN_REPLAN_SLOW elapsed_ms=%.1f success=%d",
-          replan_elapsed_ms, plan_success ? 1 : 0);
-    else
-      ROS_DEBUG("SCAN_REPLAN_END elapsed_ms=%.1f success=%d",
           replan_elapsed_ms, plan_success ? 1 : 0);
     have_new_target_ = false;
 

@@ -280,6 +280,14 @@ void NavigationCoordinator::updatePlanningState(
 
 void NavigationCoordinator::enterFailedState() noexcept
 {
+  const std::uint64_t sequence =
+      task_manager_.session().sequence;
+  if (task_manager_.hasActiveTask() &&
+      sequence != 0)
+  {
+    task_manager_.complete(sequence);
+  }
+
   state_ = NavState::FAILED;
 
   pending_planner_actions_.clear();
@@ -292,6 +300,15 @@ void NavigationCoordinator::enterFailedState() noexcept
   goal_controller_.reset();
   safety_supervisor_.reset();
   obstacle_finished_ = false;
+}
+
+bool NavigationCoordinator::failActiveTask() noexcept
+{
+  if (!task_manager_.hasActiveTask())
+    return false;
+
+  enterFailedState();
+  return true;
 }
 
 // =============================================================================

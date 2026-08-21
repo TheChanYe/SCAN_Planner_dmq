@@ -443,7 +443,6 @@ VelocityCommand RouteFollower::update(
   // World error rotated into robot frame.
   const double ex_robot = c * ex_world + s * ey_world;
   const double ey_robot = -s * ex_world + c * ey_world;
-  (void)ey_robot;
   const double alpha = normalizeAngle(guide_yaw - robot.yaw);
   const double lookahead_actual = std::hypot(ex_robot, ey_robot);
 
@@ -451,9 +450,10 @@ VelocityCommand RouteFollower::update(
   {
     cmd.vx = 0.0;
     cmd.vy = 0.0;
+    const double point_alpha = std::atan2(ey_robot, ex_robot);
     cmd.yaw_rate = std::max(
         -config_.max_yaw_rate,
-        std::min(config_.max_yaw_rate, config_.kp_yaw * alpha));
+        std::min(config_.max_yaw_rate, config_.kp_yaw * point_alpha));
   }
   else
   {
