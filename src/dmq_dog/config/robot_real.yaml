@@ -80,9 +80,9 @@ speed_limits:
   # 实际速度还受 MQTT task max_vx 控制。
   route_follow_linear_mps: 0.70
 
-  # LOCAL_AVOID 唯一速度上限。
-  # 普通避障和楼梯避障完全共用。
-  # 不受 MQTT task max_vx 影响。
+  # 普通 LOCAL_AVOID 的速度上限。
+  # 楼梯模式使用 stair_up/linear_speed_mps。
+  # 两者都不受 MQTT task max_vx 影响。
   local_avoid_linear_mps: 0.30
 
 # Hard limits applied immediately before publishing to the physical dog.

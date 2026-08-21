@@ -62,6 +62,11 @@ if(CATKIN_ENABLE_TESTING)
     target_link_libraries(test_route_manager navdog_core)
   endif()
 
+  catkin_add_gtest(test_route_follower test/test_route_follower.cpp)
+  if(TARGET test_route_follower)
+    target_link_libraries(test_route_follower navdog_core)
+  endif()
+
   catkin_add_gtest(test_recovery_controller test/test_recovery_controller.cpp)
   if(TARGET test_recovery_controller)
     target_link_libraries(test_recovery_controller navdog_core)

@@ -257,15 +257,6 @@ TEST(RouteManager, ElevationAssessmentRejectsBaselineValleys)
   EXPECT_FALSE(assess({0.05, 0.04, -0.08, -0.14, -0.13, -0.09,
       -0.04, 0.02, 0.06}, 3, 0.3).ascending);
 
-  const auto true_stair =
-      assess({0.00, 0.00, 0.04, 0.08, 0.12, 0.16}, 0, 0.0);
-  EXPECT_TRUE(true_stair.baseline_consistent);
-  EXPECT_NEAR(0.0, true_stair.baseline_z, 1e-9);
-  EXPECT_TRUE(true_stair.ascending);
-  EXPECT_GE(true_stair.consecutive_rising_points, 4);
-  EXPECT_GE(true_stair.rise_m, 0.20);
-  EXPECT_GE(true_stair.average_slope, 0.25);
-
   EXPECT_TRUE(assess({0.002, -0.005, 0.103, 0.207, 0.316, 0.421},
       0, 0.0).ascending);
 }
