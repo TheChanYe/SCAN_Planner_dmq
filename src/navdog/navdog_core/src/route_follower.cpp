@@ -118,8 +118,7 @@ bool RouteFollower::interpolateRoutePoint(
 // isYawAligned
 // =============================================================================
 
-// isYawAligned：判断朝向误差绝对值是否在"仅转向"阈值以内，
-// 只有对齐后才允许同时平移，避免朝向偏差过大时斜向乱走。
+// isYawAligned：判断朝向误差绝对值是否在"仅转向"阈值以内。
 bool RouteFollower::isYawAligned(
     double heading_error) const noexcept
 {
@@ -132,10 +131,9 @@ bool RouteFollower::isYawAligned(
 //   1. 前置校验：路线为空/机器人无效/进度无效，直接返回 TRACKING_STOP；
 //   2. 以任务最后一个点为目标，计算相对机器人的距离和朝向角 desired_yaw
 //      （距离过近时直接沿用当前机器人朝向，避免除零风险）；
-//   3. 若未对齐：只输出比例角速度（限幅到 ±kp_yaw），不向前走；
-//   4. 若已对齐：根据距离计算目标速度（近距离时额外减速），
-//      同时根据机器人坐标系下的横向偏差 lateral_error 算出 vy，yaw_rate 继续比例修正；
-//   5. 对 vx/vy/yaw_rate 做非有限数兜底、对 vx 做非负且不超过最大速度限幅。
+//   3. 大角度时只输出比例角速度，不向前走；
+//   4. 角度允许时根据距离与 cos(alpha)^2 平滑控制前进速度，vy始终为0；
+//   5. yaw_rate 使用简单比例控制，适合短距离点目标，避免曲率数值放大。
 // 来源标记为 PLANNER，表示这是常规路线跟踪输出。
 VelocityCommand RouteFollower::updatePointGoal(
     const NavigationTask& task,
@@ -165,24 +163,26 @@ VelocityCommand RouteFollower::updatePointGoal(
 
   if (!isYawAligned(heading_error))
   {
+    cmd.vx = 0.0;
+    cmd.vy = 0.0;
     cmd.yaw_rate = std::max(
-        -config_.kp_yaw,
-        std::min(config_.kp_yaw, config_.kp_yaw * heading_error));
+        -config_.max_yaw_rate,
+        std::min(config_.max_yaw_rate,
+            config_.kp_yaw * heading_error));
   }
   else
   {
-    double target_speed = std::min(
+    const double base_speed = std::min(
         effective_max_vx,
-        std::max(0.10, config_.kp_x * distance));
-    if (distance < 0.30)
-      target_speed = std::min(effective_max_vx, config_.kp_x * distance);
-
-    const double c = std::cos(robot.yaw);
-    const double s = std::sin(robot.yaw);
-    const double lateral_error = -s * dx + c * dy;
-    cmd.vx = target_speed;
-    cmd.vy = config_.kp_y * lateral_error;
-    cmd.yaw_rate = config_.kp_yaw * heading_error;
+        config_.kp_x * std::max(0.0, distance));
+    const double heading_scale =
+        std::max(0.0, std::cos(heading_error) * std::cos(heading_error));
+    cmd.vx = base_speed * heading_scale;
+    cmd.vy = 0.0;
+    cmd.yaw_rate = std::max(
+        -config_.max_yaw_rate,
+        std::min(config_.max_yaw_rate,
+            config_.kp_yaw * heading_error));
   }
 
   if (!std::isfinite(cmd.vx)) cmd.vx = 0.0;
@@ -197,18 +197,15 @@ VelocityCommand RouteFollower::updatePointGoal(
 // update：带前瞻点的路线跟踪主逻辑，每个控制周期调用一次。核心步骤：
 //   1. 前置校验：路线为空/进度无效/弧长非法/机器人无效，直接返回 TRACKING_STOP；
 //   2. 若只有单个点或路线总长度接近零，退化为 updatePointGoal 直达模式；
-//   3. 根据当前实测速度计算动态前瞻距离 dynamic_lookahead：
+//   3. 根据当前可执行速度计算动态前瞻距离 dynamic_lookahead：
 //      基础前瞻 + 速度*前瞻时间，并限幅到 max_lookahead_distance_m（跑得越快看得越远）；
 //   4. 用"已走弧长 + 前瞻距离"作为目标弧长，调用 interpolateRoutePoint 求出前瞻点；
 //      若插值失败（点数不足）则返回 TRACKING_STOP；
 //   5. 直接朝向前瞻点位置行驶（而不是用该点所在段的切线方向），
 //      这样可以避免在每个路径拐点处因切线方向突变而停下对齐（轰磨现象）；
 //   6. 将世界坐标系下的误差旋转到机器人自身坐标系（ex_robot/ey_robot）；
-//   7. 若未对齐：只输出比例角速度（限幅），不向前平移；
-//   8. 若已对齐：根据朝向误差大小计算一个减速系数 heading_speed_scale
-//      （误差越接近"仅转向"阈值，速度越低，实现还未完全对齐时提前减速避免过弯），
-//      用它限制前进速度上限，实际前进速度取该上限与比例控制 kp_x*ex_robot 的较小值，
-//      vy 用横向误差比例控制，yaw_rate 继续比例修正；
+//   7. 大角度时只原地转向；
+//   8. 正常转弯时使用 pure-pursuit 曲率生成唯一 yaw steering，vy始终为0；
 //   9. 最终对 vx/vy/yaw_rate 做非有限数及负值兜底、对 vx 限幅到最大速度。
 // 输入：task/robot/progress/max_vx/now_sec；输出：VelocityCommand。
 VelocityCommand RouteFollower::update(
@@ -243,13 +240,10 @@ VelocityCommand RouteFollower::update(
       std::max(0.0, config_.lookahead_distance_m);
   const double max_lookahead =
       std::max(base_lookahead, config_.max_lookahead_distance_m);
-  const double measured_speed =
-      std::isfinite(robot.vx) && std::isfinite(robot.vy)
-          ? std::hypot(robot.vx, robot.vy)
-          : 0.0;
+  const double speed_hint = effective_max_vx;
   const double dynamic_lookahead = std::min(
       max_lookahead,
-      base_lookahead + measured_speed *
+      base_lookahead + speed_hint *
           std::max(0.0, config_.lookahead_time_sec));
   const double target_arc =
       progress.arc_length_m + dynamic_lookahead;
@@ -270,17 +264,8 @@ VelocityCommand RouteFollower::update(
   const double ex_world = look_x - robot.x;
   const double ey_world = look_y - robot.y;
 
-  // Aim at the lookahead point instead of using the tangent of whichever
-  // polyline segment contains it. Segment tangents jump at every waypoint
-  // and made the physical dog stop and realign at otherwise gentle corners.
   const double target_distance = std::hypot(ex_world, ey_world);
-  const double desired_yaw = target_distance > kEpsilon
-      ? std::atan2(ey_world, ex_world)
-      : look_yaw;
-  const double heading_error =
-      normalizeAngle(desired_yaw - robot.yaw);
-
-  const bool aligned = isYawAligned(heading_error);
+  (void)look_yaw;
 
   const double c = std::cos(robot.yaw);
   const double s = std::sin(robot.yaw);
@@ -288,42 +273,33 @@ VelocityCommand RouteFollower::update(
   // World error rotated into robot frame.
   const double ex_robot = c * ex_world + s * ey_world;
   const double ey_robot = -s * ex_world + c * ey_world;
+  const double alpha = std::atan2(ey_robot, ex_robot);
+  const double lookahead_actual = std::hypot(ex_robot, ey_robot);
 
-  if (!aligned)
+  if (!isYawAligned(alpha))
   {
     cmd.vx = 0.0;
     cmd.vy = 0.0;
-    cmd.yaw_rate =
-        std::max(-config_.kp_yaw,
-            std::min(config_.kp_yaw,
-                config_.kp_yaw * heading_error));
+    cmd.yaw_rate = std::max(
+        -config_.max_yaw_rate,
+        std::min(config_.max_yaw_rate, config_.kp_yaw * alpha));
   }
   else
   {
-    const double abs_heading_error = std::abs(heading_error);
-    const double slowdown_start = std::max(
-        0.0, std::min(config_.heading_slowdown_start_rad,
-                      config_.heading_turn_only_threshold_rad));
-    double heading_speed_scale = 1.0;
-    if (abs_heading_error > slowdown_start)
-    {
-      const double slowdown_range =
-          config_.heading_turn_only_threshold_rad - slowdown_start;
-      heading_speed_scale = slowdown_range > kEpsilon
-          ? (config_.heading_turn_only_threshold_rad - abs_heading_error) /
-                slowdown_range
-          : 0.0;
-      heading_speed_scale = std::max(0.0,
-          std::min(1.0, heading_speed_scale));
-    }
-
-    const double heading_limited_vx =
-        effective_max_vx * heading_speed_scale;
-    cmd.vx = std::min(
-        heading_limited_vx,
-        config_.kp_x * std::max(0.0, ex_robot));
-    cmd.vy = config_.kp_y * ey_robot;
-    cmd.yaw_rate = config_.kp_yaw * heading_error;
+    const double base_speed = std::min(
+        effective_max_vx,
+        config_.kp_x * std::max(0.0, target_distance));
+    const double heading_scale =
+        std::max(0.0, std::cos(alpha) * std::cos(alpha));
+    cmd.vx = base_speed * heading_scale;
+    cmd.vy = 0.0;
+    constexpr double kMinLookahead = 0.05;
+    const double ld = std::max(kMinLookahead, lookahead_actual);
+    const double curvature = 2.0 * std::sin(alpha) / ld;
+    cmd.yaw_rate = std::max(
+        -config_.max_yaw_rate,
+        std::min(config_.max_yaw_rate,
+            config_.kp_yaw * cmd.vx * curvature));
   }
 
   // Clamp and sanitize.

@@ -146,7 +146,6 @@ TEST(RouteFollowerTest, OutputsNonZeroVelocity)
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 1.0;
   config.kp_x = 0.8;
-  config.kp_y = 1.0;
   config.kp_yaw = 1.2;
   config.max_vx = 0.8;
 
@@ -160,6 +159,8 @@ TEST(RouteFollowerTest, OutputsNonZeroVelocity)
 
   EXPECT_TRUE(cmd.valid);
   EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_NEAR(cmd.yaw_rate, 0.0, 1e-12);
   EXPECT_EQ(cmd.source, CommandSource::PLANNER);
 }
 
@@ -183,6 +184,7 @@ TEST(RouteFollowerTest, FollowsSinglePointGoal)
   EXPECT_TRUE(cmd.valid);
   EXPECT_EQ(cmd.source, CommandSource::PLANNER);
   EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
 }
 
 TEST(RouteFollowerTest, FollowsRepeatedPointGoal)
@@ -205,6 +207,7 @@ TEST(RouteFollowerTest, FollowsRepeatedPointGoal)
 
   EXPECT_TRUE(cmd.valid);
   EXPECT_EQ(cmd.source, CommandSource::PLANNER);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
@@ -213,7 +216,6 @@ TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 1.0;
   config.kp_x = 0.8;
-  config.kp_y = 1.0;
   config.kp_yaw = 1.2;
   config.max_vx = 0.8;
 
@@ -235,7 +237,7 @@ TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.4;
-  config.heading_turn_only_threshold_rad = 0.45;
+  config.heading_turn_only_threshold_rad = 1.20;
   config.max_vx = 0.5;
 
   NavigationTask task{};
@@ -244,8 +246,8 @@ TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
   RoutePoint p0{};
   RoutePoint p1{};
   RoutePoint p2{};
-  p1.x = 1.0;
-  p2.x = 1.0;
+  p1.x = 0.8;
+  p2.x = 0.8;
   p2.y = 1.0;
   task.points = {p0, p1, p2};
 
@@ -259,15 +261,15 @@ TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
 
   EXPECT_TRUE(cmd.valid);
   EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
   EXPECT_GT(cmd.yaw_rate, 0.0);
 }
 
-TEST(RouteFollowerTest, SlowsContinuouslyBeforeTurnOnlyThreshold)
+TEST(RouteFollowerTest, CosineHeadingScaleSlowsBeforeTurnOnlyThreshold)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 1.0;
   config.max_lookahead_distance_m = 1.0;
-  config.heading_slowdown_start_rad = 0.2;
   config.heading_turn_only_threshold_rad = 0.8;
   config.max_vx = 0.5;
 
@@ -282,9 +284,10 @@ TEST(RouteFollowerTest, SlowsContinuouslyBeforeTurnOnlyThreshold)
 
   EXPECT_GT(aligned.vx, turning.vx);
   EXPECT_GT(turning.vx, 0.0);
+  EXPECT_DOUBLE_EQ(turning.vy, 0.0);
 }
 
-TEST(RouteFollowerTest, SpeedExtendsLookaheadAcrossCorner)
+TEST(RouteFollowerTest, EffectiveSpeedExtendsLookaheadAcrossCorner)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.4;
@@ -298,24 +301,132 @@ TEST(RouteFollowerTest, SpeedExtendsLookaheadAcrossCorner)
   RoutePoint p0{};
   RoutePoint p1{};
   RoutePoint p2{};
-  p1.x = 1.0;
-  p2.x = 1.0;
+  p1.x = 0.8;
+  p2.x = 0.8;
   p2.y = 2.0;
   task.points = {p0, p1, p2};
 
   RouteProgress progress = makeProgress(1, 0.2, 2.8, 0.0);
   RobotState stopped = makeRobot(0.2, 0.0, 0.0);
-  RobotState moving = stopped;
-  moving.vx = 0.5;
 
   RouteFollower follower(config);
-  const VelocityCommand stopped_cmd = follower.update(
+  const VelocityCommand slow_cmd = follower.update(
+      task, stopped, progress, 0.0, 1.0);
+  const VelocityCommand route_cmd = follower.update(
       task, stopped, progress, 0.5, 1.0);
-  const VelocityCommand moving_cmd = follower.update(
-      task, moving, progress, 0.5, 1.0);
 
-  EXPECT_NEAR(stopped_cmd.yaw_rate, 0.0, 1e-12);
-  EXPECT_GT(moving_cmd.yaw_rate, 0.0);
+  EXPECT_NEAR(slow_cmd.yaw_rate, 0.0, 1e-12);
+  EXPECT_GT(route_cmd.yaw_rate, 0.0);
+  EXPECT_DOUBLE_EQ(route_cmd.vy, 0.0);
+}
+
+TEST(RouteFollowerTest, RightTurnUsesNegativeYawWithoutLateralVelocity)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.4;
+  config.max_lookahead_distance_m = 1.0;
+  config.lookahead_time_sec = 1.0;
+  config.heading_turn_only_threshold_rad = 0.8;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.5;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 0.8;
+  p2.x = 0.8;
+  p2.y = -2.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 0.2, 2.8, 0.0);
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.2, 0.0, 0.0), progress, 0.5, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_LT(cmd.yaw_rate, 0.0);
+}
+
+TEST(RouteFollowerTest, BlockedConfirmationUsesShorterSpeedHint)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 1.20;
+  config.lookahead_time_sec = 1.20;
+  config.heading_turn_only_threshold_rad = 0.8;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.5;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 0.8;
+  p2.x = 0.8;
+  p2.y = 2.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 0.0, 3.0, 0.0);
+  RobotState robot = makeRobot(0.0, 0.0, 0.0);
+  robot.vx = 0.0;
+  robot.vy = 0.0;
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, robot, progress, 0.30, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
+  EXPECT_LE(std::hypot(cmd.vx, cmd.vy), 0.30 + 1e-9);
+}
+
+TEST(RouteFollowerTest, LeftCornerYawDoesNotOscillateAcrossSamples)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 1.20;
+  config.lookahead_time_sec = 1.20;
+  config.heading_turn_only_threshold_rad = 0.80;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.5;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 1.0;
+  p2.y = 2.0;
+  task.points = {p0, p1, p2};
+
+  RouteFollower follower(config);
+  const double samples[][3] = {
+      {0.20, 0.00, 0.00},
+      {0.55, 0.00, 0.18},
+      {0.85, 0.02, 0.55},
+      {1.00, 0.22, 1.05},
+      {1.00, 0.70, 1.45},
+  };
+  double previous_abs_yaw = std::numeric_limits<double>::infinity();
+  bool saw_positive = false;
+  for (const auto& sample : samples)
+  {
+    RouteProgress progress = makeProgress(1, sample[0] + sample[1],
+        3.0 - sample[0] - sample[1], 0.0);
+    const VelocityCommand cmd = follower.update(
+        task, makeRobot(sample[0], sample[1], sample[2]),
+        progress, 0.50, 1.0);
+    EXPECT_TRUE(cmd.valid);
+    EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+    EXPECT_GE(cmd.yaw_rate, -1e-6);
+    if (cmd.yaw_rate > 1e-6)
+      saw_positive = true;
+    EXPECT_LE(std::fabs(cmd.yaw_rate), previous_abs_yaw + 0.25);
+    previous_abs_yaw = std::fabs(cmd.yaw_rate);
+  }
+  EXPECT_TRUE(saw_positive);
 }
 
 TEST(RouteFollowerTest, RejectsProgressRegression)

@@ -218,9 +218,7 @@ route_follower:
   max_lookahead_distance_m: 1.20
   lookahead_time_sec: 1.20
   kp_x: 0.80
-  kp_y: 0.60
   kp_yaw: 1.20
-  heading_slowdown_start_rad: 0.20
   # Physical turn-only hysteresis is owned by dmq_bridge. This higher guard is
   # retained only for a route target that is genuinely behind the dog.
   heading_turn_only_threshold_rad: 0.80

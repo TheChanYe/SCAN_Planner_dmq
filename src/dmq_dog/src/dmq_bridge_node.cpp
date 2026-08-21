@@ -20,6 +20,8 @@ namespace
 {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr unsigned char kRouteFollowMode = 1;
+constexpr unsigned char kLocalAvoidMode = 2;
 
 // MotionClass：当前周期下发速度的运动分类，仅用于日志诊断。
 enum class MotionClass
@@ -301,12 +303,16 @@ private:
     nav_state_valid_ = true;
   }
 
-  // navModeCallback：接收导航模式（ROUTE_FOLLOW/LOCAL_AVOID等）并缓存，当前仅用于缓存，
-  // 未在本文件其他处直接使用。
+  // navModeCallback：接收导航模式（ROUTE_FOLLOW/LOCAL_AVOID等）并缓存。
+  // LOCAL_AVOID->ROUTE_FOLLOW 时只清理 SCAN lateral steering 状态，保留物理
+  // yaw rate 连续性。
   void navModeCallback(const std_msgs::UInt8::ConstPtr& msg)
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    const unsigned char previous = latest_nav_mode_;
     latest_nav_mode_ = msg->data;
+    if (previous == kLocalAvoidMode && latest_nav_mode_ == kRouteFollowMode)
+      resetLateralSteeringAdapter();
   }
 
   void protocolStatusCallback(const std_msgs::UInt8::ConstPtr& msg)
@@ -372,6 +378,13 @@ private:
     turn_only_active_ = false;
     published_yaw_rate_ = 0.0;
     last_publish_time_ = ros::Time();
+  }
+
+  void resetLateralSteeringAdapter()
+  {
+    lateral_heading_error_ = 0.0;
+    lateral_filter_initialized_ = false;
+    turn_only_active_ = false;
   }
 
   // adaptToForwardMotion：将全向规划器输出的全向速度(vx,vy,yaw_rate)适配为
@@ -526,7 +539,7 @@ private:
   //   2. 确定 status/error：优先使用真机上报的状态，否则根据指令是否为零推断，
   //      再用 protocolState 根据导航状态机覆盖；
   //   3. 若启用看门狗且里程计/雷达数据超时，强制置 error=1；
-  //   4. 若启用前进优先，调用 adaptToForwardMotion 适配全向指令；
+  //   4. 仅 LOCAL_AVOID 下调用 adaptToForwardMotion 适配SCAN全向指令；
   //   5. 对 vx/vy/yaw_rate 依次做限幅（前进优先时角速度限幅取 max_yaw_rate_ 与
   //      forward_motion_max_yaw_rate_ 中较小者）；
   //   6. 若启用死区，对三个分量分别应用 applyMinimumEffectiveVelocity 修正；
@@ -539,12 +552,14 @@ private:
     int error = 0;
     int status = 0;
     bool cmd_stale = false;
+    unsigned char nav_mode = 0;
     const ros::Time now = ros::Time::now();
     {
       std::lock_guard<std::mutex> lock(mutex_);
       cmd_stale = latest_cmd_time_.isZero() ||
           (now - latest_cmd_time_).toSec() > cmd_vel_timeout_sec_;
       cmd = cmd_stale ? geometry_msgs::Twist{} : latest_cmd_;
+      nav_mode = latest_nav_mode_;
 
       status = latest_dog_status_.valid ? latest_dog_status_.status :
           ((std::fabs(cmd.linear.x) > 1e-4 || std::fabs(cmd.linear.y) > 1e-4 ||
@@ -566,8 +581,10 @@ private:
     const geometry_msgs::Twist raw_cmd = cmd;
     const bool zero_command = std::fabs(vx) < 1e-6 &&
         std::fabs(vy) < 1e-6 && std::fabs(yaw_rate) < 1e-6;
-    if (prefer_forward_motion_)
+    if (prefer_forward_motion_ && nav_mode == kLocalAvoidMode)
       adaptToForwardMotion(vx, vy, yaw_rate);
+    else if (nav_mode == kRouteFollowMode)
+      vy = 0.0;
 
     vx = clampValue(vx, max_vx_);
     vy = clampValue(vy, max_vy_);

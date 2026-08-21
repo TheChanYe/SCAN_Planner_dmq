@@ -106,7 +106,6 @@ stair_up:
 route_follower:
   lookahead_distance_m: 0.6
   kp_x: 0.8
-  kp_y: 0.6
   kp_yaw: 1.2
   heading_turn_only_threshold_rad: 0.2
   max_vx: 0.5
