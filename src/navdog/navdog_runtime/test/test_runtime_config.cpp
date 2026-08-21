@@ -138,6 +138,7 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
   nh.setParam("route_follower/lookahead_distance_m", 1.2);
   nh.setParam("route_follower/max_lookahead_distance_m", 1.8);
   nh.setParam("route_follower/lookahead_time_sec", 1.5);
+  nh.setParam("route_follower/heading_lookahead_m", 0.45);
   nh.setParam("route_follower/kp_x", 0.9);
   nh.setParam("route_follower/kp_yaw", 1.3);
   nh.setParam("route_follower/simplify_tolerance_m", 0.07);
@@ -149,6 +150,7 @@ TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)
   EXPECT_DOUBLE_EQ(config.route_follower.lookahead_distance_m, 1.2);
   EXPECT_DOUBLE_EQ(config.route_follower.max_lookahead_distance_m, 1.8);
   EXPECT_DOUBLE_EQ(config.route_follower.lookahead_time_sec, 1.5);
+  EXPECT_DOUBLE_EQ(config.route_follower.heading_lookahead_m, 0.45);
   EXPECT_DOUBLE_EQ(config.route_follower.kp_x, 0.9);
   EXPECT_DOUBLE_EQ(config.route_follower.kp_yaw, 1.3);
   EXPECT_DOUBLE_EQ(config.route_follower.simplify_tolerance_m, 0.07);

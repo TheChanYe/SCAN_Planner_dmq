@@ -11,6 +11,8 @@ namespace navdog
 namespace
 {
 
+constexpr double kPi = 3.14159265358979323846;
+
 NavigationTask makeStraightTask(
     std::uint64_t sequence = 1,
     double length = 10.0)
@@ -99,8 +101,25 @@ NavigationTask makeNoisyStraightTask()
       {0.4, -0.02},
       {0.6, 0.01},
       {0.8, 0.00},
-      {1.0, 0.00},
+      {1.0, 0.02},
+      {1.2, 0.00},
   };
+  for (const auto& p : xy)
+  {
+    RoutePoint point{};
+    point.x = p[0];
+    point.y = p[1];
+    task.points.push_back(point);
+  }
+  return task;
+}
+
+NavigationTask makePolylineTask(
+    const double (&xy)[4][2])
+{
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.70;
   for (const auto& p : xy)
   {
     RoutePoint point{};
@@ -228,6 +247,57 @@ TEST(RouteFollowerTest, SimplifiesSmallZigzagIntoStraightTrackingPath)
   EXPECT_NEAR(cmd.yaw_rate, 0.0, 1e-9);
 }
 
+TEST(RouteFollowerTest, LateralOffsetUsesTangentNormalCorrection)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+
+  RouteFollower follower(config);
+  const RouteProgress progress = makeProgress(1, 0.5, 2.5);
+  const VelocityCommand left_of_route = follower.update(
+      makeStraightTask(1, 3.0), makeRobot(0.5, 0.30, 0.0),
+      progress, 0.50, 1.0);
+  const VelocityCommand right_of_route = follower.update(
+      makeStraightTask(1, 3.0), makeRobot(0.5, -0.30, 0.0),
+      progress, 0.50, 1.0);
+
+  EXPECT_TRUE(left_of_route.valid);
+  EXPECT_TRUE(right_of_route.valid);
+  EXPECT_GT(left_of_route.vx, 0.0);
+  EXPECT_GT(right_of_route.vx, 0.0);
+  EXPECT_DOUBLE_EQ(left_of_route.vy, 0.0);
+  EXPECT_DOUBLE_EQ(right_of_route.vy, 0.0);
+  EXPECT_LT(left_of_route.yaw_rate, 0.0);
+  EXPECT_GT(right_of_route.yaw_rate, 0.0);
+}
+
+TEST(RouteFollowerTest, NoisyStraightRouteDoesNotFlipYawAcrossProgressSamples)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.simplify_tolerance_m = 0.05;
+
+  RouteFollower follower(config);
+  const NavigationTask task = makeNoisyStraightTask();
+  const double progress_samples[] = {0.0, 0.2, 0.4, 0.6};
+  for (double arc : progress_samples)
+  {
+    const VelocityCommand cmd = follower.update(
+        task, makeRobot(arc, 0.0, 0.0), makeProgress(1, arc, 1.2 - arc),
+        0.50, 1.0);
+    EXPECT_TRUE(cmd.valid);
+    EXPECT_GT(cmd.vx, 0.0);
+    EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+    EXPECT_NEAR(cmd.yaw_rate, 0.0, 1e-9);
+  }
+}
+
 TEST(RouteFollowerTest, PreservesRealNinetyDegreeCorner)
 {
   RouteFollowerConfig config{};
@@ -255,6 +325,68 @@ TEST(RouteFollowerTest, PreservesRealNinetyDegreeCorner)
   EXPECT_GT(cmd.vx, 0.0);
   EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
   EXPECT_GT(cmd.yaw_rate, 0.0);
+}
+
+TEST(RouteFollowerTest, NinetyDegreeApproachTurnsInProgressively)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.simplify_tolerance_m = 0.05;
+
+  const double xy[4][2] = {
+      {0.0, 0.0},
+      {1.0, 0.0},
+      {1.0, 1.0},
+      {1.0, 2.0},
+  };
+  const NavigationTask task = makePolylineTask(xy);
+  RouteFollower follower(config);
+
+  const double samples[] = {0.2, 0.4, 0.6};
+  double previous_yaw = -std::numeric_limits<double>::infinity();
+  for (double x : samples)
+  {
+    const VelocityCommand cmd = follower.update(
+        task, makeRobot(x, 0.0, 0.0), makeProgress(1, x, 3.0 - x),
+        0.50, 1.0);
+    EXPECT_TRUE(cmd.valid);
+    EXPECT_GT(cmd.vx, 0.0);
+    EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+    EXPECT_GE(cmd.yaw_rate, previous_yaw - 1e-9);
+    previous_yaw = cmd.yaw_rate;
+  }
+  EXPECT_GT(previous_yaw, 0.0);
+}
+
+TEST(RouteFollowerTest, AfterCornerDoesNotImmediatelyCounterSteer)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.simplify_tolerance_m = 0.05;
+
+  const double xy[4][2] = {
+      {0.0, 0.0},
+      {1.0, 0.0},
+      {1.0, 1.0},
+      {1.0, 2.0},
+  };
+  const NavigationTask task = makePolylineTask(xy);
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(1.0, 0.3, kPi / 2.0),
+      makeProgress(1, 1.3, 1.7), 0.50, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(cmd.yaw_rate, -0.05);
+  EXPECT_NEAR(cmd.yaw_rate, 0.0, 0.05);
 }
 
 TEST(RouteFollowerTest, TrackingSimplificationKeepsFinalWaypoint)

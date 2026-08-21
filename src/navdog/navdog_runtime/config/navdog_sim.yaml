@@ -109,6 +109,7 @@ route_progress:
   max_forward_search_m: 0.40
 route_follower:
   lookahead_distance_m: 0.6
+  heading_lookahead_m: 0.40
   kp_x: 0.8
   kp_yaw: 1.2
   simplify_tolerance_m: 0.05

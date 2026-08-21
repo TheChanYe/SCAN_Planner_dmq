@@ -191,6 +191,7 @@ struct RouteFollowerConfig
   double lookahead_distance_m{0.60};
   double max_lookahead_distance_m{1.2};
   double lookahead_time_sec{1.20};
+  double heading_lookahead_m{0.40};
   double kp_x{0.8};
   double kp_yaw{1.2};
   double simplify_tolerance_m{0.05};

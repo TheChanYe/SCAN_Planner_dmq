@@ -13,8 +13,7 @@ namespace navdog
 // RouteFollower
 //
 // 沿着原始 NavigationTask 路线生成速度指令（TRACKING 阶段的默认跟踪器）。
-// 采用类似纯追踪(pure pursuit)的前瞻点策略：在路线上根据当前弧长
-// 加上一个随路线可执行速度自适应的前瞻距离找到目标点，朝向该点行驶。
+// 采用前瞻点附近的局部路线切线作为主方向，并只用横向误差做几何回归。
 // RouteFollower 面向真机 forward-motion 跟踪，仅输出 vx+yaw；Native SCAN
 // 仍保留 holonomic 轨迹并由 driver 适配。
 // =============================================================================
