@@ -36,7 +36,9 @@ TEST(CmdSpeedLimit, IgnoresMissingOrInvalidTaskLimit)
 
 TEST(CmdSpeedLimit, LocalAvoidLimitIgnoresTaskLimit)
 {
-  const auto local_limit = [](double, bool) { return 0.30; };
+  const auto local_limit = [](double, bool) {
+    return navdog_runtime::localAvoidLinearSpeedLimit(0.30, 0.40, false);
+  };
   EXPECT_DOUBLE_EQ(0.30, local_limit(0.15, true));
   EXPECT_DOUBLE_EQ(0.30, local_limit(0.30, true));
   EXPECT_DOUBLE_EQ(0.30, local_limit(0.90, true));
@@ -48,6 +50,18 @@ TEST(CmdSpeedLimit, LocalAvoidLimitIgnoresTaskLimit)
           local_limit(0.15, true));
   EXPECT_DOUBLE_EQ(1.0, scale);
   EXPECT_DOUBLE_EQ(0.18, raw_scan_vx * scale);
+}
+
+TEST(CmdSpeedLimit, LocalAvoidStairProfileUsesIndependentLimit)
+{
+  EXPECT_DOUBLE_EQ(0.30,
+      navdog_runtime::localAvoidLinearSpeedLimit(0.30, 0.40, false));
+  EXPECT_DOUBLE_EQ(0.40,
+      navdog_runtime::localAvoidLinearSpeedLimit(0.30, 0.40, true));
+  EXPECT_DOUBLE_EQ(0.30,
+      navdog_runtime::localAvoidLinearSpeedLimit(0.30, 0.40, false));
+  EXPECT_DOUBLE_EQ(0.70,
+      navdog_runtime::effectiveLinearSpeedLimit(0.70, 0.90, true));
 }
 
 TEST(CmdSpeedLimit, TakeoverGenerationMustMatch)

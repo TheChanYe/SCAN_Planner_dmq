@@ -54,6 +54,7 @@ namespace scan_planner
     /* main API */
     void setEnvironment(const GridMap::Ptr &env);
     void setParam(ros::NodeHandle &nh);
+    void setMaxVel(double max_vel);
     Eigen::MatrixXd BsplineOptimizeTraj(const Eigen::MatrixXd &points, const double &ts,
                                         const int &cost_function, int max_num_id, int max_time_id);
 

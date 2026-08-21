@@ -28,6 +28,12 @@ namespace scan_planner
     this->grid_map_ = env;
   }
 
+  void BsplineOptimizer::setMaxVel(double max_vel)
+  {
+    if (std::isfinite(max_vel) && max_vel > 0.0)
+      max_vel_ = max_vel;
+  }
+
   double BsplineOptimizer::estimateSegmentYaw(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const
   {
     Eigen::Vector2d diff(to(0) - from(0), to(1) - from(1));

@@ -101,6 +101,8 @@ namespace scan_planner
     std::atomic<std::uint32_t> pending_takeover_generation_{0};
     bool force_takeover_poly_init_{false};
     double local_avoid_linear_speed_mps_{0.30};
+    double stair_up_linear_speed_mps_{0.40};
+    double applied_planner_linear_speed_mps_{0.0};
     geometry_msgs::TwistStamped latest_final_cmd_;
     bool have_final_cmd_{false};
     double nominal_replan_period_sec_{0.20};
@@ -177,6 +179,8 @@ namespace scan_planner
     void processTakeoverSync();
     Eigen::Vector3d resolveTakeoverStartVelocity(
         const ros::Time& now, std::uint32_t generation);
+    double activeLocalAvoidLinearSpeed() const;
+    void syncPlannerLinearSpeed();
 
     // planGlobalTrajbyGivenWps：使用预设路点集规划一条完整全局轨迹。
     void planGlobalTrajbyGivenWps();
@@ -230,7 +234,8 @@ namespace scan_planner
     // takeoverSyncCallback：接收接管同步信号，标记待处理接管。
     void takeoverSyncCallback(const std_msgs::UInt32ConstPtr &msg);
     void finalCmdFeedbackCallback(const geometry_msgs::TwistStampedConstPtr &msg);
-    // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，只切换规划占用约束。
+    // stairUpActiveCallback：接收Core唯一持有的楼梯锁存状态，切换规划占用约束；
+    // 速度profile在下一次统一reboundReplan入口同步。
     void stairUpActiveCallback(const std_msgs::BoolConstPtr &msg);
 
     // checkCollision：对当前局部轨迹做碰撞检测。

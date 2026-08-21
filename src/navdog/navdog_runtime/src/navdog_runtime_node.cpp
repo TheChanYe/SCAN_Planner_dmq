@@ -192,11 +192,12 @@ bool NavdogRuntimeNode::initialize()
   ROS_INFO("SCAN_RECOVERY_CONFIG takeover_timeout=%.2f max_attempts=%d",
       scan_takeover_timeout_sec_, scan_recovery_max_attempts_);
   const auto& stair = application_config_.core.stair_up;
-  ROS_INFO("STAIR_UP_CONFIG enabled=%d lookahead=%.2f "
+  ROS_INFO("STAIR_UP_CONFIG enabled=%d linear_speed=%.3f lookahead=%.2f "
            "trigger_rise=%.2f min_rising_points=%d min_average_slope=%.2f "
            "flat_tolerance=%.2f exit_margin=%.2f "
            "exit_confirm=%.2f",
-      stair.enabled ? 1 : 0, stair.lookahead_distance_m,
+      stair.enabled ? 1 : 0, stair.linear_speed_mps,
+      stair.lookahead_distance_m,
       stair.trigger_rise_m, stair.min_consecutive_rising_points,
       stair.min_average_slope, stair.flat_tolerance_m,
       stair.exit_progress_margin_m, stair.exit_confirm_sec);

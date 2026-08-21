@@ -58,6 +58,7 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
 {
   ros::NodeHandle nh("~");
   nh.setParam("stair_up/enabled", false);
+  nh.setParam("stair_up/linear_speed_mps", 0.42);
   nh.setParam("stair_up/lookahead_distance_m", 1.8);
   nh.setParam("stair_up/trigger_rise_m", 0.14);
   nh.setParam("stair_up/min_consecutive_rising_points", 5);
@@ -71,6 +72,7 @@ TEST(NavdogConfigLoadingTest, LoadsStairUpParams)
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
   EXPECT_FALSE(config.stair_up.enabled);
+  EXPECT_DOUBLE_EQ(config.stair_up.linear_speed_mps, 0.42);
   EXPECT_DOUBLE_EQ(config.stair_up.lookahead_distance_m, 1.8);
   EXPECT_DOUBLE_EQ(config.stair_up.trigger_rise_m, 0.14);
   EXPECT_EQ(config.stair_up.min_consecutive_rising_points, 5);

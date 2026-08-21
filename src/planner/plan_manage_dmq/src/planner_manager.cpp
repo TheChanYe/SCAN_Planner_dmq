@@ -80,6 +80,16 @@ namespace scan_planner
     visualization_ = vis;
   }
 
+  void SCANPlannerManager::setMaxVel(double max_vel)
+  {
+    if (!std::isfinite(max_vel) || max_vel <= 0.0)
+      return;
+
+    pp_.max_vel_ = max_vel;
+    if (bspline_optimizer_rebound_)
+      bspline_optimizer_rebound_->setMaxVel(max_vel);
+  }
+
   // !SECTION
 
   // SECTION rebond replanning

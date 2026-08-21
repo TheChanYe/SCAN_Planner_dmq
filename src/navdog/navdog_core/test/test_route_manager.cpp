@@ -134,9 +134,9 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
     progress.total_length_m = points.back().x;
     navdog::StairUpConfig config{};
     config.lookahead_distance_m = 2.20;
-    config.trigger_rise_m = 0.10;
+    config.trigger_rise_m = 0.20;
     config.min_consecutive_rising_points = 4;
-    config.min_average_slope = 0.15;
+    config.min_average_slope = 0.25;
     return manager.assessElevation(progress, config);
   };
 
@@ -154,11 +154,22 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
   EXPECT_FALSE(assess({0.00, -0.10, -0.15, -0.12, -0.07, -0.02, 0.04},
       0.20).ascending);
 
-  const auto ascent = assess({0.00, 0.04, 0.08, 0.12, 0.16}, 0.20);
+  const auto ascent = assess({0.00, 0.08, 0.16, 0.25, 0.34, 0.42}, 0.17);
   EXPECT_TRUE(ascent.ascending);
-  EXPECT_EQ(4, ascent.consecutive_rising_points);
-  EXPECT_NEAR(0.16, ascent.rise_m, 1e-9);
-  EXPECT_NEAR(0.20, ascent.average_slope, 1e-9);
+  EXPECT_GE(ascent.consecutive_rising_points, 4);
+  EXPECT_GT(ascent.rise_m, 0.20);
+  EXPECT_GT(ascent.average_slope, 0.25);
+
+  const auto false_stair = assess({0.000, 0.040, 0.080, 0.119, 0.159}, 0.243);
+  EXPECT_FALSE(false_stair.ascending);
+  EXPECT_LT(false_stair.rise_m, 0.20);
+  EXPECT_LT(false_stair.average_slope, 0.25);
+
+  const auto logged_true_stair =
+      assess({0.000, 0.106, 0.212, 0.318, 0.422}, 0.213);
+  EXPECT_TRUE(logged_true_stair.ascending);
+  EXPECT_GT(logged_true_stair.rise_m, 0.20);
+  EXPECT_GT(logged_true_stair.average_slope, 0.25);
 
   EXPECT_FALSE(assess({0.30, 0.30, 0.30, 0.33, 0.36, 0.39, 0.42},
       0.8).ascending);
@@ -187,7 +198,7 @@ TEST(RouteManager, ElevationAssessmentFiltersSpikeAndRequiresRealAscent)
     progress.arc_length_m = 0.0;
     progress.total_length_m = 0.6;
     navdog::StairUpConfig config{};
-    config.min_average_slope = 0.15;
+    config.min_average_slope = 0.25;
     EXPECT_FALSE(manager.assessElevation(progress, config).ascending);
   }
 }
@@ -218,9 +229,9 @@ TEST(RouteManager, ElevationAssessmentRejectsBaselineValleys)
     progress.total_length_m = points.back().x;
     navdog::StairUpConfig config{};
     config.lookahead_distance_m = 2.20;
-    config.trigger_rise_m = 0.10;
+    config.trigger_rise_m = 0.20;
     config.min_consecutive_rising_points = 4;
-    config.min_average_slope = 0.15;
+    config.min_average_slope = 0.25;
     config.flat_tolerance_m = 0.03;
     config.baseline_lookback_distance_m = 1.00;
     config.baseline_drop_tolerance_m = 0.06;
@@ -252,9 +263,9 @@ TEST(RouteManager, ElevationAssessmentRejectsBaselineValleys)
   EXPECT_NEAR(0.0, true_stair.baseline_z, 1e-9);
   EXPECT_TRUE(true_stair.ascending);
   EXPECT_GE(true_stair.consecutive_rising_points, 4);
-  EXPECT_GE(true_stair.rise_m, 0.10);
-  EXPECT_GE(true_stair.average_slope, 0.15);
+  EXPECT_GE(true_stair.rise_m, 0.20);
+  EXPECT_GE(true_stair.average_slope, 0.25);
 
-  EXPECT_TRUE(assess({0.002, -0.005, 0.038, 0.079, 0.118, 0.161},
+  EXPECT_TRUE(assess({0.002, -0.005, 0.103, 0.207, 0.316, 0.421},
       0, 0.0).ascending);
 }

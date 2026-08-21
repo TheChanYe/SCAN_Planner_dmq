@@ -48,6 +48,7 @@ namespace scan_planner
     // initPlanModules：从ROS参数服务器加载规划参数，创建GridMap与B样条优化器并注入
     // 可选的可视化模块。
     void initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis = NULL);
+    void setMaxVel(double max_vel);
 
     PlanParameters pp_;
     LocalTrajData local_data_;

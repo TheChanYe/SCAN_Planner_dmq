@@ -196,12 +196,13 @@ navigation_mode:
 
 stair_up:
   enabled: true
+  linear_speed_mps: 0.40
   # Keep elevation detection ahead of the 2.0m ordinary-block entry range so
   # the route prior wins before the first stair riser is classified as a wall.
   lookahead_distance_m: 2.20
-  trigger_rise_m: 0.10
+  trigger_rise_m: 0.20
   min_consecutive_rising_points: 4
-  min_average_slope: 0.15
+  min_average_slope: 0.25
   flat_tolerance_m: 0.03
   baseline_lookback_distance_m: 1.00
   baseline_drop_tolerance_m: 0.06

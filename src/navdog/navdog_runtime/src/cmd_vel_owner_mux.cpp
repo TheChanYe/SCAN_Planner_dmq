@@ -26,6 +26,7 @@ double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
 double route_follow_linear_speed_mps = 0.70;
 double local_avoid_linear_speed_mps = 0.30;
+double stair_up_linear_speed_mps = 0.40;
 std::string external_stop_topic{"/navdog/external_stop"};
 std::string final_cmd_feedback_topic{"/navdog/final_cmd_feedback"};
 std::string max_vx_limit_topic{"/navdog/max_vx_limit"};
@@ -66,6 +67,7 @@ std::uint32_t ready_takeover_generation_{0};
 std::uint32_t logged_handoff_generation_{0};
 geometry_msgs::Twist handoff_route_last_cmd_{};
 bool external_stop_{false};
+bool stair_up_active_{false};
 double task_max_vx_{0.0};
 bool task_max_vx_valid_{false};
 
@@ -175,8 +177,11 @@ void limitModeLinearSpeed(geometry_msgs::Twist& command,
   }
   else if (navigation_mode_ == navdog::NavigationMode::LOCAL_AVOID)
   {
-    mode_limit_mps = local_avoid_linear_speed_mps;
-    effective_limit = local_avoid_linear_speed_mps;
+    mode_limit_mps = navdog_runtime::localAvoidLinearSpeedLimit(
+        local_avoid_linear_speed_mps,
+        stair_up_linear_speed_mps,
+        stair_up_active_);
+    effective_limit = mode_limit_mps;
   }
   if (effective_limit <= 0.0)
   {
@@ -339,6 +344,9 @@ void scanTakeoverSyncCallback(const std_msgs::UInt32::ConstPtr& msg)
 // scanTakeoverReadyCallback：订阅Native SCAN接管就绪generation。
 void scanTakeoverReadyCallback(const std_msgs::UInt32::ConstPtr& msg)
 { ready_takeover_generation_ = msg ? msg->data : 0; }
+
+void stairUpActiveCallback(const std_msgs::Bool::ConstPtr& msg)
+{ stair_up_active_ = msg && msg->data; }
 
 void externalStopCallback(const std_msgs::Bool::ConstPtr& msg)
 { external_stop_ = msg && msg->data; }
@@ -609,6 +617,8 @@ int main(int argc, char** argv)
       route_follow_linear_speed_mps, 0.70);
   private_nh.param("speed_limits/local_avoid_linear_mps",
       local_avoid_linear_speed_mps, 0.30);
+  private_nh.param("stair_up/linear_speed_mps",
+      stair_up_linear_speed_mps, 0.40);
 
   // Slew limiter params
   navdog_runtime::VelocitySlewLimiter::Config slew_config;
@@ -627,7 +637,9 @@ int main(int argc, char** argv)
       !std::isfinite(route_follow_linear_speed_mps) ||
       route_follow_linear_speed_mps <= 0.0 ||
       !std::isfinite(local_avoid_linear_speed_mps) ||
-      local_avoid_linear_speed_mps <= 0.0)
+      local_avoid_linear_speed_mps <= 0.0 ||
+      !std::isfinite(stair_up_linear_speed_mps) ||
+      stair_up_linear_speed_mps <= 0.0)
   {
     ROS_FATAL("cmd_vel_owner_mux: invalid configuration");
     return 1;
@@ -650,6 +662,8 @@ int main(int argc, char** argv)
       external_stop_topic, 10, externalStopCallback);
   ros::Subscriber max_vx_limit_sub = nh.subscribe(
       max_vx_limit_topic, 10, maxVxLimitCallback);
+  ros::Subscriber stair_up_active_sub = nh.subscribe(
+      "/navdog/stair_up_active", 10, stairUpActiveCallback);
 
   // Publisher — the ONLY node that publishes to /cmd_vel
   cmd_vel_pub_ = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 10);
@@ -662,11 +676,12 @@ int main(int argc, char** argv)
 
   ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f "
            "rate=%.1f grace=%.2f scan_hold=%.2f "
-           "route_linear=%.2f avoid_linear=%.2f "
+           "route_linear=%.2f avoid_linear=%.2f stair_linear=%.2f "
            "handoff accel_x=%.2f decel_x=%.2f accel_yaw=%.2f decel_yaw=%.2f",
       route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz,
       mode_sync_grace_sec, scan_handoff_hold_sec,
       route_follow_linear_speed_mps, local_avoid_linear_speed_mps,
+      stair_up_linear_speed_mps,
       slew_config.accel_x, slew_config.decel_x,
       slew_config.accel_yaw, slew_config.decel_yaw);
 

@@ -386,6 +386,73 @@ TEST(RouteFollowerTest, RightTurnUsesNegativeYawWithoutLateralVelocity)
   EXPECT_LT(cmd.yaw_rate, 0.0);
 }
 
+TEST(RouteFollowerTest, CurvatureAwareSpeedKeepsYawExecutable)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.4;
+  config.max_lookahead_distance_m = 1.0;
+  config.lookahead_time_sec = 1.0;
+  config.kp_x = 1.2;
+  config.kp_yaw = 1.2;
+  config.max_vx = 0.70;
+  config.max_yaw_rate = 0.65;
+
+  const auto corner_task = [](double y) {
+    NavigationTask task{};
+    task.sequence = 1;
+    task.max_vx = 0.70;
+    RoutePoint p0{};
+    RoutePoint p1{};
+    RoutePoint p2{};
+    p1.x = 0.8;
+    p2.x = 0.8;
+    p2.y = y;
+    task.points = {p0, p1, p2};
+    return task;
+  };
+  const auto diagonal_task = [](double y) {
+    NavigationTask task{};
+    task.sequence = 1;
+    task.max_vx = 0.70;
+    RoutePoint p0{};
+    RoutePoint p1{};
+    p1.x = 10.0;
+    p1.y = y;
+    task.points = {p0, p1};
+    return task;
+  };
+
+  RouteFollower follower(config);
+  const RouteProgress progress = makeProgress(1, 0.2, 2.8, 0.0);
+  const RobotState robot = makeRobot(0.2, 0.0, 0.0);
+
+  const VelocityCommand straight =
+      follower.update(makeStraightTask(1, 10.0), robot, progress, 0.70, 1.0);
+  const VelocityCommand mild =
+      follower.update(diagonal_task(3.0), robot, progress, 0.70, 1.0);
+  const VelocityCommand sharp =
+      follower.update(corner_task(2.0), robot, progress, 0.70, 1.0);
+  const VelocityCommand right =
+      follower.update(corner_task(-2.0), robot, progress, 0.70, 1.0);
+
+  EXPECT_TRUE(straight.valid);
+  EXPECT_TRUE(mild.valid);
+  EXPECT_TRUE(sharp.valid);
+  EXPECT_TRUE(right.valid);
+  EXPECT_DOUBLE_EQ(straight.vy, 0.0);
+  EXPECT_DOUBLE_EQ(mild.vy, 0.0);
+  EXPECT_DOUBLE_EQ(sharp.vy, 0.0);
+  EXPECT_DOUBLE_EQ(right.vy, 0.0);
+  EXPECT_GT(straight.vx, mild.vx);
+  EXPECT_GT(mild.vx, sharp.vx);
+  EXPECT_GT(mild.yaw_rate, 0.0);
+  EXPECT_GT(sharp.yaw_rate, 0.0);
+  EXPECT_LT(right.yaw_rate, 0.0);
+  EXPECT_LE(std::abs(mild.yaw_rate), config.max_yaw_rate + 1e-9);
+  EXPECT_LE(std::abs(sharp.yaw_rate), config.max_yaw_rate + 1e-9);
+  EXPECT_LE(std::abs(right.yaw_rate), config.max_yaw_rate + 1e-9);
+}
+
 TEST(RouteFollowerTest, BlockedConfirmationUsesShorterSpeedHint)
 {
   RouteFollowerConfig config{};

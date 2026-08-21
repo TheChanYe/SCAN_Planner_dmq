@@ -97,9 +97,11 @@ navigation_mode:
   exit_right_clearance_m: 0.60
 stair_up:
   enabled: true
+  linear_speed_mps: 0.40
   lookahead_distance_m: 2.20
-  trigger_rise_m: 0.10
+  trigger_rise_m: 0.20
   min_consecutive_rising_points: 4
+  min_average_slope: 0.25
   flat_tolerance_m: 0.03
   exit_progress_margin_m: 0.15
   exit_confirm_sec: 0.50

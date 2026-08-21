@@ -69,6 +69,7 @@ namespace scan_planner
     nh.param("fsm/replan_lead_time_sec", replan_lead_time_sec_, 0.40);
     nh.param("fsm/emergency_retry_interval_sec", emergency_retry_interval_sec_, 0.50);
     nh.param("speed_limits/local_avoid_linear_mps", local_avoid_linear_speed_mps_, 0.30);
+    nh.param("stair_up/linear_speed_mps", stair_up_linear_speed_mps_, 0.40);
     nh.param("grid_map/obstacles_inflation_z_up", self_inflation_z_up_, 0.0);
     nh.param("grid_map/obstacles_inflation_z_down", self_inflation_z_down_, 0.0);
     nh.param("grid_map/double_cylinder_radius", self_double_cylinder_radius_, 0.0);
@@ -120,6 +121,18 @@ namespace scan_planner
       ros::shutdown();
       return;
     }
+    if (!std::isfinite(local_avoid_linear_speed_mps_) ||
+        local_avoid_linear_speed_mps_ <= 0.0 ||
+        !std::isfinite(stair_up_linear_speed_mps_) ||
+        stair_up_linear_speed_mps_ <= 0.0)
+    {
+      ROS_FATAL("[SCANReplanFSM] Invalid speed profile params: "
+                "local=%.3f stair=%.3f",
+                local_avoid_linear_speed_mps_,
+                stair_up_linear_speed_mps_);
+      ros::shutdown();
+      return;
+    }
 
     ROS_INFO("SCAN_BODY_MODEL radius=%.3f offset=%.3f "
              "body_height=%.3f z_up=%.3f z_down=%.3f",
@@ -132,7 +145,6 @@ namespace scan_planner
         max_replan_fail_count_, safety_immediate_replan_sec_,
         safety_direct_replan_sec_, safety_replan_cooldown_sec_,
         planning_horizon_, emergency_retry_interval_sec_);
-
     // SCAN_FSM_STARTED marks every (re)start of this node with its PID.
     // If roslaunch respawn ever restarts a dead scan_planner_dmq_node, a new
     // PID appears here; if the PID stays the same while SCAN_FSM_HEARTBEAT
@@ -777,20 +789,45 @@ namespace scan_planner
     }
 
     const double xy_norm = selected.head<2>().norm();
+    const double takeover_speed_limit = activeLocalAvoidLinearSpeed();
     if (std::isfinite(xy_norm) &&
-        std::isfinite(local_avoid_linear_speed_mps_) &&
-        local_avoid_linear_speed_mps_ > 0.0 &&
-        xy_norm > local_avoid_linear_speed_mps_)
+        std::isfinite(takeover_speed_limit) &&
+        takeover_speed_limit > 0.0 &&
+        xy_norm > takeover_speed_limit)
     {
-      selected.head<2>() *= local_avoid_linear_speed_mps_ / xy_norm;
+      selected.head<2>() *= takeover_speed_limit / xy_norm;
     }
     ROS_INFO("SCAN_TAKEOVER_START_VELOCITY generation=%u source=%s "
              "odom=[%.3f %.3f] final=[%.3f %.3f] "
              "selected_world=[%.3f %.3f] final_age=%.3f limit=%.3f",
         generation, source, odom_vel_(0), odom_vel_(1),
         final_body(0), final_body(1), selected(0), selected(1),
-        final_age, local_avoid_linear_speed_mps_);
+        final_age, takeover_speed_limit);
     return selected;
+  }
+
+  double SCANReplanFSM::activeLocalAvoidLinearSpeed() const
+  {
+    return stair_up_active_.load(std::memory_order_acquire)
+        ? stair_up_linear_speed_mps_
+        : local_avoid_linear_speed_mps_;
+  }
+
+  void SCANReplanFSM::syncPlannerLinearSpeed()
+  {
+    if (!planner_manager_)
+      return;
+    const double desired = activeLocalAvoidLinearSpeed();
+    if (!std::isfinite(desired) || desired <= 0.0)
+      return;
+    if (std::abs(desired - applied_planner_linear_speed_mps_) < 1e-6)
+      return;
+
+    planner_manager_->setMaxVel(desired);
+    applied_planner_linear_speed_mps_ = desired;
+    ROS_INFO("SCAN_SPEED_PROFILE stair=%d linear_limit=%.3f",
+        stair_up_active_.load(std::memory_order_acquire) ? 1 : 0,
+        desired);
   }
 
   // processTakeoverSync：在主FSM线程消费takeover边沿。保留global_data_/
@@ -1760,6 +1797,7 @@ namespace scan_planner
     const ros::WallTime replan_started = ros::WallTime::now();
     ROS_DEBUG("SCAN_REPLAN_BEGIN start=(%.3f,%.3f) target=(%.3f,%.3f)",
         start_pt_(0), start_pt_(1), local_target_pt_(0), local_target_pt_(1));
+    syncPlannerLinearSpeed();
     bool plan_success =
         planner_manager_->reboundReplan(start_pt_, start_vel_, start_acc_, local_target_pt_, local_target_vel_, (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     const double replan_elapsed_ms =

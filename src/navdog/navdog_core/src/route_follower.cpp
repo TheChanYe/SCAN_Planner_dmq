@@ -252,15 +252,27 @@ VelocityCommand RouteFollower::update(
         effective_max_vx,
         config_.kp_x * std::max(0.0, target_distance));
     const double cos_alpha = std::max(0.0, std::cos(alpha));
-    cmd.vx = base_speed * cos_alpha * cos_alpha;
     cmd.vy = 0.0;
     constexpr double kMinLookahead = 0.05;
+    constexpr double kCurvatureEpsilon = 1e-6;
     const double ld = std::max(kMinLookahead, lookahead_actual);
     const double curvature = 2.0 * std::sin(alpha) / ld;
+    double steering_speed = base_speed;
+    if (std::abs(curvature) > kCurvatureEpsilon &&
+        config_.kp_yaw > kCurvatureEpsilon)
+    {
+      const double curve_speed_limit =
+          config_.max_yaw_rate /
+          (config_.kp_yaw * std::abs(curvature));
+      steering_speed = std::min(
+          steering_speed,
+          std::max(0.0, curve_speed_limit));
+    }
+    cmd.vx = steering_speed * cos_alpha * cos_alpha;
     cmd.yaw_rate = std::max(
         -config_.max_yaw_rate,
         std::min(config_.max_yaw_rate,
-            config_.kp_yaw * base_speed * curvature));
+            config_.kp_yaw * steering_speed * curvature));
   }
 
   // Clamp and sanitize.

@@ -38,6 +38,18 @@ inline double proportionalMotionScale(
   return max_linear_speed_mps / speed;
 }
 
+inline double localAvoidLinearSpeedLimit(
+    double local_avoid_linear_mps,
+    double stair_up_linear_mps,
+    bool stair_up_active) noexcept
+{
+  const double selected =
+      stair_up_active ? stair_up_linear_mps : local_avoid_linear_mps;
+  if (!std::isfinite(selected) || selected <= 0.0)
+    return 0.0;
+  return selected;
+}
+
 inline bool takeoverGenerationReady(
     std::uint32_t expected_generation,
     std::uint32_t ready_generation) noexcept

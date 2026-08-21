@@ -51,6 +51,7 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("navigation_mode/exit_right_clearance_m", c.navigation_mode.exit_right_clearance_m);
   LOAD("speed_limits/local_avoid_linear_mps", c.navigation_mode.handoff_linear_speed_mps);
   LOAD("stair_up/enabled", c.stair_up.enabled);
+  LOAD("stair_up/linear_speed_mps", c.stair_up.linear_speed_mps);
   LOAD("stair_up/lookahead_distance_m", c.stair_up.lookahead_distance_m);
   LOAD("stair_up/trigger_rise_m", c.stair_up.trigger_rise_m);
   LOAD("stair_up/min_consecutive_rising_points", c.stair_up.min_consecutive_rising_points);

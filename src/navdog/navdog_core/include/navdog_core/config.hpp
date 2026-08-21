@@ -169,10 +169,11 @@ struct NavigationModeConfig
 struct StairUpConfig
 {
   bool enabled{true};
+  double linear_speed_mps{0.40};
   double lookahead_distance_m{2.20};
-  double trigger_rise_m{0.10};
+  double trigger_rise_m{0.20};
   int min_consecutive_rising_points{4};
-  double min_average_slope{0.15};
+  double min_average_slope{0.25};
   double flat_tolerance_m{0.03};
   double baseline_lookback_distance_m{1.00};
   double baseline_drop_tolerance_m{0.06};

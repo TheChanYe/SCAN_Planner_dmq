@@ -61,11 +61,13 @@ double time_forward;
 double kp_pos;
 double kp_yaw;
 double max_vx;
+double stair_up_linear_speed_mps = 0.40;
 double max_vy;
 double max_vyaw;
 double finish_dist;
 std::string body_pose_topic;
 std::uint8_t navigation_mode = 0;
+bool stair_up_active = false;
 
 // loadRequiredParam：从私有参数服务器读取必需参数，若不存在则打印错误并返回false。
 bool loadRequiredParam(const ros::NodeHandle &nh, const std::string &name, double &value)
@@ -109,6 +111,7 @@ bool loadParams(const ros::NodeHandle &nh)
       "max_vx",
       max_vx);
   nh.param("speed_limits/local_avoid_linear_mps", max_vx, max_vx);
+  nh.param("stair_up/linear_speed_mps", stair_up_linear_speed_mps, 0.40);
 
   ok &= loadRequiredParam(
       nh,
@@ -160,12 +163,14 @@ bool loadParams(const ros::NodeHandle &nh)
       max_vx <= 0.0 ||
       !std::isfinite(max_vy) ||
       max_vy <= 0.0 ||
+      !std::isfinite(stair_up_linear_speed_mps) ||
+      stair_up_linear_speed_mps <= 0.0 ||
       !std::isfinite(max_vyaw) ||
       max_vyaw <= 0.0)
   {
     ROS_ERROR(
         "[closed_loop_controller_dmq] "
-        "max_vx/max_vy/max_vyaw "
+        "max_vx/stair_up_linear_speed_mps/max_vy/max_vyaw "
         "must be finite and > 0");
     ok = false;
   }
@@ -205,12 +210,14 @@ bool loadParams(const ros::NodeHandle &nh)
       "kp_pos=%.3f "
       "kp_yaw=%.3f "
       "max_vx=%.3f "
+      "stair_vx=%.3f "
       "max_vy=%.3f "
       "max_vyaw=%.3f",
       time_forward,
       kp_pos,
       kp_yaw,
       max_vx,
+      stair_up_linear_speed_mps,
       max_vy,
       max_vyaw);
 
@@ -290,6 +297,11 @@ void publishExecutionFrozen(bool frozen)
   execution_frozen_pub.publish(msg);
 }
 
+double activeLinearSpeedLimit()
+{
+  return stair_up_active ? stair_up_linear_speed_mps : max_vx;
+}
+
 // publishTakeoverReady：发布接管就绪generation，0表示未就绪。
 void publishTakeoverReady(std::uint32_t generation)
 {
@@ -330,6 +342,12 @@ void navigationModeCallback(const std_msgs::UInt8ConstPtr& msg)
 {
   if (!msg) return;
   navigation_mode = msg->data;
+}
+
+void stairUpActiveCallback(const std_msgs::BoolConstPtr& msg)
+{
+  if (!msg) return;
+  stair_up_active = msg->data;
 }
 
 // takeoverSyncCallback：接收接管同步信号。清空当前轨迹并进入“等待接管轨迹”
@@ -568,20 +586,22 @@ void cmdCallback(const ros::TimerEvent &)
       vel_des(0),
       vel_des(1));
 
+  const double active_max_vx = activeLinearSpeedLimit();
   Eigen::Vector2d vel_world =
       clampNorm(
           vel_ff +
               kp_pos *
               pos_err,
           std::max(
-              max_vx,
+              active_max_vx,
               max_vy));
 
 
   const double c = std::cos(odom_yaw);
   const double s = std::sin(odom_yaw);
   geometry_msgs::Twist cmd;
-  cmd.linear.x = clamp(c * vel_world(0) + s * vel_world(1), -max_vx, max_vx);
+  cmd.linear.x = clamp(c * vel_world(0) + s * vel_world(1),
+      -active_max_vx, active_max_vx);
   cmd.linear.y = clamp(-s * vel_world(0) + c * vel_world(1), -max_vy, max_vy);
   cmd.angular.z = vyaw_cmd;
 
@@ -628,6 +648,8 @@ int main(int argc, char **argv)
       takeoverSyncCallback);
   navigation_mode_sub = node.subscribe("/navdog/navigation_mode", 10,
       navigationModeCallback);
+  ros::Subscriber stair_up_active_sub = node.subscribe(
+      "/navdog/stair_up_active", 10, stairUpActiveCallback);
   cmd_vel_pub = node.advertise<geometry_msgs::Twist>("/navdog/scan_cmd", 20);
   execution_frozen_pub = node.advertise<std_msgs::Bool>("/native_scan/planning/go2_execution_frozen", 10);
   takeover_replan_pub = node.advertise<std_msgs::UInt32>(
