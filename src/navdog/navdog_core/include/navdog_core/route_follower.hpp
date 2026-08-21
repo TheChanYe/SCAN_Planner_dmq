@@ -19,8 +19,7 @@ namespace navdog
 class RouteFollower
 {
 public:
-  // 构造函数：传入跟踪相关配置（比例增益 kp_x/kp_yaw、前瞻距离、
-  // 转向阈值等）。
+  // 构造函数：传入跟踪相关配置（比例增益 kp_x/kp_yaw、前瞻距离等）。
   explicit RouteFollower(
       const RouteFollowerConfig& config);
 
@@ -42,7 +41,7 @@ public:
 
 private:
   // updatePointGoal：单点/极短路线的直达模式，直接朝向任务最后一个点行驶，
-  // 不使用前瞻点插值。先转向对齐再前进，接近时自动减速。
+  // 不使用前瞻点插值。目标在前半平面时边走边转，后半平面时原地转向。
   VelocityCommand updatePointGoal(
       const NavigationTask& task,
       const RobotState& robot,
@@ -50,19 +49,15 @@ private:
       double max_vx,
       double now_sec) const;
 
-  // interpolateRoutePoint：根据目标弧长在折线路线上插值出对应位置与朝向。
+  // interpolateRoutePoint：根据目标弧长在折线路线上插值出对应位置。
   // 输入：task - 路线点列；target_arc_length_m - 目标累积弧长（米）
-  // 输出：out_x/out_y/out_yaw - 插值得到的坐标与朝向；返回值表示是否插值成功
+  // 输出：out_x/out_y - 插值得到的坐标；返回值表示是否插值成功
   // （点数少于2个时失败）。若目标弧长超出路线总长，则钳到终点。
   bool interpolateRoutePoint(
       const NavigationTask& task,
       double target_arc_length_m,
       double& out_x,
-      double& out_y,
-      double& out_yaw) const noexcept;
-
-  // isYawAligned：判断朝向误差是否已在"仅转向"阈值以内（达标后才允许平移）。
-  bool isYawAligned(double heading_error) const noexcept;
+      double& out_y) const noexcept;
 
   RouteFollowerConfig config_{};    // 跟踪控制配置参数
 };

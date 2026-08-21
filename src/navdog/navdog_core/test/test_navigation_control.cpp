@@ -211,7 +211,7 @@ TEST(RouteFollowerTest, FollowsRepeatedPointGoal)
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
-TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
+TEST(RouteFollowerTest, RotatesWhenLookaheadBehindRobot)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 1.0;
@@ -221,7 +221,7 @@ TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
 
   RouteFollower follower(config);
   const NavigationTask task = makeStraightTask(1, 10.0);
-  const RobotState robot = makeRobot(0.0, 0.0, kPi / 2.0);
+  const RobotState robot = makeRobot(0.0, 0.0, 2.4);
   const RouteProgress progress = makeProgress(1, 0.0, 10.0, 0.0);
 
   const VelocityCommand cmd =
@@ -233,11 +233,31 @@ TEST(RouteFollowerTest, RotatesFirstWhenHeadingErrorLarge)
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
+TEST(RouteFollowerTest, DrivesAndTurnsForForwardHalfPlaneTarget)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 1.0;
+  config.kp_x = 0.8;
+  config.kp_yaw = 1.2;
+  config.max_vx = 0.8;
+
+  RouteFollower follower(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RouteProgress progress = makeProgress(1, 0.0, 10.0, 0.0);
+
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.0, 0.0, -0.79), progress, 0.5, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
+}
+
 TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.4;
-  config.heading_turn_only_threshold_rad = 1.20;
   config.max_vx = 0.5;
 
   NavigationTask task{};
@@ -265,12 +285,11 @@ TEST(RouteFollowerTest, FollowsLookaheadAcrossWaypointWithoutStopping)
   EXPECT_GT(cmd.yaw_rate, 0.0);
 }
 
-TEST(RouteFollowerTest, CosineHeadingScaleSlowsBeforeTurnOnlyThreshold)
+TEST(RouteFollowerTest, CosineHeadingScaleSlowsForwardHalfPlaneTarget)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 1.0;
   config.max_lookahead_distance_m = 1.0;
-  config.heading_turn_only_threshold_rad = 0.8;
   config.max_vx = 0.5;
 
   RouteFollower follower(config);
@@ -287,13 +306,32 @@ TEST(RouteFollowerTest, CosineHeadingScaleSlowsBeforeTurnOnlyThreshold)
   EXPECT_DOUBLE_EQ(turning.vy, 0.0);
 }
 
+TEST(RouteFollowerTest, TurnsOnlyWhenLookaheadBehindRobot)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 1.0;
+  config.max_lookahead_distance_m = 1.0;
+  config.max_vx = 0.5;
+
+  RouteFollower follower(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RouteProgress progress = makeProgress(1, 0.0, 10.0, 0.0);
+
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(0.0, 0.0, 2.4), progress, 0.5, 1.0);
+
+  EXPECT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_NE(cmd.yaw_rate, 0.0);
+}
+
 TEST(RouteFollowerTest, EffectiveSpeedExtendsLookaheadAcrossCorner)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.4;
   config.max_lookahead_distance_m = 1.0;
   config.lookahead_time_sec = 1.0;
-  config.heading_turn_only_threshold_rad = 0.8;
 
   NavigationTask task{};
   task.sequence = 1;
@@ -326,7 +364,6 @@ TEST(RouteFollowerTest, RightTurnUsesNegativeYawWithoutLateralVelocity)
   config.lookahead_distance_m = 0.4;
   config.max_lookahead_distance_m = 1.0;
   config.lookahead_time_sec = 1.0;
-  config.heading_turn_only_threshold_rad = 0.8;
 
   NavigationTask task{};
   task.sequence = 1;
@@ -355,7 +392,6 @@ TEST(RouteFollowerTest, BlockedConfirmationUsesShorterSpeedHint)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 1.20;
   config.lookahead_time_sec = 1.20;
-  config.heading_turn_only_threshold_rad = 0.8;
 
   NavigationTask task{};
   task.sequence = 1;
@@ -388,7 +424,6 @@ TEST(RouteFollowerTest, LeftCornerYawDoesNotOscillateAcrossSamples)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 1.20;
   config.lookahead_time_sec = 1.20;
-  config.heading_turn_only_threshold_rad = 0.80;
 
   NavigationTask task{};
   task.sequence = 1;

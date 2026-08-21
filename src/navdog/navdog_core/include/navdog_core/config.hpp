@@ -193,9 +193,6 @@ struct RouteFollowerConfig
   double kp_x{0.8};
   double kp_yaw{1.2};
 
-  double heading_turn_only_threshold_rad{
-      0.8};
-
   double max_vx{0.70};
   double max_yaw_rate{0.65};
 };

@@ -72,7 +72,6 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("route_follower/lookahead_time_sec", c.route_follower.lookahead_time_sec);
   LOAD("route_follower/kp_x", c.route_follower.kp_x);
   LOAD("route_follower/kp_yaw", c.route_follower.kp_yaw);
-  LOAD("route_follower/heading_turn_only_threshold_rad", c.route_follower.heading_turn_only_threshold_rad);
   LOAD("speed_limits/route_follow_linear_mps", c.route_follower.max_vx);
   c.route_follower.max_yaw_rate = c.limits.max_yaw_rate;
   LOAD("goal_controller/near_goal_switch_dist", c.goal_controller.near_goal_switch_dist);
