@@ -38,10 +38,6 @@ void RouteProgressTracker::reset() noexcept
 
   total_length_m_ = 0.0;
   current_arc_length_m_ = 0.0;
-  forward_arc_budget_m_ = 0.0;
-  last_robot_x_ = 0.0;
-  last_robot_y_ = 0.0;
-  have_last_robot_position_ = false;
   current_segment_vector_index_ = 0;
 
   last_progress_ = RouteProgress{};
@@ -198,10 +194,6 @@ bool RouteProgressTracker::rebuildRoute(
   active_task_sequence_ = task.sequence;
   initialized_ = false;
   current_arc_length_m_ = 0.0;
-  forward_arc_budget_m_ = 0.0;
-  last_robot_x_ = 0.0;
-  last_robot_y_ = 0.0;
-  have_last_robot_position_ = false;
   current_segment_vector_index_ = 0;
   last_progress_ = RouteProgress{};
 
@@ -398,9 +390,9 @@ RouteProgressTracker::findForwardProjection(
   ProjectionCandidate best{};
   best.valid = false;
 
-  const double max_arc = std::min(
-      current_arc_length_m_ + config_.max_forward_search_m,
-      forward_arc_budget_m_);
+  const double max_arc =
+      current_arc_length_m_ +
+      config_.max_forward_search_m;
 
   for (std::size_t i = current_segment_vector_index_;
        i < segments_.size();
@@ -680,19 +672,6 @@ RouteProgressOutput RouteProgressTracker::update(
   }
   else
   {
-    if (have_last_robot_position_)
-    {
-      const double robot_displacement = std::hypot(
-          robot.x - last_robot_x_,
-          robot.y - last_robot_y_);
-      if (std::isfinite(robot_displacement) &&
-          robot_displacement <= config_.max_forward_search_m)
-      {
-        forward_arc_budget_m_ = std::min(
-            total_length_m_,
-            forward_arc_budget_m_ + robot_displacement);
-      }
-    }
     candidate = findForwardProjection(robot);
   }
 
@@ -707,16 +686,9 @@ RouteProgressOutput RouteProgressTracker::update(
   // closest-point changes at crossings or loops can never move progress back.
   current_arc_length_m_ =
       std::max(current_arc_length_m_, candidate.arc_length_m);
-  if (!initialized_)
-  {
-    forward_arc_budget_m_ = current_arc_length_m_;
-  }
   candidate.arc_length_m = current_arc_length_m_;
   current_segment_vector_index_ =
       candidate.segment_vector_index;
-  last_robot_x_ = robot.x;
-  last_robot_y_ = robot.y;
-  have_last_robot_position_ = true;
   initialized_ = true;
 
   // 9. Generate RouteProgress

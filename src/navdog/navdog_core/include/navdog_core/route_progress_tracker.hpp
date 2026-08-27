@@ -167,11 +167,6 @@ private:
 
   double total_length_m_{0.0};         // 路线总长（米）
   double current_arc_length_m_{0.0};   // 当前累计弧长（单调不回退）
-  double forward_arc_budget_m_{0.0};   // 机器人真实平移允许到达的最大弧长
-
-  double last_robot_x_{0.0};
-  double last_robot_y_{0.0};
-  bool have_last_robot_position_{false};
 
   std::size_t current_segment_vector_index_{0};  // 当前所在段在segments_中的下标
 

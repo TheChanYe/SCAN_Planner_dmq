@@ -328,6 +328,60 @@ VelocityCommand RouteFollower::update(
 
   const double base_lookahead =
       std::max(0.0, config_.lookahead_distance_m);
+  if (!progress.on_route)
+  {
+    const double rejoin_arc = std::min(
+        progress.total_length_m,
+        progress.arc_length_m + base_lookahead);
+    double rejoin_x = 0.0;
+    double rejoin_y = 0.0;
+    if (!interpolateTrackingPoint(rejoin_arc, rejoin_x, rejoin_y))
+    {
+      cmd.valid = false;
+      cmd.source = CommandSource::TRACKING_STOP;
+      cmd.stamp_sec = now_sec;
+      return cmd;
+    }
+
+    const double dx = rejoin_x - robot.x;
+    const double dy = rejoin_y - robot.y;
+    const double distance = std::hypot(dx, dy);
+    if (distance < kEpsilon)
+    {
+      cmd.vx = 0.0;
+      cmd.vy = 0.0;
+      cmd.yaw_rate = 0.0;
+    }
+    else
+    {
+      const double c = std::cos(robot.yaw);
+      const double s = std::sin(robot.yaw);
+      const double ex_robot = c * dx + s * dy;
+      const double ey_robot = -s * dx + c * dy;
+      const double point_alpha = std::atan2(ey_robot, ex_robot);
+      cmd.vx = 0.0;
+      if (ex_robot > 0.0)
+      {
+        const double base_speed = std::min(
+            effective_max_vx,
+            config_.kp_x * distance);
+        const double cos_alpha =
+            std::max(0.0, std::cos(point_alpha));
+        cmd.vx = base_speed * cos_alpha * cos_alpha;
+      }
+      cmd.vy = 0.0;
+      cmd.yaw_rate = std::max(
+          -config_.max_yaw_rate,
+          std::min(config_.max_yaw_rate,
+              config_.kp_yaw * point_alpha));
+    }
+
+    cmd.stamp_sec = now_sec;
+    cmd.valid = true;
+    cmd.source = CommandSource::PLANNER;
+    return cmd;
+  }
+
   const double max_lookahead =
       std::max(base_lookahead, config_.max_lookahead_distance_m);
   const double speed_hint = effective_max_vx;
