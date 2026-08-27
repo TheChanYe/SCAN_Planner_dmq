@@ -42,13 +42,11 @@ public:
       double now_sec);
 
   // 直接跟踪任务最终点，不使用 RouteProgress 的 arc/lookahead。
-  // stop_distance_m 为线速度收敛到零的距离边界。
   VelocityCommand updateDirectGoal(
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
       double max_vx,
-      double stop_distance_m,
       double now_sec) const;
 
 private:

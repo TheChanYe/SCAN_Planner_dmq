@@ -210,8 +210,7 @@ bool RouteFollower::interpolateTrackingPoint(
 //   1. 前置校验：路线为空/机器人无效/进度无效，直接返回 TRACKING_STOP；
 //   2. 以任务最后一个点为目标，计算目标在机体坐标系下的 ex/ey；
 //   3. 目标在后半平面时只输出比例角速度，不向前走；
-//   4. 目标在前半平面时根据距停止边界的余量与 cos(alpha)^2
-//      平滑控制前进速度；
+//   4. 目标在前半平面时根据真实目标距离与 cos(alpha)^2 平滑控制前进速度；
 //   5. yaw_rate 使用简单比例控制，适合短距离点目标，避免曲率数值放大。
 // 来源标记为 PLANNER，表示这是常规路线跟踪输出。
 VelocityCommand RouteFollower::updateDirectGoal(
@@ -219,7 +218,6 @@ VelocityCommand RouteFollower::updateDirectGoal(
     const RobotState& robot,
     const RouteProgress& progress,
     double max_vx,
-    double stop_distance_m,
     double now_sec) const
 {
   VelocityCommand cmd{};
@@ -255,11 +253,9 @@ VelocityCommand RouteFollower::updateDirectGoal(
   }
   else
   {
-    const double approach_distance = std::max(
-        0.0, distance - std::max(0.0, stop_distance_m));
     const double base_speed = std::min(
         effective_max_vx,
-        config_.kp_x * approach_distance);
+        config_.kp_x * distance);
     const double cos_alpha = std::max(0.0, std::cos(alpha));
     cmd.vx = base_speed * cos_alpha * cos_alpha;
     cmd.vy = 0.0;
@@ -310,7 +306,7 @@ VelocityCommand RouteFollower::update(
   }
 
   if (task.points.size() == 1 || progress.total_length_m <= 1e-6)
-    return updateDirectGoal(task, robot, progress, max_vx, 0.0, now_sec);
+    return updateDirectGoal(task, robot, progress, max_vx, now_sec);
 
   if (!tracking_path_ready_ ||
       task.sequence != tracking_task_sequence_)

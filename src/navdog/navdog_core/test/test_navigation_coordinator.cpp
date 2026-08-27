@@ -269,7 +269,7 @@ TEST(GoalController, TimeoutIsFailureSignalNotSuccess)
   NavigationTask task = startEvent().task;
   RobotState robot = robotInput(1.0).robot;
   robot.x = 2.0;
-  robot.yaw = 1.0;
+  robot.yaw = 2.6179938779914944;
   RouteProgress progress{};
   progress.valid = true;
   progress.route_yaw = 0.0;
@@ -316,6 +316,35 @@ TEST(GoalController, PositionAndYawReachedSucceedsImmediately)
   EXPECT_DOUBLE_EQ(0.0, result.command.vx);
   EXPECT_DOUBLE_EQ(0.0, result.command.vy);
   EXPECT_DOUBLE_EQ(0.0, result.command.yaw_rate);
+}
+
+TEST(NavigationCoordinator, AtFinishBoundaryStopsLinearMotion)
+{
+  NavdogConfig config{};
+  config.goal_controller.finish_dist = 0.20;
+  NavigationCoordinator coordinator(config);
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.81;
+  robot.yaw = 1.0;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.arc_length_m = 1.81;
+  progress.total_length_m = 2.0;
+  progress.remaining_distance_m = 0.19;
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+
+  const VelocityCommand command = NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+
+  EXPECT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+  EXPECT_TRUE(command.valid);
+  EXPECT_DOUBLE_EQ(command.vx, 0.0);
+  EXPECT_DOUBLE_EQ(command.vy, 0.0);
 }
 
 TEST(NavigationCoordinator, GoalAlignTimeoutEntersFailed)

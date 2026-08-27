@@ -256,7 +256,7 @@ goal_controller:
   obstacle_finish_timeout_sec: 6.0
   finish_dist: 0.20
   goal_align_reacquire_dist: 0.30
-  goal_align_timeout_sec: 3.0
+  goal_align_timeout_sec: 8.0
   # Must remain above driver_deadband.zero_threshold_yaw_rate.
   goal_align_min_yaw_rate: 0.03
   finish_yaw_tolerance_deg: 10.0

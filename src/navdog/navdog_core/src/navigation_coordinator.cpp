@@ -398,7 +398,6 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
         robot,
         progress,
         effective_max_vx,
-        config_.goal_controller.finish_dist,
         now_sec);
   }
 

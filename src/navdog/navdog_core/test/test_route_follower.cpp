@@ -171,7 +171,7 @@ TEST(RouteFollowerTest, SinglePointGoalUsesForwardOnlyCommand)
   EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
 }
 
-TEST(RouteFollowerTest, DirectGoalConvergesToStopBoundary)
+TEST(RouteFollowerTest, DirectGoalNearBoundaryStillMoves)
 {
   RouteFollowerConfig config{};
   config.kp_x = 0.8;
@@ -180,24 +180,13 @@ TEST(RouteFollowerTest, DirectGoalConvergesToStopBoundary)
   const NavigationTask task = makeStraightTask(1, 10.0);
   const RouteProgress progress = makeProgress(1, 9.0, 1.0);
 
-  const VelocityCommand far = follower.updateDirectGoal(
-      task, makeRobot(9.50), progress, 0.30, 0.20, 1.0);
-  const VelocityCommand near = follower.updateDirectGoal(
-      task, makeRobot(9.70), progress, 0.30, 0.20, 1.0);
-  const VelocityCommand boundary = follower.updateDirectGoal(
-      task, makeRobot(9.80), progress, 0.30, 0.20, 1.0);
+  const VelocityCommand cmd = follower.updateDirectGoal(
+      task, makeRobot(9.79), progress, 0.30, 1.0);
 
-  ASSERT_TRUE(far.valid);
-  ASSERT_TRUE(near.valid);
-  ASSERT_TRUE(boundary.valid);
-  EXPECT_GT(far.vx, near.vx);
-  EXPECT_GT(near.vx, boundary.vx);
-  EXPECT_NEAR(far.vx, 0.24, 1e-9);
-  EXPECT_NEAR(near.vx, 0.08, 1e-9);
-  EXPECT_DOUBLE_EQ(boundary.vx, 0.0);
-  EXPECT_DOUBLE_EQ(far.vy, 0.0);
-  EXPECT_DOUBLE_EQ(near.vy, 0.0);
-  EXPECT_DOUBLE_EQ(boundary.vy, 0.0);
+  ASSERT_TRUE(cmd.valid);
+  EXPECT_GT(cmd.vx, 0.06);
+  EXPECT_NEAR(cmd.vx, 0.168, 1e-9);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
 }
 
 TEST(RouteFollowerTest, LookaheadBehindRobotTurnsOnly)
