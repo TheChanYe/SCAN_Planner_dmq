@@ -122,6 +122,7 @@ TEST(NavdogConfigLoadingTest, LoadsGoalControllerFromParams)
   nh.setParam("goal_controller/near_goal_min_v", 0.12);
   nh.setParam("goal_controller/obstacle_finish_timeout_sec", 6.0);
   nh.setParam("goal_controller/finish_dist", 0.2);
+  nh.setParam("goal_controller/goal_align_timeout_sec", 8.0);
 
   const auto config = NavdogRuntimeNode::loadNavdogConfig(nh);
 
@@ -130,6 +131,7 @@ TEST(NavdogConfigLoadingTest, LoadsGoalControllerFromParams)
   EXPECT_DOUBLE_EQ(config.goal_controller.near_goal_min_v, 0.12);
   EXPECT_DOUBLE_EQ(config.goal_controller.obstacle_finish_timeout_sec, 6.0);
   EXPECT_DOUBLE_EQ(config.goal_controller.finish_dist, 0.2);
+  EXPECT_DOUBLE_EQ(config.goal_controller.goal_align_timeout_sec, 8.0);
 }
 
 TEST(NavdogConfigLoadingTest, LoadsRouteFollowerFromParams)

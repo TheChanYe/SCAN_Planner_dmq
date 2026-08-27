@@ -3,6 +3,7 @@
 #include <navdog_core/navigation_coordinator.hpp>
 
 #include <limits>
+#include <utility>
 
 namespace navdog
 {
@@ -44,6 +45,11 @@ public:
   {
     return coordinator.executeRouteFollow(
         task, robot, progress, mode_status, max_vx, now_sec);
+  }
+
+  static bool obstacleFinished(const NavigationCoordinator& coordinator)
+  {
+    return coordinator.obstacle_finished_;
   }
 };
 
@@ -218,6 +224,183 @@ TEST(NavigationCoordinator, RouteOnlyBlockedStillStops)
       coordinator, task, robot, progress, mode, 0.60, 1.0);
   EXPECT_EQ(command.source, CommandSource::TRACKING_STOP);
   EXPECT_DOUBLE_EQ(command.vx, 0.0);
+}
+
+TEST(NavigationCoordinator, NearGoalDirectIgnoresStaleRouteProgress)
+{
+  NavigationCoordinator coordinator;
+  NavigationTask task{};
+  task.sequence = 1;
+  RoutePoint middle{};
+  middle.x = 1.0;
+  middle.y = 1.0;
+  RoutePoint goal{};
+  goal.x = 2.0;
+  task.points = {RoutePoint{}, middle, goal};
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.50;
+  robot.y = 0.20;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = task.sequence;
+  progress.arc_length_m = 0.0;
+  progress.total_length_m = 2.8;
+  progress.remaining_distance_m = 1.37;
+
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  const auto command = NavigationCoordinatorTestPeer::executeRouteFollow(
+      coordinator, task, robot, progress, mode, 0.60, 1.0);
+
+  EXPECT_TRUE(command.valid);
+  EXPECT_GT(command.vx, 0.0);
+  EXPECT_DOUBLE_EQ(command.vy, 0.0);
+  EXPECT_LT(command.yaw_rate, 0.0);
+}
+
+TEST(GoalController, TimeoutIsFailureSignalNotSuccess)
+{
+  GoalControllerConfig config{};
+  config.finish_dist = 0.20;
+  config.finish_yaw_tolerance_rad = 0.10;
+  config.goal_align_timeout_sec = 8.0;
+  GoalController controller(config);
+  NavigationTask task = startEvent().task;
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 2.0;
+  robot.yaw = 1.0;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.route_yaw = 0.0;
+
+  const auto started = controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0);
+  EXPECT_FALSE(started.finished);
+  EXPECT_FALSE(started.timed_out);
+
+  const auto after_three_sec = controller.update(
+      task, robot, progress, 0.4, 0.65, 4.1);
+  EXPECT_FALSE(after_three_sec.finished);
+  EXPECT_FALSE(after_three_sec.timed_out);
+
+  const auto timed_out = controller.update(
+      task, robot, progress, 0.4, 0.65, 9.1);
+  EXPECT_FALSE(timed_out.finished);
+  EXPECT_TRUE(timed_out.timed_out);
+  EXPECT_TRUE(timed_out.position_reached);
+  EXPECT_FALSE(timed_out.yaw_reached);
+  EXPECT_DOUBLE_EQ(0.0, timed_out.command.yaw_rate);
+}
+
+TEST(GoalController, PositionAndYawReachedSucceedsImmediately)
+{
+  GoalControllerConfig config{};
+  config.finish_dist = 0.20;
+  config.finish_yaw_tolerance_rad = 0.10;
+  GoalController controller(config);
+  NavigationTask task = startEvent().task;
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 2.0;
+  robot.yaw = 0.05;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.route_yaw = 0.0;
+
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 1.0);
+  EXPECT_TRUE(result.finished);
+  EXPECT_FALSE(result.timed_out);
+  EXPECT_TRUE(result.position_reached);
+  EXPECT_TRUE(result.yaw_reached);
+  EXPECT_DOUBLE_EQ(0.0, result.command.vx);
+  EXPECT_DOUBLE_EQ(0.0, result.command.vy);
+  EXPECT_DOUBLE_EQ(0.0, result.command.yaw_rate);
+}
+
+TEST(NavigationCoordinator, GoalAlignTimeoutEntersFailed)
+{
+  NavdogConfig config{};
+  config.goal_controller.goal_align_timeout_sec = 8.0;
+  NavigationCoordinator coordinator(config);
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 2.0;
+  robot.yaw = 1.0;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.arc_length_m = 2.0;
+  progress.total_length_m = 2.0;
+  progress.remaining_distance_m = 0.0;
+  progress.route_yaw = 0.0;
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+
+  NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+  ASSERT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+
+  CoreInput input{};
+  input.robot = robot;
+  input.robot.stamp_sec = 9.1;
+  const CoreOutput output = coordinator.update(input, 9.1);
+  EXPECT_EQ(NavState::FAILED, output.state);
+  EXPECT_EQ(CommandSource::FAILED_STOP, output.final_cmd.source);
+  EXPECT_FALSE(coordinator.hasActiveTask());
+}
+
+TEST(NavigationCoordinator, BlockedGoalSuccessRequiresClosePositionAndYaw)
+{
+  NavdogConfig config{};
+  config.goal_controller.finish_dist = 0.20;
+  config.goal_controller.goal_align_reacquire_dist = 0.30;
+  config.goal_controller.obstacle_finish_timeout_sec = 6.0;
+  config.goal_controller.goal_align_timeout_sec = 8.0;
+
+  const auto run_blocked = [&config](double goal_distance,
+                                     double robot_yaw,
+                                     double final_time) {
+    NavigationCoordinator coordinator(config);
+    EXPECT_EQ(TaskHandleResult::STARTED,
+        coordinator.handleEvent(startEvent()));
+    const NavigationTask task = coordinator.routeManager().taskView();
+    RobotState robot = robotInput(1.0).robot;
+    robot.x = 2.0 - goal_distance;
+    robot.yaw = robot_yaw;
+    RouteProgress progress{};
+    progress.valid = true;
+    progress.task_sequence = coordinator.taskSession().sequence;
+    progress.arc_length_m = robot.x;
+    progress.total_length_m = 2.0;
+    progress.remaining_distance_m = goal_distance;
+    progress.route_yaw = 0.0;
+    NavigationModeStatus mode{};
+    mode.mode = NavigationMode::ROUTE_FOLLOW;
+    mode.route_blocked_near = true;
+
+    NavigationCoordinatorTestPeer::executeMode(
+        coordinator, task, robot, progress, mode, true, 1.0);
+    NavigationCoordinatorTestPeer::executeMode(
+        coordinator, task, robot, progress, mode, true, final_time);
+    return std::make_pair(
+        coordinator.state(),
+        NavigationCoordinatorTestPeer::obstacleFinished(coordinator));
+  };
+
+  const auto too_far = run_blocked(0.60, 0.0, 11.0);
+  EXPECT_NE(NavState::SUCCEEDED, too_far.first);
+  EXPECT_FALSE(too_far.second);
+
+  const auto yaw_mismatch = run_blocked(0.25, 1.0, 11.0);
+  EXPECT_NE(NavState::SUCCEEDED, yaw_mismatch.first);
+  EXPECT_FALSE(yaw_mismatch.second);
+
+  const auto occupied_and_aligned = run_blocked(0.25, 0.0, 7.1);
+  EXPECT_EQ(NavState::SUCCEEDED, occupied_and_aligned.first);
+  EXPECT_TRUE(occupied_and_aligned.second);
 }
 
 TEST(NavigationCoordinator, MaxVxUpdateKeepsSequenceRouteAndMode)

@@ -247,7 +247,7 @@ struct GoalControllerConfig
 
   double finish_dist{0.15};
   double goal_align_reacquire_dist{0.25};
-  double goal_align_timeout_sec{3.0};
+  double goal_align_timeout_sec{8.0};
   double goal_align_min_yaw_rate{0.03};
   double finish_yaw_tolerance_deg{5.0};
   double finish_yaw_tolerance_rad{

@@ -797,6 +797,9 @@ TEST(GoalControllerTest, FinishesWithZeroSpeed)
       task, robot, progress, 0.4, 0.65, 1.0);
 
   EXPECT_TRUE(result.finished);
+  EXPECT_FALSE(result.timed_out);
+  EXPECT_TRUE(result.position_reached);
+  EXPECT_TRUE(result.yaw_reached);
   EXPECT_EQ(result.command.vx, 0.0);
   EXPECT_EQ(result.command.vy, 0.0);
   EXPECT_EQ(result.command.yaw_rate, 0.0);
@@ -1605,12 +1608,12 @@ TEST(GoalControllerTest, UsesEffectiveMinimumYawRate)
   EXPECT_DOUBLE_EQ(result.command.yaw_rate, 0.03);
 }
 
-TEST(GoalControllerTest, FinishesWhenAlignmentTimesOut)
+TEST(GoalControllerTest, GoalAlignTimeoutMustNotSucceed)
 {
   GoalControllerConfig config{};
   config.finish_dist = 0.15;
   config.finish_yaw_tolerance_rad = 0.01;
-  config.goal_align_timeout_sec = 2.0;
+  config.goal_align_timeout_sec = 8.0;
   GoalController controller(config);
   const NavigationTask task = makeStraightTask(1, 10.0);
   const RobotState robot = makeRobot(10.0, 0.0, -0.2);
@@ -1618,11 +1621,18 @@ TEST(GoalControllerTest, FinishesWhenAlignmentTimesOut)
 
   EXPECT_FALSE(controller.update(
       task, robot, progress, 0.4, 0.65, 1.0).finished);
-  const auto result = controller.update(
-      task, robot, progress, 0.4, 0.65, 3.0);
+  const auto after_three_sec = controller.update(
+      task, robot, progress, 0.4, 0.65, 4.1);
+  EXPECT_FALSE(after_three_sec.finished);
+  EXPECT_FALSE(after_three_sec.timed_out);
 
-  EXPECT_TRUE(result.finished);
+  const auto result = controller.update(
+      task, robot, progress, 0.4, 0.65, 9.1);
+
+  EXPECT_FALSE(result.finished);
   EXPECT_TRUE(result.timed_out);
+  EXPECT_TRUE(result.position_reached);
+  EXPECT_FALSE(result.yaw_reached);
   EXPECT_DOUBLE_EQ(result.command.yaw_rate, 0.0);
 }
 

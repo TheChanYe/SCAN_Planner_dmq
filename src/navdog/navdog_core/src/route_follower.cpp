@@ -211,19 +211,21 @@ bool RouteFollower::interpolateTrackingPoint(
   return true;
 }
 
-// updatePointGoal：单点/极短路线的直达模式（不用前瞻插值）。
+// updateDirectGoal：直接跟踪任务最终点（不用前瞻插值）。
 // 步骤：
 //   1. 前置校验：路线为空/机器人无效/进度无效，直接返回 TRACKING_STOP；
 //   2. 以任务最后一个点为目标，计算目标在机体坐标系下的 ex/ey；
 //   3. 目标在后半平面时只输出比例角速度，不向前走；
-//   4. 目标在前半平面时根据距离与 cos(alpha)^2 平滑控制前进速度；
+//   4. 目标在前半平面时根据距停止边界的余量与 cos(alpha)^2
+//      平滑控制前进速度；
 //   5. yaw_rate 使用简单比例控制，适合短距离点目标，避免曲率数值放大。
 // 来源标记为 PLANNER，表示这是常规路线跟踪输出。
-VelocityCommand RouteFollower::updatePointGoal(
+VelocityCommand RouteFollower::updateDirectGoal(
     const NavigationTask& task,
     const RobotState& robot,
     const RouteProgress& progress,
     double max_vx,
+    double stop_distance_m,
     double now_sec) const
 {
   VelocityCommand cmd{};
@@ -259,9 +261,11 @@ VelocityCommand RouteFollower::updatePointGoal(
   }
   else
   {
+    const double approach_distance = std::max(
+        0.0, distance - std::max(0.0, stop_distance_m));
     const double base_speed = std::min(
         effective_max_vx,
-        config_.kp_x * std::max(0.0, distance));
+        config_.kp_x * approach_distance);
     const double cos_alpha = std::max(0.0, std::cos(alpha));
     cmd.vx = base_speed * cos_alpha * cos_alpha;
     cmd.vy = 0.0;
@@ -279,7 +283,7 @@ VelocityCommand RouteFollower::updatePointGoal(
 
 // update：带前瞻点的路线跟踪主逻辑，每个控制周期调用一次。核心步骤：
 //   1. 前置校验：路线为空/进度无效/弧长非法/机器人无效，直接返回 TRACKING_STOP；
-//   2. 若只有单个点或路线总长度接近零，退化为 updatePointGoal 直达模式；
+//   2. 若只有单个点或路线总长度接近零，退化为 updateDirectGoal 直达模式；
 //   3. 根据当前可执行速度计算动态前瞻距离 dynamic_lookahead：
 //      基础前瞻 + 速度*前瞻时间，并限幅到 max_lookahead_distance_m（跑得越快看得越远）；
 //   4. 用"已走弧长 + 前瞻距离"作为目标弧长，在tracking path上求出前瞻点；
@@ -313,7 +317,7 @@ VelocityCommand RouteFollower::update(
   }
 
   if (task.points.size() == 1 || progress.total_length_m <= 1e-6)
-    return updatePointGoal(task, robot, progress, max_vx, now_sec);
+    return updateDirectGoal(task, robot, progress, max_vx, 0.0, now_sec);
 
   if (!tracking_path_ready_ ||
       task.sequence != tracking_task_sequence_)
@@ -435,25 +439,25 @@ VelocityCommand RouteFollower::update(
     guide_y /= guide_norm;
   }
 
-  const double guide_yaw = std::atan2(guide_y, guide_x);
-
   const double c = std::cos(robot.yaw);
   const double s = std::sin(robot.yaw);
 
   // World error rotated into robot frame.
   const double ex_robot = c * ex_world + s * ey_world;
   const double ey_robot = -s * ex_world + c * ey_world;
+  const double guide_yaw = std::atan2(guide_y, guide_x);
   const double alpha = normalizeAngle(guide_yaw - robot.yaw);
   const double lookahead_actual = std::hypot(ex_robot, ey_robot);
 
   if (ex_robot <= 0.0)
   {
+    const double point_alpha = std::atan2(ey_robot, ex_robot);
     cmd.vx = 0.0;
     cmd.vy = 0.0;
-    const double point_alpha = std::atan2(ey_robot, ex_robot);
     cmd.yaw_rate = std::max(
         -config_.max_yaw_rate,
-        std::min(config_.max_yaw_rate, config_.kp_yaw * point_alpha));
+        std::min(config_.max_yaw_rate,
+            config_.kp_yaw * point_alpha));
   }
   else
   {

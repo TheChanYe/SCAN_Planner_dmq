@@ -33,13 +33,23 @@ public:
   //   max_vx   - 当前允许的最大线速度上限
   //   now_sec  - 当前时间戳（秒）
   // 输出：VelocityCommand，包含 vx/yaw_rate 及有效性标志；vy固定为0。
-  // 若路线只有单个点或总长度接近零，会退化为 updatePointGoal 直达模式。
+  // 若路线只有单个点或总长度接近零，会退化为 updateDirectGoal 直达模式。
   VelocityCommand update(
       const NavigationTask& task,
       const RobotState& robot,
       const RouteProgress& progress,
       double max_vx,
       double now_sec);
+
+  // 直接跟踪任务最终点，不使用 RouteProgress 的 arc/tangent。
+  // stop_distance_m 为线速度收敛到零的距离边界。
+  VelocityCommand updateDirectGoal(
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      double max_vx,
+      double stop_distance_m,
+      double now_sec) const;
 
 private:
   struct TrackingPoint
@@ -48,15 +58,6 @@ private:
     double x{0.0};
     double y{0.0};
   };
-
-  // updatePointGoal：单点/极短路线的直达模式，直接朝向任务最后一个点行驶，
-  // 不使用前瞻点插值。目标在前半平面时边走边转，后半平面时原地转向。
-  VelocityCommand updatePointGoal(
-      const NavigationTask& task,
-      const RobotState& robot,
-      const RouteProgress& progress,
-      double max_vx,
-      double now_sec) const;
 
   void rebuildTrackingPath(
       const NavigationTask& task);

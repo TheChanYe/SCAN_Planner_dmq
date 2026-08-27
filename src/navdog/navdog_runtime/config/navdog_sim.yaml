@@ -107,6 +107,8 @@ stair_up:
   exit_confirm_sec: 0.50
 route_progress:
   max_forward_search_m: 0.40
+goal_controller:
+  goal_align_timeout_sec: 8.0
 route_follower:
   lookahead_distance_m: 0.6
   heading_lookahead_m: 0.40

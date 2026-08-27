@@ -67,6 +67,78 @@ TEST(RouteManager, ForwardProjectionCannotJumpBeyondSearchArc)
       config.max_forward_search_m + 1e-9);
 }
 
+TEST(RouteManager, ForwardWindowMustNotRatchetStationaryRobot)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 0.40;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(21);
+  for (std::size_t i = 0; i < points.size(); ++i)
+    points[i].x = 0.25 * static_cast<double>(i);
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto initial = manager.updateProgress(robot(0.20), 1.0);
+  ASSERT_TRUE(initial.progress.valid);
+  const double held_arc = initial.progress.arc_length_m;
+
+  for (int i = 0; i < 4; ++i)
+  {
+    const auto output = manager.updateProgress(robot(1.70), 2.0 + i);
+    ASSERT_TRUE(output.progress.valid);
+    EXPECT_NEAR(held_arc, output.progress.arc_length_m, 1e-9);
+  }
+}
+
+TEST(RouteManager, LateralErrorStillUpdatesWhileProgressHeld)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 0.40;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(21);
+  for (std::size_t i = 0; i < points.size(); ++i)
+    points[i].x = 0.25 * static_cast<double>(i);
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto initial = manager.updateProgress(robot(0.20), 1.0);
+  ASSERT_TRUE(initial.progress.valid);
+  const auto first = manager.updateProgress(robot(1.70, 0.20), 2.0);
+  const auto second = manager.updateProgress(robot(1.70, 0.50), 3.0);
+
+  ASSERT_TRUE(first.progress.valid);
+  ASSERT_TRUE(second.progress.valid);
+  EXPECT_NEAR(initial.progress.arc_length_m,
+      first.progress.arc_length_m, 1e-9);
+  EXPECT_NEAR(first.progress.arc_length_m,
+      second.progress.arc_length_m, 1e-9);
+  EXPECT_NEAR(std::hypot(1.50, 0.20),
+      first.progress.lateral_error_m, 1e-9);
+  EXPECT_NEAR(std::hypot(1.50, 0.50),
+      second.progress.lateral_error_m, 1e-9);
+  EXPECT_GT(second.progress.lateral_error_m,
+      first.progress.lateral_error_m);
+}
+
+TEST(RouteManager, ForwardProgressFollowsAccumulatedRobotMotion)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 0.40;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(21);
+  for (std::size_t i = 0; i < points.size(); ++i)
+    points[i].x = 0.25 * static_cast<double>(i);
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto initial = manager.updateProgress(robot(0.20), 1.0);
+  const auto moved_once = manager.updateProgress(robot(0.45), 2.0);
+  const auto moved_twice = manager.updateProgress(robot(0.70), 3.0);
+
+  ASSERT_TRUE(initial.progress.valid);
+  ASSERT_TRUE(moved_once.progress.valid);
+  ASSERT_TRUE(moved_twice.progress.valid);
+  EXPECT_NEAR(moved_once.progress.arc_length_m, 0.45, 1e-9);
+  EXPECT_NEAR(moved_twice.progress.arc_length_m, 0.70, 1e-9);
+}
+
 TEST(RouteManager, InitialProjectionStillSearchesWholeRoute)
 {
   navdog::RouteProgressConfig config;

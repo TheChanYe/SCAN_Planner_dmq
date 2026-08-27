@@ -337,12 +337,12 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 
 // =============================================================================
 // executeRouteFollow
-// ROUTE_FOLLOW 模式下的执行逻辑：处理路线阻挡、近终点限速并交给 RouteFollower。
+// ROUTE_FOLLOW 模式下的执行逻辑：处理路线阻挡并交给 RouteFollower。
 // 步骤：
 //   1. ROUTE_ONLY阻塞必须停车；普通避障确认期继续跟随但限速到SCAN交接速度；
-//   2. 计算是否near_goal（距终点小于near_goal_switch_dist）；
-//   3. near_goal时根据剩余路程占switch_dist的比例线性插值限速（near_goal_max_v→near_goal_min_v）；
-//   4. 交由 RouteFollower 按pure pursuit策略跟随路线。
+//   2. 用机器人到真实最终点的距离判断 near goal；
+//   3. near goal 内按真实 goal distance 限速并复用 Direct Goal；
+//   4. near goal 外保持正常 tangent guidance。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeRouteFollow(
@@ -361,12 +361,12 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
         CommandSource::TRACKING_STOP, now_sec);
   }
 
-  const bool near_goal =
-      !task.points.empty() &&
-      std::isfinite(robot.x) && std::isfinite(robot.y) &&
-      std::hypot(task.points.back().x - robot.x,
-                 task.points.back().y - robot.y) <=
-          config_.goal_controller.near_goal_switch_dist;
+  const double goal_distance =
+      !task.points.empty() && robot.valid &&
+      std::isfinite(robot.x) && std::isfinite(robot.y)
+      ? std::hypot(task.points.back().x - robot.x,
+                   task.points.back().y - robot.y)
+      : std::numeric_limits<double>::infinity();
 
   double effective_max_vx = max_vx;
   if (mode_status.mode == NavigationMode::ROUTE_FOLLOW &&
@@ -378,31 +378,28 @@ VelocityCommand NavigationCoordinator::executeRouteFollow(
         config_.navigation_mode.handoff_linear_speed_mps);
   }
 
-  if (near_goal)
+  if (goal_distance <= config_.goal_controller.near_goal_switch_dist)
   {
-    const double remaining = std::max(
-        0.0,
-        progress.remaining_distance_m);
-
     const double switch_dist =
         config_.goal_controller.near_goal_switch_dist;
-
-    if (switch_dist > kEpsilon)
-    {
-      const double scale =
-          std::min(1.0, remaining / switch_dist);
-      effective_max_vx = std::min(
-          effective_max_vx,
-          config_.goal_controller.near_goal_max_v * scale +
-              config_.goal_controller.near_goal_min_v *
-                  (1.0 - scale));
-    }
-
-    effective_max_vx = std::max(
-        config_.goal_controller.near_goal_min_v,
-        std::min(
-            config_.goal_controller.near_goal_max_v,
-            effective_max_vx));
+    const double scale = switch_dist > kEpsilon
+        ? std::max(0.0, std::min(1.0, goal_distance / switch_dist))
+        : 0.0;
+    const double distance_speed_limit =
+        config_.goal_controller.near_goal_min_v +
+        scale * (config_.goal_controller.near_goal_max_v -
+                 config_.goal_controller.near_goal_min_v);
+    effective_max_vx = std::min(
+        effective_max_vx,
+        std::min(config_.goal_controller.near_goal_max_v,
+                 distance_speed_limit));
+    return route_follower_.updateDirectGoal(
+        task,
+        robot,
+        progress,
+        effective_max_vx,
+        config_.goal_controller.finish_dist,
+        now_sec);
   }
 
   return route_follower_.update(
@@ -436,13 +433,13 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
 // =============================================================================
 // executeMode
 // 根据最终目标边界与当前导航模式（ROUTE_FOLLOW/LOCAL_AVOID）分发执行函数，并处理
-// “靠近终点但被阻”的超时判完成逻辑。
+// “最终目标被占用”的等待完成逻辑。
 // 步骤：
 //   1. 计算到终点距离，若已进入finish_dist，则交给GoalController判定完成或最终对齐；
 //   2. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
-//   3. 判断是否near_goal_blocked（近终点且路线被阻）；
-//   4. 若near_goal_blocked，启动/继续计时，超过obstacle_finish_timeout_sec则判定任务完成
-//      并完整清理，未超时则返回零速度；
+//   3. 仅在 goal_align_reacquire_dist 内判断目标占用；
+//   4. 占用时复用 GoalController 对齐最终 yaw，只有 yaw 达标且阻塞超时
+//      才允许 obstacle-finished 成功；对齐超时进入 FAILED；
 //   5. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
 //   6. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
 // =============================================================================
@@ -477,7 +474,17 @@ VelocityCommand NavigationCoordinator::executeMode(
                  config_.goal_controller.near_goal_max_w),
         now_sec);
 
-    if (result.finished)
+    if (result.position_lost)
+    {
+      state_ = NavState::TRACKING;
+    }
+    else if (result.timed_out)
+    {
+      enterFailedState();
+      last_mode_ = mode_status.mode;
+      return makeZeroCommand(CommandSource::FAILED_STOP, now_sec);
+    }
+    else if (result.finished)
     {
       state_ = NavState::SUCCEEDED;
       obstacle_finished_ = false;
@@ -503,19 +510,35 @@ VelocityCommand NavigationCoordinator::executeMode(
         CommandSource::TRACKING_STOP, now_sec);
   }
 
-  const bool near_goal_blocked =
+  const bool occupied_goal_blocked =
       std::isfinite(goal_distance) &&
-      goal_distance <= config_.goal_controller.near_goal_switch_dist &&
+      goal_distance <=
+          config_.goal_controller.goal_align_reacquire_dist &&
       mode_status.route_blocked_near;
-  if (near_goal_blocked)
+  if (occupied_goal_blocked)
   {
+    const auto result = goal_controller_.update(
+        task,
+        robot,
+        progress,
+        max_vx,
+        std::min(config_.limits.max_yaw_rate,
+                 config_.goal_controller.near_goal_max_w),
+        now_sec);
+    if (result.timed_out)
+    {
+      enterFailedState();
+      last_mode_ = mode_status.mode;
+      return makeZeroCommand(CommandSource::FAILED_STOP, now_sec);
+    }
+
     if (!near_goal_blocked_timer_active_)
     {
       near_goal_blocked_since_sec_ = now_sec;
       near_goal_blocked_timer_active_ = true;
     }
     const double elapsed = now_sec - near_goal_blocked_since_sec_;
-    if (std::isfinite(elapsed) && elapsed >=
+    if (result.yaw_reached && std::isfinite(elapsed) && elapsed >=
         config_.goal_controller.obstacle_finish_timeout_sec)
     {
       state_ = NavState::SUCCEEDED;
@@ -526,7 +549,8 @@ VelocityCommand NavigationCoordinator::executeMode(
       safety_supervisor_.reset();
     }
 
-    return makeZeroCommand(CommandSource::TRACKING_STOP, now_sec);
+    last_mode_ = mode_status.mode;
+    return result.command;
   }
   resetNearGoalBlockedTimer();
 
@@ -1071,6 +1095,13 @@ CoreOutput NavigationCoordinator::update(
         if (result.position_lost)
         {
           state_ = NavState::TRACKING;
+        }
+        else if (result.timed_out)
+        {
+          enterFailedState();
+          final_cmd = makeZeroCommand(
+              CommandSource::FAILED_STOP,
+              now_sec);
         }
         else if (result.finished)
         {

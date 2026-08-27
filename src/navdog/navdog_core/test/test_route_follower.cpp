@@ -170,6 +170,35 @@ TEST(RouteFollowerTest, SinglePointGoalUsesForwardOnlyCommand)
   EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
 }
 
+TEST(RouteFollowerTest, DirectGoalConvergesToStopBoundary)
+{
+  RouteFollowerConfig config{};
+  config.kp_x = 0.8;
+  config.max_vx = 0.70;
+  RouteFollower follower(config);
+  const NavigationTask task = makeStraightTask(1, 10.0);
+  const RouteProgress progress = makeProgress(1, 9.0, 1.0);
+
+  const VelocityCommand far = follower.updateDirectGoal(
+      task, makeRobot(9.50), progress, 0.30, 0.20, 1.0);
+  const VelocityCommand near = follower.updateDirectGoal(
+      task, makeRobot(9.70), progress, 0.30, 0.20, 1.0);
+  const VelocityCommand boundary = follower.updateDirectGoal(
+      task, makeRobot(9.80), progress, 0.30, 0.20, 1.0);
+
+  ASSERT_TRUE(far.valid);
+  ASSERT_TRUE(near.valid);
+  ASSERT_TRUE(boundary.valid);
+  EXPECT_GT(far.vx, near.vx);
+  EXPECT_GT(near.vx, boundary.vx);
+  EXPECT_NEAR(far.vx, 0.24, 1e-9);
+  EXPECT_NEAR(near.vx, 0.08, 1e-9);
+  EXPECT_DOUBLE_EQ(boundary.vx, 0.0);
+  EXPECT_DOUBLE_EQ(far.vy, 0.0);
+  EXPECT_DOUBLE_EQ(near.vy, 0.0);
+  EXPECT_DOUBLE_EQ(boundary.vy, 0.0);
+}
+
 TEST(RouteFollowerTest, LookaheadBehindRobotTurnsOnly)
 {
   RouteFollowerConfig config{};
@@ -188,7 +217,7 @@ TEST(RouteFollowerTest, LookaheadBehindRobotTurnsOnly)
   EXPECT_NE(cmd.yaw_rate, 0.0);
 }
 
-TEST(RouteFollowerTest, RearTargetUsesPointHeadingInsteadOfTangentHeading)
+TEST(RouteFollowerTest, RearTargetRecoveryTurnsTowardActualPoint)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.60;
@@ -219,6 +248,86 @@ TEST(RouteFollowerTest, RearTargetUsesPointHeadingInsteadOfTangentHeading)
   EXPECT_DOUBLE_EQ(cmd.vx, 0.0);
   EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
   EXPECT_NEAR(std::abs(cmd.yaw_rate), config.max_yaw_rate, 1e-9);
+}
+
+TEST(RouteFollowerTest, NearOppositeRearTargetKeepsEffectiveTurnRate)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.kp_yaw = 1.2;
+  config.max_yaw_rate = 0.65;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  task.max_vx = 0.70;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 2.0;
+  task.points = {p0, p1, p2};
+
+  RouteProgress progress = makeProgress(1, 1.40, 0.60);
+  progress.total_length_m = 2.0;
+
+  RouteFollower follower(config);
+  const VelocityCommand cmd = follower.update(
+      task, makeRobot(2.30, 0.01, kPi / 3.0),
+      progress, 0.50, 1.0);
+
+  ASSERT_TRUE(cmd.valid);
+  EXPECT_DOUBLE_EQ(cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
+  EXPECT_GT(std::abs(cmd.yaw_rate), 0.20);
+  EXPECT_GT(cmd.yaw_rate, 0.0);
+}
+
+TEST(RouteFollowerTest, RearBoundaryKeepsTurnDirectionContinuous)
+{
+  RouteFollowerConfig config{};
+  config.lookahead_distance_m = 0.60;
+  config.max_lookahead_distance_m = 0.60;
+  config.lookahead_time_sec = 0.0;
+  config.heading_lookahead_m = 0.40;
+  config.kp_yaw = 1.2;
+  config.max_yaw_rate = 0.65;
+
+  NavigationTask task{};
+  task.sequence = 1;
+  RoutePoint p0{};
+  RoutePoint p1{};
+  RoutePoint p2{};
+  p1.x = 1.0;
+  p2.x = 2.0;
+  task.points = {p0, p1, p2};
+  RouteProgress progress = makeProgress(1, 1.40, 0.60);
+  progress.total_length_m = 2.0;
+
+  RouteFollower follower(config);
+  const VelocityCommand front = follower.update(
+      task, makeRobot(1.95, -0.40, 0.0), progress, 0.50, 1.0);
+  const VelocityCommand boundary = follower.update(
+      task, makeRobot(2.00, -0.40, 0.0), progress, 0.50, 1.1);
+  const VelocityCommand rear = follower.update(
+      task, makeRobot(2.05, -0.40, 0.0), progress, 0.50, 1.2);
+
+  ASSERT_TRUE(front.valid);
+  ASSERT_TRUE(boundary.valid);
+  ASSERT_TRUE(rear.valid);
+  EXPECT_GT(front.yaw_rate, 0.0);
+  EXPECT_GT(boundary.yaw_rate, 0.0);
+  EXPECT_GT(rear.yaw_rate, 0.0);
+  EXPECT_GT(front.vx, 0.0);
+  EXPECT_DOUBLE_EQ(boundary.vx, 0.0);
+  EXPECT_DOUBLE_EQ(rear.vx, 0.0);
+  EXPECT_DOUBLE_EQ(front.vy, 0.0);
+  EXPECT_DOUBLE_EQ(boundary.vy, 0.0);
+  EXPECT_DOUBLE_EQ(rear.vy, 0.0);
+  EXPECT_LT(std::abs(boundary.yaw_rate - front.yaw_rate), 0.20);
+  EXPECT_LT(std::abs(rear.yaw_rate - boundary.yaw_rate), 0.20);
 }
 
 TEST(RouteFollowerTest, ForwardHalfPlaneDrivesAndTurnsContinuously)

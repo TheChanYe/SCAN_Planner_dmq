@@ -217,7 +217,7 @@ scan_recovery:
   takeover_timeout_sec: 1.50
   max_attempts: 2
 
-route_follower:
+route_follower: 
   lookahead_distance_m: 0.60
   max_lookahead_distance_m: 1.20
   lookahead_time_sec: 1.20

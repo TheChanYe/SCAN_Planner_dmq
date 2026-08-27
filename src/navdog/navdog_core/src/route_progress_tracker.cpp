@@ -38,6 +38,10 @@ void RouteProgressTracker::reset() noexcept
 
   total_length_m_ = 0.0;
   current_arc_length_m_ = 0.0;
+  forward_arc_budget_m_ = 0.0;
+  last_robot_x_ = 0.0;
+  last_robot_y_ = 0.0;
+  have_last_robot_position_ = false;
   current_segment_vector_index_ = 0;
 
   last_progress_ = RouteProgress{};
@@ -194,6 +198,10 @@ bool RouteProgressTracker::rebuildRoute(
   active_task_sequence_ = task.sequence;
   initialized_ = false;
   current_arc_length_m_ = 0.0;
+  forward_arc_budget_m_ = 0.0;
+  last_robot_x_ = 0.0;
+  last_robot_y_ = 0.0;
+  have_last_robot_position_ = false;
   current_segment_vector_index_ = 0;
   last_progress_ = RouteProgress{};
 
@@ -224,8 +232,8 @@ double RouteProgressTracker::clamp(
 // =============================================================================
 // projectToSegment
 // 将机器人投影到指定直线段上。
-// 步骤：1.将弧长上下限映射到该段允许的ratio范围；2.计算原始投影ratio并限幅
-// 到允许范围；3.重新计算投影点坐标、弧长、平方距离以及段方向角，汇成候选结果。
+// 先将几何投影限制在线段端点，再检查真实线段投影是否超出本周期
+// forward window。超窗候选直接无效，不得夹到窗口边界伪造进度。
 // =============================================================================
 
 RouteProgressTracker::ProjectionCandidate
@@ -248,29 +256,31 @@ RouteProgressTracker::projectToSegment(
     return candidate;
   }
 
-  double ratio =
+  const double raw_ratio =
       ((robot.x - segment.x0) * segment.dx +
        (robot.y - segment.y0) * segment.dy) /
       length_sq;
-
   const double segment_start_arc = segment.cumulative_start_m;
   const double segment_end_arc = segment.cumulative_start_m + segment.length;
+  const double projected_arc =
+      segment_start_arc + raw_ratio * segment.length;
+  if (std::isfinite(maximum_arc_length_m) &&
+      projected_arc > maximum_arc_length_m + kDistanceTieEpsilon)
+  {
+    return candidate;
+  }
+  const double segment_ratio = clamp(raw_ratio, 0.0, 1.0);
+
   const double allowed_min_arc = clamp(
       minimum_arc_length_m,
       segment_start_arc,
       segment_end_arc);
-  const double allowed_max_arc = std::isfinite(maximum_arc_length_m)
-      ? clamp(maximum_arc_length_m, segment_start_arc, segment_end_arc)
-      : segment_end_arc;
-
-  if (allowed_max_arc < allowed_min_arc)
+  if (segment_end_arc < allowed_min_arc)
     return candidate;
 
   const double min_ratio =
       (allowed_min_arc - segment_start_arc) / segment.length;
-  const double max_ratio =
-      (allowed_max_arc - segment_start_arc) / segment.length;
-  ratio = clamp(ratio, min_ratio, max_ratio);
+  const double ratio = std::max(segment_ratio, min_ratio);
 
   const double arc_length_m =
       segment.cumulative_start_m +
@@ -377,7 +387,8 @@ RouteProgressTracker::findInitialProjection(
 //   1. 仅从当前段索引开始向后遍历，超出最大向前搜索距离(max_forward_search_m)则提前终止；
 //   2. 对当前所在段，根据已行进的比例计算本段内的最小弧长下限（避免在本段内回退）；
 //   3. 对每个候选段调用projectToSegment并用isBetterCandidate选出最优候选；
-//   4. 若向前搜索无任何有效候选（不应发生），回退为强制投影到当前段的结果，保证总能返回结果。
+//   4. 若向前搜索无有效候选，从 current arc 重建当前进度候选：
+//      arc不前进，但投影距离/横向误差仍使用本周期机器人位置。
 // =============================================================================
 
 RouteProgressTracker::ProjectionCandidate
@@ -387,9 +398,9 @@ RouteProgressTracker::findForwardProjection(
   ProjectionCandidate best{};
   best.valid = false;
 
-  const double max_arc =
-      current_arc_length_m_ +
-      config_.max_forward_search_m;
+  const double max_arc = std::min(
+      current_arc_length_m_ + config_.max_forward_search_m,
+      forward_arc_budget_m_);
 
   for (std::size_t i = current_segment_vector_index_;
        i < segments_.size();
@@ -445,29 +456,25 @@ RouteProgressTracker::findForwardProjection(
     const Segment& seg =
         segments_[current_segment_vector_index_];
 
-    double minimum_arc_length_m = current_arc_length_m_;
-
-    if (seg.length > 0.0)
+    if (seg.length > kDistanceTieEpsilon)
     {
-      const double min_ratio =
-          (current_arc_length_m_ -
-           seg.cumulative_start_m) /
-          seg.length;
-
-      if (min_ratio > 0.0)
-      {
-        minimum_arc_length_m =
-            seg.cumulative_start_m +
-            min_ratio * seg.length;
-      }
+      const double ratio = clamp(
+          (current_arc_length_m_ - seg.cumulative_start_m) /
+              seg.length,
+          0.0,
+          1.0);
+      best.valid = true;
+      best.segment_vector_index = current_segment_vector_index_;
+      best.original_segment_index = seg.original_index;
+      best.ratio = ratio;
+      best.arc_length_m = current_arc_length_m_;
+      best.projected_x = seg.x0 + ratio * seg.dx;
+      best.projected_y = seg.y0 + ratio * seg.dy;
+      const double dx = robot.x - best.projected_x;
+      const double dy = robot.y - best.projected_y;
+      best.distance_sq = dx * dx + dy * dy;
+      best.route_yaw = std::atan2(seg.dy, seg.dx);
     }
-
-    best = projectToSegment(
-        seg,
-        current_segment_vector_index_,
-        robot,
-        minimum_arc_length_m,
-        max_arc);
   }
 
   return best;
@@ -673,6 +680,19 @@ RouteProgressOutput RouteProgressTracker::update(
   }
   else
   {
+    if (have_last_robot_position_)
+    {
+      const double robot_displacement = std::hypot(
+          robot.x - last_robot_x_,
+          robot.y - last_robot_y_);
+      if (std::isfinite(robot_displacement) &&
+          robot_displacement <= config_.max_forward_search_m)
+      {
+        forward_arc_budget_m_ = std::min(
+            total_length_m_,
+            forward_arc_budget_m_ + robot_displacement);
+      }
+    }
     candidate = findForwardProjection(robot);
   }
 
@@ -687,9 +707,16 @@ RouteProgressOutput RouteProgressTracker::update(
   // closest-point changes at crossings or loops can never move progress back.
   current_arc_length_m_ =
       std::max(current_arc_length_m_, candidate.arc_length_m);
+  if (!initialized_)
+  {
+    forward_arc_budget_m_ = current_arc_length_m_;
+  }
   candidate.arc_length_m = current_arc_length_m_;
   current_segment_vector_index_ =
       candidate.segment_vector_index;
+  last_robot_x_ = robot.x;
+  last_robot_y_ = robot.y;
+  have_last_robot_position_ = true;
   initialized_ = true;
 
   // 9. Generate RouteProgress
