@@ -71,7 +71,6 @@ ApplicationConfig Ros1ConfigLoader::load(ros::NodeHandle& nh)
   LOAD("route_follower/lookahead_distance_m", c.route_follower.lookahead_distance_m);
   LOAD("route_follower/max_lookahead_distance_m", c.route_follower.max_lookahead_distance_m);
   LOAD("route_follower/lookahead_time_sec", c.route_follower.lookahead_time_sec);
-  LOAD("route_follower/heading_lookahead_m", c.route_follower.heading_lookahead_m);
   LOAD("route_follower/kp_x", c.route_follower.kp_x);
   LOAD("route_follower/kp_yaw", c.route_follower.kp_yaw);
   LOAD("route_follower/simplify_tolerance_m", c.route_follower.simplify_tolerance_m);

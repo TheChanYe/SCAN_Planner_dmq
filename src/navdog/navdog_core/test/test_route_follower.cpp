@@ -224,7 +224,6 @@ TEST(RouteFollowerTest, RearTargetRecoveryTurnsTowardActualPoint)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.kp_yaw = 1.2;
   config.max_yaw_rate = 0.65;
 
@@ -257,7 +256,6 @@ TEST(RouteFollowerTest, NearOppositeRearTargetKeepsEffectiveTurnRate)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.kp_yaw = 1.2;
   config.max_yaw_rate = 0.65;
 
@@ -292,7 +290,6 @@ TEST(RouteFollowerTest, RearBoundaryKeepsTurnDirectionContinuous)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.kp_yaw = 1.2;
   config.max_yaw_rate = 0.65;
 
@@ -331,83 +328,29 @@ TEST(RouteFollowerTest, RearBoundaryKeepsTurnDirectionContinuous)
   EXPECT_LT(std::abs(rear.yaw_rate - boundary.yaw_rate), 0.20);
 }
 
-TEST(RouteFollowerTest, OffRouteUsesPointRejoin)
-{
-  RouteFollowerConfig config{};
-  config.lookahead_distance_m = 0.60;
-  config.kp_yaw = 0.20;
-  config.max_yaw_rate = 0.65;
-  RouteFollower follower(config);
-  RouteProgress progress = makeProgress(1, 3.0, 7.0);
-  progress.on_route = false;
-
-  const VelocityCommand cmd = follower.update(
-      makeStraightTask(1, 10.0), makeRobot(3.0, 1.0, 0.0),
-      progress, 0.50, 1.0);
-
-  ASSERT_TRUE(cmd.valid);
-  const double point_alpha = std::atan2(-1.0, 0.60);
-  EXPECT_NEAR(cmd.yaw_rate, config.kp_yaw * point_alpha, 1e-9);
-  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
-}
-
-TEST(RouteFollowerTest, OffRouteRearPointTurnsOnly)
-{
-  RouteFollowerConfig config{};
-  config.lookahead_distance_m = 0.60;
-  config.kp_yaw = 1.2;
-  config.max_yaw_rate = 0.65;
-  RouteFollower follower(config);
-  RouteProgress progress = makeProgress(1, 3.0, 7.0);
-  progress.on_route = false;
-
-  const VelocityCommand cmd = follower.update(
-      makeStraightTask(1, 10.0), makeRobot(4.0, 0.0, 0.0),
-      progress, 0.50, 1.0);
-
-  ASSERT_TRUE(cmd.valid);
-  EXPECT_DOUBLE_EQ(cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
-  EXPECT_GT(std::abs(cmd.yaw_rate), 0.0);
-}
-
-TEST(RouteFollowerTest, OffRouteFrontPointDrivesAndTurns)
-{
-  RouteFollowerConfig config{};
-  config.lookahead_distance_m = 0.60;
-  RouteFollower follower(config);
-  RouteProgress progress = makeProgress(1, 3.0, 7.0);
-  progress.on_route = false;
-
-  const VelocityCommand cmd = follower.update(
-      makeStraightTask(1, 10.0), makeRobot(3.0, 0.20, 0.0),
-      progress, 0.50, 1.0);
-
-  ASSERT_TRUE(cmd.valid);
-  EXPECT_GT(cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
-  EXPECT_LT(cmd.yaw_rate, 0.0);
-}
-
-TEST(RouteFollowerTest, OnRouteStillUsesTangentGuidance)
+TEST(RouteFollowerTest, OnRouteDiagnosticDoesNotChangeControl)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   RouteFollower follower(config);
-  RouteProgress progress = makeProgress(1, 0.40, 2.60);
-  progress.on_route = true;
+  RouteProgress on_route = makeProgress(1, 0.40, 2.60);
+  RouteProgress off_route = on_route;
+  off_route.on_route = false;
 
-  const VelocityCommand cmd = follower.update(
+  const VelocityCommand on_route_cmd = follower.update(
       makeCornerTask(2.0), makeRobot(0.40, 0.0, 0.0),
-      progress, 0.50, 1.0);
+      on_route, 0.50, 1.0);
+  const VelocityCommand off_route_cmd = follower.update(
+      makeCornerTask(2.0), makeRobot(0.40, 0.0, 0.0),
+      off_route, 0.50, 1.1);
 
-  ASSERT_TRUE(cmd.valid);
-  EXPECT_GT(cmd.vx, 0.0);
-  EXPECT_DOUBLE_EQ(cmd.vy, 0.0);
-  EXPECT_GT(cmd.yaw_rate, 0.0);
+  ASSERT_TRUE(on_route_cmd.valid);
+  ASSERT_TRUE(off_route_cmd.valid);
+  EXPECT_DOUBLE_EQ(off_route_cmd.vx, on_route_cmd.vx);
+  EXPECT_DOUBLE_EQ(off_route_cmd.vy, on_route_cmd.vy);
+  EXPECT_DOUBLE_EQ(off_route_cmd.yaw_rate, on_route_cmd.yaw_rate);
 }
 
 TEST(RouteFollowerTest, ForwardHalfPlaneDrivesAndTurnsContinuously)
@@ -469,13 +412,12 @@ TEST(RouteFollowerTest, SimplifiesSmallZigzagIntoStraightTrackingPath)
   EXPECT_NEAR(cmd.yaw_rate, 0.0, 1e-9);
 }
 
-TEST(RouteFollowerTest, LateralOffsetUsesTangentNormalCorrection)
+TEST(RouteFollowerTest, LateralOffsetSteersTowardFuturePoint)
 {
   RouteFollowerConfig config{};
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
 
   RouteFollower follower(config);
   const RouteProgress progress = makeProgress(1, 0.5, 2.5);
@@ -502,7 +444,6 @@ TEST(RouteFollowerTest, NoisyStraightRouteDoesNotFlipYawAcrossProgressSamples)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.simplify_tolerance_m = 0.05;
 
   RouteFollower follower(config);
@@ -555,7 +496,6 @@ TEST(RouteFollowerTest, NinetyDegreeApproachTurnsInProgressively)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.simplify_tolerance_m = 0.05;
 
   const double xy[4][2] = {
@@ -589,7 +529,6 @@ TEST(RouteFollowerTest, AfterCornerDoesNotImmediatelyCounterSteer)
   config.lookahead_distance_m = 0.60;
   config.max_lookahead_distance_m = 0.60;
   config.lookahead_time_sec = 0.0;
-  config.heading_lookahead_m = 0.40;
   config.simplify_tolerance_m = 0.05;
 
   const double xy[4][2] = {

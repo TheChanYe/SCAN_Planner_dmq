@@ -41,7 +41,7 @@ public:
       double max_vx,
       double now_sec);
 
-  // 直接跟踪任务最终点，不使用 RouteProgress 的 arc/tangent。
+  // 直接跟踪任务最终点，不使用 RouteProgress 的 arc/lookahead。
   // stop_distance_m 为线速度收敛到零的距离边界。
   VelocityCommand updateDirectGoal(
       const NavigationTask& task,

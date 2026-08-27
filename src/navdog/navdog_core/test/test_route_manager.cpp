@@ -67,6 +67,27 @@ TEST(RouteManager, ForwardProjectionCannotJumpBeyondSearchArc)
       config.max_forward_search_m + 1e-9);
 }
 
+TEST(RouteManager, ForwardProjectionCanSkipDenseReferencePoints)
+{
+  navdog::RouteProgressConfig config;
+  config.max_forward_search_m = 1.20;
+  navdog::RouteManager manager(config);
+  std::vector<navdog_task::RoutePoint> points(9);
+  for (std::size_t i = 0; i < points.size(); ++i)
+    points[i].x = 0.20 * static_cast<double>(i);
+  ASSERT_TRUE(manager.acceptRoute(1, points));
+
+  const auto initial = manager.updateProgress(robot(0.10), 1.0);
+  const auto skipped = manager.updateProgress(robot(1.10), 2.0);
+
+  ASSERT_TRUE(initial.progress.valid);
+  ASSERT_TRUE(skipped.progress.valid);
+  EXPECT_LE(skipped.progress.arc_length_m - initial.progress.arc_length_m,
+      config.max_forward_search_m + 1e-9);
+  EXPECT_GE(skipped.progress.segment_index, 5u);
+  EXPECT_NEAR(skipped.progress.arc_length_m, 1.10, 1e-9);
+}
+
 TEST(RouteManager, ForwardWindowMustNotRatchetStationaryRobot)
 {
   navdog::RouteProgressConfig config;

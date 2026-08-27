@@ -14,7 +14,6 @@ namespace
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kDefaultHeadingLookaheadM = 0.40;
 
 struct RawTrackingPoint
 {
@@ -57,11 +56,6 @@ RouteFollower::RouteFollower(
     const RouteFollowerConfig& config)
     : config_(config)
 {
-  if (!std::isfinite(config_.heading_lookahead_m) ||
-      config_.heading_lookahead_m < 0.0)
-  {
-    config_.heading_lookahead_m = kDefaultHeadingLookaheadM;
-  }
 }
 
 void RouteFollower::rebuildTrackingPath(
@@ -288,11 +282,10 @@ VelocityCommand RouteFollower::updateDirectGoal(
 //      基础前瞻 + 速度*前瞻时间，并限幅到 max_lookahead_distance_m（跑得越快看得越远）；
 //   4. 用"已走弧长 + 前瞻距离"作为目标弧长，在tracking path上求出前瞻点；
 //      若插值失败（点数不足）则返回 TRACKING_STOP；
-//   5. 在前瞻点附近采样局部路线切线，并只用前瞻点到机器人的横向误差修正方向；
-//   6. 将真实前瞻点误差旋转到机器人自身坐标系（ex_robot/ey_robot）；
-//   7. 前瞻点在机体后半平面时只原地转向；
-//   8. 前瞻点在前半平面时使用 guidance alpha 生成唯一 yaw steering，vy始终为0；
-//   9. 最终对 vx/vy/yaw_rate 做非有限数及负值兜底、对 vx 限幅到最大速度。
+//   5. 将真实前瞻点误差旋转到机器人自身坐标系，并得到唯一 point alpha；
+//   6. 前瞻点在机体后半平面时只原地转向；
+//   7. 前瞻点在前半平面时使用 pure pursuit 与曲率限速，vy始终为0；
+//   8. 最终对 vx/vy/yaw_rate 做非有限数及负值兜底、对 vx 限幅到最大速度。
 // 输入：task/robot/progress/max_vx/now_sec；输出：VelocityCommand。
 VelocityCommand RouteFollower::update(
     const NavigationTask& task,
@@ -328,60 +321,6 @@ VelocityCommand RouteFollower::update(
 
   const double base_lookahead =
       std::max(0.0, config_.lookahead_distance_m);
-  if (!progress.on_route)
-  {
-    const double rejoin_arc = std::min(
-        progress.total_length_m,
-        progress.arc_length_m + base_lookahead);
-    double rejoin_x = 0.0;
-    double rejoin_y = 0.0;
-    if (!interpolateTrackingPoint(rejoin_arc, rejoin_x, rejoin_y))
-    {
-      cmd.valid = false;
-      cmd.source = CommandSource::TRACKING_STOP;
-      cmd.stamp_sec = now_sec;
-      return cmd;
-    }
-
-    const double dx = rejoin_x - robot.x;
-    const double dy = rejoin_y - robot.y;
-    const double distance = std::hypot(dx, dy);
-    if (distance < kEpsilon)
-    {
-      cmd.vx = 0.0;
-      cmd.vy = 0.0;
-      cmd.yaw_rate = 0.0;
-    }
-    else
-    {
-      const double c = std::cos(robot.yaw);
-      const double s = std::sin(robot.yaw);
-      const double ex_robot = c * dx + s * dy;
-      const double ey_robot = -s * dx + c * dy;
-      const double point_alpha = std::atan2(ey_robot, ex_robot);
-      cmd.vx = 0.0;
-      if (ex_robot > 0.0)
-      {
-        const double base_speed = std::min(
-            effective_max_vx,
-            config_.kp_x * distance);
-        const double cos_alpha =
-            std::max(0.0, std::cos(point_alpha));
-        cmd.vx = base_speed * cos_alpha * cos_alpha;
-      }
-      cmd.vy = 0.0;
-      cmd.yaw_rate = std::max(
-          -config_.max_yaw_rate,
-          std::min(config_.max_yaw_rate,
-              config_.kp_yaw * point_alpha));
-    }
-
-    cmd.stamp_sec = now_sec;
-    cmd.valid = true;
-    cmd.source = CommandSource::PLANNER;
-    return cmd;
-  }
-
   const double max_lookahead =
       std::max(base_lookahead, config_.max_lookahead_distance_m);
   const double speed_hint = effective_max_vx;
@@ -418,100 +357,23 @@ VelocityCommand RouteFollower::update(
     return cmd;
   }
 
-  constexpr double kMinGuidanceScale = 0.05;
-  const double heading_half_window =
-      0.5 * std::max(0.0, config_.heading_lookahead_m);
-  const double tangent_start_arc = std::max(
-      progress.arc_length_m,
-      target_arc - heading_half_window);
-  const double tangent_end_arc = std::min(
-      progress.total_length_m,
-      target_arc + heading_half_window);
-
-  double tangent_start_x = 0.0;
-  double tangent_start_y = 0.0;
-  double tangent_end_x = 0.0;
-  double tangent_end_y = 0.0;
-  const bool have_tangent_start =
-      interpolateTrackingPoint(
-          tangent_start_arc,
-          tangent_start_x,
-          tangent_start_y);
-  const bool have_tangent_end =
-      interpolateTrackingPoint(
-          tangent_end_arc,
-          tangent_end_x,
-          tangent_end_y);
-
-  double tangent_x = have_tangent_start && have_tangent_end
-      ? tangent_end_x - tangent_start_x
-      : 0.0;
-  double tangent_y = have_tangent_start && have_tangent_end
-      ? tangent_end_y - tangent_start_y
-      : 0.0;
-  double tangent_norm = std::hypot(tangent_x, tangent_y);
-  if (tangent_norm < kEpsilon)
-  {
-    tangent_x = ex_world;
-    tangent_y = ey_world;
-    tangent_norm = std::hypot(tangent_x, tangent_y);
-  }
-  if (tangent_norm < kEpsilon)
-  {
-    cmd.vx = 0.0;
-    cmd.vy = 0.0;
-    cmd.yaw_rate = 0.0;
-    cmd.stamp_sec = now_sec;
-    cmd.valid = true;
-    cmd.source = CommandSource::PLANNER;
-    return cmd;
-  }
-  tangent_x /= tangent_norm;
-  tangent_y /= tangent_norm;
-
-  const double normal_x = -tangent_y;
-  const double normal_y = tangent_x;
-  const double lateral_error =
-      ex_world * normal_x +
-      ey_world * normal_y;
-  const double guidance_scale =
-      std::max(kMinGuidanceScale, dynamic_lookahead);
-  const double lateral_correction = std::max(
-      -1.0,
-      std::min(1.0, lateral_error / guidance_scale));
-  double guide_x = tangent_x + lateral_correction * normal_x;
-  double guide_y = tangent_y + lateral_correction * normal_y;
-  const double guide_norm = std::hypot(guide_x, guide_y);
-  if (guide_norm < kEpsilon)
-  {
-    guide_x = tangent_x;
-    guide_y = tangent_y;
-  }
-  else
-  {
-    guide_x /= guide_norm;
-    guide_y /= guide_norm;
-  }
-
   const double c = std::cos(robot.yaw);
   const double s = std::sin(robot.yaw);
 
   // World error rotated into robot frame.
   const double ex_robot = c * ex_world + s * ey_world;
   const double ey_robot = -s * ex_world + c * ey_world;
-  const double guide_yaw = std::atan2(guide_y, guide_x);
-  const double alpha = normalizeAngle(guide_yaw - robot.yaw);
+  const double alpha = std::atan2(ey_robot, ex_robot);
   const double lookahead_actual = std::hypot(ex_robot, ey_robot);
 
   if (ex_robot <= 0.0)
   {
-    const double point_alpha = std::atan2(ey_robot, ex_robot);
     cmd.vx = 0.0;
     cmd.vy = 0.0;
     cmd.yaw_rate = std::max(
         -config_.max_yaw_rate,
         std::min(config_.max_yaw_rate,
-            config_.kp_yaw * point_alpha));
+            config_.kp_yaw * alpha));
   }
   else
   {

@@ -342,7 +342,7 @@ VelocityCommand NavigationCoordinator::makeZeroCommand(
 //   1. ROUTE_ONLY阻塞必须停车；普通避障确认期继续跟随但限速到SCAN交接速度；
 //   2. 用机器人到真实最终点的距离判断 near goal；
 //   3. near goal 内按真实 goal distance 限速并复用 Direct Goal；
-//   4. near goal 外保持正常 tangent guidance。
+//   4. near goal 外保持正常参考路径前瞻跟踪。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeRouteFollow(
