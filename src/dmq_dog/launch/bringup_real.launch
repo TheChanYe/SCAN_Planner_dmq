@@ -38,6 +38,7 @@
   <node pkg="navdog_runtime" type="cmd_vel_owner_mux"
         name="cmd_vel_owner_mux" output="screen">
     <rosparam command="load" file="$(arg navigation_config)"/>
+    <param name="mux_publish_rate_hz" value="50.0"/>
     <param name="route_cmd_timeout" value="0.30"/>
     <param name="scan_cmd_timeout" value="0.30"/>
     <param name="mode_sync_grace_sec" value="0.10"/>

@@ -434,13 +434,14 @@ VelocityCommand NavigationCoordinator::executeLocalAvoid(
 // 根据最终目标边界与当前导航模式（ROUTE_FOLLOW/LOCAL_AVOID）分发执行函数，并处理
 // “最终目标被占用”的等待完成逻辑。
 // 步骤：
-//   1. 计算到终点距离，若已进入finish_dist，则交给GoalController判定完成或最终对齐；
-//   2. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
-//   3. 仅在 goal_align_reacquire_dist 内判断目标占用；
-//   4. 占用时复用 GoalController 对齐最终 yaw，只有 yaw 达标且阻塞超时
+//   1. 普通GOAL_ALIGN漂出finish_dist时回TRACKING，并在同周期恢复DirectGoal；
+//   2. 若已进入finish_dist，则交给GoalController判定完成或最终对齐；
+//   3. 若路径观测不可用(corridor_available=false)，重置计时器并返回零速度；
+//   4. 仅在 goal_align_reacquire_dist 内判断目标占用；
+//   5. 占用时复用 GoalController 对齐最终 yaw，只有 yaw 达标且阻塞超时
 //      才允许 obstacle-finished 成功；对齐超时进入 FAILED；
-//   5. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
-//   6. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
+//   6. 未被阻时重置计时器，并在模式发生切换时也重置（避免跨模式遗留计时）；
+//   7. 根据 mode_status.mode 调用 executeRouteFollow 或 executeLocalAvoid，并记录 last_mode_。
 // =============================================================================
 
 VelocityCommand NavigationCoordinator::executeMode(
@@ -461,8 +462,24 @@ VelocityCommand NavigationCoordinator::executeMode(
       ? std::numeric_limits<double>::infinity()
       : std::hypot(task.points.back().x - robot.x,
                    task.points.back().y - robot.y);
-  if (std::isfinite(goal_distance) &&
-      goal_distance <= config_.goal_controller.finish_dist)
+  const bool inside_finish_dist =
+      std::isfinite(goal_distance) &&
+      goal_distance <= config_.goal_controller.finish_dist;
+  const bool occupied_goal_blocked =
+      std::isfinite(goal_distance) &&
+      goal_distance <=
+          config_.goal_controller.goal_align_reacquire_dist &&
+      mode_status.route_blocked_near;
+
+  if (state_ == NavState::GOAL_ALIGN &&
+      !occupied_goal_blocked &&
+      !inside_finish_dist)
+  {
+    goal_controller_.reset();
+    state_ = NavState::TRACKING;
+  }
+
+  if (inside_finish_dist)
   {
     const auto result = goal_controller_.update(
         task,
@@ -509,11 +526,6 @@ VelocityCommand NavigationCoordinator::executeMode(
         CommandSource::TRACKING_STOP, now_sec);
   }
 
-  const bool occupied_goal_blocked =
-      std::isfinite(goal_distance) &&
-      goal_distance <=
-          config_.goal_controller.goal_align_reacquire_dist &&
-      mode_status.route_blocked_near;
   if (occupied_goal_blocked)
   {
     const auto result = goal_controller_.update(

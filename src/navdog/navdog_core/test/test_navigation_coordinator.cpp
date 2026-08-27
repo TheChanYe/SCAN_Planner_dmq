@@ -47,6 +47,21 @@ public:
         task, robot, progress, mode_status, max_vx, now_sec);
   }
 
+  static VelocityCommand continueMode(
+      NavigationCoordinator& coordinator,
+      const NavigationTask& task,
+      const RobotState& robot,
+      const RouteProgress& progress,
+      const NavigationModeStatus& mode_status,
+      bool corridor_available,
+      double now_sec)
+  {
+    return coordinator.executeMode(
+        task, robot, progress, mode_status, ObstacleSummary{},
+        RouteCorridorAssessment{}, corridor_available,
+        coordinator.task_manager_.session().max_vx, now_sec);
+  }
+
   static bool obstacleFinished(const NavigationCoordinator& coordinator)
   {
     return coordinator.obstacle_finished_;
@@ -345,6 +360,128 @@ TEST(NavigationCoordinator, AtFinishBoundaryStopsLinearMotion)
   EXPECT_TRUE(command.valid);
   EXPECT_DOUBLE_EQ(command.vx, 0.0);
   EXPECT_DOUBLE_EQ(command.vy, 0.0);
+}
+
+TEST(NavigationCoordinator, GoalAlignDriftOutsideFinishReturnsTracking)
+{
+  NavdogConfig config{};
+  NavigationCoordinator coordinator(config);
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.total_length_m = 2.0;
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.81;
+  robot.yaw = 1.0;
+  progress.arc_length_m = 1.81;
+  progress.remaining_distance_m = 0.19;
+  NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+  ASSERT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+
+  robot.x = 1.77;
+  progress.arc_length_m = 1.77;
+  progress.remaining_distance_m = 0.23;
+  const VelocityCommand command = NavigationCoordinatorTestPeer::continueMode(
+      coordinator, task, robot, progress, mode, true, 1.1);
+
+  EXPECT_EQ(NavState::TRACKING, coordinator.state());
+  EXPECT_EQ(CommandSource::PLANNER, command.source);
+  EXPECT_GT(command.vx, 0.0);
+  EXPECT_DOUBLE_EQ(command.vy, 0.0);
+}
+
+TEST(NavigationCoordinator, GoalAlignDriftDoesNotWaitForReacquireDistance)
+{
+  NavdogConfig config{};
+  config.goal_controller.finish_dist = 0.20;
+  config.goal_controller.goal_align_reacquire_dist = 0.30;
+  NavigationCoordinator coordinator(config);
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.total_length_m = 2.0;
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.81;
+  robot.yaw = 1.0;
+  NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+  ASSERT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+
+  robot.x = 1.79;
+  const VelocityCommand command = NavigationCoordinatorTestPeer::continueMode(
+      coordinator, task, robot, progress, mode, true, 1.1);
+
+  EXPECT_EQ(NavState::TRACKING, coordinator.state());
+  EXPECT_GT(command.vx, 0.0);
+}
+
+TEST(NavigationCoordinator, OccupiedGoalKeepsReacquireDistanceSemantics)
+{
+  NavdogConfig config{};
+  config.goal_controller.finish_dist = 0.20;
+  config.goal_controller.goal_align_reacquire_dist = 0.30;
+  NavigationCoordinator coordinator(config);
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.total_length_m = 2.0;
+
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.81;
+  robot.yaw = 1.0;
+  NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+  ASSERT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+
+  robot.x = 1.75;
+  mode.route_blocked_near = true;
+  const VelocityCommand command = NavigationCoordinatorTestPeer::continueMode(
+      coordinator, task, robot, progress, mode, true, 1.1);
+
+  EXPECT_EQ(NavState::GOAL_ALIGN, coordinator.state());
+  EXPECT_DOUBLE_EQ(command.vx, 0.0);
+  EXPECT_NE(command.yaw_rate, 0.0);
+}
+
+TEST(NavigationCoordinator, TrueGoalStillSucceeds)
+{
+  NavigationCoordinator coordinator;
+  ASSERT_EQ(TaskHandleResult::STARTED, coordinator.handleEvent(startEvent()));
+  const NavigationTask task = coordinator.routeManager().taskView();
+  RobotState robot = robotInput(1.0).robot;
+  robot.x = 1.81;
+  robot.yaw = 0.0;
+  RouteProgress progress{};
+  progress.valid = true;
+  progress.task_sequence = coordinator.taskSession().sequence;
+  progress.total_length_m = 2.0;
+  progress.arc_length_m = 1.81;
+  progress.remaining_distance_m = 0.19;
+  NavigationModeStatus mode{};
+  mode.mode = NavigationMode::ROUTE_FOLLOW;
+
+  const VelocityCommand command = NavigationCoordinatorTestPeer::executeMode(
+      coordinator, task, robot, progress, mode, true, 1.0);
+
+  EXPECT_EQ(NavState::SUCCEEDED, coordinator.state());
+  EXPECT_DOUBLE_EQ(command.vx, 0.0);
+  EXPECT_DOUBLE_EQ(command.vy, 0.0);
+  EXPECT_DOUBLE_EQ(command.yaw_rate, 0.0);
 }
 
 TEST(NavigationCoordinator, GoalAlignTimeoutEntersFailed)

@@ -24,6 +24,7 @@ using scan_planner::UniformBspline;
 
 constexpr double kMaxVYawLimit = 1.0;
 constexpr double kTakeoverTimestampToleranceSec = 0.10;
+constexpr double kCommandEpsilon = 1e-9;
 constexpr std::uint8_t kModeRouteFollow = 1;
 constexpr std::uint8_t kModeLocalAvoid = 2;
 
@@ -46,6 +47,7 @@ double takeover_anchor_tolerance = 0.25;
 ros::Time takeover_sync_time;
 std::uint32_t takeover_generation = 0;
 std::uint32_t ready_generation = 0;
+std::uint32_t logged_first_cmd_generation = 0;
 std::vector<UniformBspline> traj;
 double traj_duration = 0.0;
 int traj_id = 0;
@@ -329,6 +331,7 @@ void resetCallback(const std_msgs::EmptyConstPtr&)
   waiting_takeover_trajectory = false;
   takeover_sync_time = ros::Time();
   takeover_generation = 0;
+  logged_first_cmd_generation = 0;
   publishTakeoverReady(0);
   publishStop();
 
@@ -585,13 +588,12 @@ void cmdCallback(const ros::TimerEvent &)
   Eigen::Vector2d vel_ff(
       vel_des(0),
       vel_des(1));
+  const Eigen::Vector2d vel_fb = kp_pos * pos_err;
 
   const double active_max_vx = activeLinearSpeedLimit();
   Eigen::Vector2d vel_world =
       clampNorm(
-          vel_ff +
-              kp_pos *
-              pos_err,
+          vel_ff + vel_fb,
           std::max(
               active_max_vx,
               max_vy));
@@ -607,6 +609,35 @@ void cmdCallback(const ros::TimerEvent &)
 
   if (exec_time >= traj_duration && pos_err.norm() < finish_dist)
     cmd = geometry_msgs::Twist();
+
+  if (takeover_generation != 0 &&
+      logged_first_cmd_generation != takeover_generation &&
+      (std::abs(cmd.linear.x) > kCommandEpsilon ||
+       std::abs(cmd.linear.y) > kCommandEpsilon ||
+       std::abs(cmd.angular.z) > kCommandEpsilon))
+  {
+    ROS_INFO(
+        "SCAN_FIRST_CMD_DEBUG generation=%u exec_time=%.3f "
+        "odom_yaw=%.3f pos_des=[%.3f %.3f] odom_pos=[%.3f %.3f] "
+        "pos_err=[%.3f %.3f] vel_ff_world=[%.3f %.3f] "
+        "vel_fb_world=[%.3f %.3f] vel_cmd_world=[%.3f %.3f] "
+        "cmd_body=[%.3f %.3f %.3f] traj_id=%d "
+        "desired_yaw=%.3f yaw_error=%.3f",
+        takeover_generation,
+        exec_time,
+        odom_yaw,
+        pos_des(0), pos_des(1),
+        odom_pos(0), odom_pos(1),
+        pos_err(0), pos_err(1),
+        vel_ff(0), vel_ff(1),
+        vel_fb(0), vel_fb(1),
+        vel_world(0), vel_world(1),
+        cmd.linear.x, cmd.linear.y, cmd.angular.z,
+        traj_id,
+        yaw_des,
+        yaw_err);
+    logged_first_cmd_generation = takeover_generation;
+  }
 
   ROS_DEBUG_THROTTLE(
     1.0,

@@ -21,7 +21,7 @@ constexpr double kEpsilon = 1e-9;
 // Configurable parameters
 double route_cmd_timeout_sec = 0.30;
 double scan_cmd_timeout_sec = 0.30;
-double publish_rate_hz = 50.0;
+double mux_publish_rate_hz = 50.0;
 double mode_sync_grace_sec = 0.10;
 double scan_handoff_hold_sec = 0.10;
 double route_follow_linear_speed_mps = 0.70;
@@ -569,7 +569,7 @@ void timerCallback(const ros::TimerEvent&)
   // --- Apply velocity slew limiting ---
   double dt = (last_publish_stamp_sec_ > 0.0)
       ? (now_sec - last_publish_stamp_sec_)
-      : 1.0 / publish_rate_hz;
+      : 1.0 / mux_publish_rate_hz;
 
   double out_vx, out_vy, out_yaw;
   slew_limiter_.update(
@@ -604,7 +604,7 @@ int main(int argc, char** argv)
   // Load configurable parameters
   private_nh.param("route_cmd_timeout", route_cmd_timeout_sec, 0.30);
   private_nh.param("scan_cmd_timeout", scan_cmd_timeout_sec, 0.30);
-  private_nh.param("publish_rate_hz", publish_rate_hz, 50.0);
+  private_nh.param("mux_publish_rate_hz", mux_publish_rate_hz, 50.0);
   private_nh.param("mode_sync_grace_sec", mode_sync_grace_sec, 0.10);
   private_nh.param("scan_handoff_hold_sec", scan_handoff_hold_sec, 0.10);
   private_nh.param("external_stop_topic", external_stop_topic,
@@ -632,7 +632,7 @@ int main(int argc, char** argv)
 
   if (!std::isfinite(route_cmd_timeout_sec) || route_cmd_timeout_sec <= 0.0 ||
       !std::isfinite(scan_cmd_timeout_sec) || scan_cmd_timeout_sec <= 0.0 ||
-      !std::isfinite(publish_rate_hz) || publish_rate_hz <= 0.0 ||
+      !std::isfinite(mux_publish_rate_hz) || mux_publish_rate_hz <= 0.0 ||
       !std::isfinite(scan_handoff_hold_sec) || scan_handoff_hold_sec < 0.0 ||
       !std::isfinite(route_follow_linear_speed_mps) ||
       route_follow_linear_speed_mps <= 0.0 ||
@@ -672,13 +672,13 @@ int main(int argc, char** argv)
 
   // Timer
   ros::Timer timer = nh.createTimer(
-      ros::Duration(1.0 / publish_rate_hz), timerCallback);
+      ros::Duration(1.0 / mux_publish_rate_hz), timerCallback);
 
   ROS_INFO("cmd_vel_owner_mux: ready. route_timeout=%.2f scan_timeout=%.2f "
            "rate=%.1f grace=%.2f scan_hold=%.2f "
            "route_linear=%.2f avoid_linear=%.2f stair_linear=%.2f "
            "handoff accel_x=%.2f decel_x=%.2f accel_yaw=%.2f decel_yaw=%.2f",
-      route_cmd_timeout_sec, scan_cmd_timeout_sec, publish_rate_hz,
+      route_cmd_timeout_sec, scan_cmd_timeout_sec, mux_publish_rate_hz,
       mode_sync_grace_sec, scan_handoff_hold_sec,
       route_follow_linear_speed_mps, local_avoid_linear_speed_mps,
       stair_up_linear_speed_mps,
